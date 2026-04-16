@@ -1,5 +1,6 @@
 import React from "react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB } from './db.js';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -6590,7 +6591,7 @@ function applyDataFixes(c) {
 }
 
 // Merge saved data over the baseline — saved records win, new baseline records fill gaps
-function loadClients() {
+function loadClients_DEPRECATED() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return SAMPLE_CLIENTS.map(applyDataFixes);
@@ -6617,7 +6618,7 @@ function loadClients() {
   }
 }
 
-function persistClients(list) {
+function persistClients_DEPRECATED(list) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 
@@ -6626,13 +6627,13 @@ function persistClients(list) {
 const CARRIERS_STORAGE_KEY  = "benefittrack_carriers_v1";
 const MEETINGS_STORAGE_KEY  = "benefittrack_meetings_v1";
 
-function loadMeetings() {
+function loadMeetings_DEPRECATED() {
   try {
     const saved = localStorage.getItem(MEETINGS_STORAGE_KEY);
     return saved ? JSON.parse(saved) : [];
   } catch(e) { return []; }
 }
-function persistMeetings(list) {
+function persistMeetings_DEPRECATED(list) {
   try { localStorage.setItem(MEETINGS_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 const TASKS_STORAGE_KEY    = "benefittrack_tasks_v4";
@@ -6665,7 +6666,7 @@ const DEFAULT_DUE_DATE_RULES = [
   { id: "form5500",     label: "5500: End of 7th month after plan year",     anchor: "plan_year_end", direction: "after", days: null, builtin: true },
 ];
 
-function loadDueDateRules() {
+function loadDueDateRules_DEPRECATED() {
   try {
     const saved = localStorage.getItem(DDR_STORAGE_KEY);
     if (!saved) return DEFAULT_DUE_DATE_RULES;
@@ -6676,7 +6677,7 @@ function loadDueDateRules() {
     return [...missing, ...loaded];
   } catch(e) { return DEFAULT_DUE_DATE_RULES; }
 }
-function persistDueDateRules(list) {
+function persistDueDateRules_DEPRECATED(list) {
   try { localStorage.setItem(DDR_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 
@@ -6739,7 +6740,7 @@ const DEFAULT_TASKS_DATA = [
   { id: "t_large_claim_report",    label: "Large Claim Report — Carrier Pull & Internal Update", category: "Ongoing", markets: ["Large"], carriers: [], funding: [], states: [], defaultAssignee: "Account Manager", dueDateRule: "", recurrence: "Monthly", order: 20 },
 ];
 
-function loadTasksData() {
+function loadTasksData_DEPRECATED() {
   try {
     const saved = localStorage.getItem(TASKS_STORAGE_KEY);
     if (!saved) return DEFAULT_TASKS_DATA;
@@ -6754,7 +6755,7 @@ function loadTasksData() {
     });
   } catch(e) { return DEFAULT_TASKS_DATA; }
 }
-function persistTasksData(list) {
+function persistTasksData_DEPRECATED(list) {
   try { localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 
@@ -6897,17 +6898,35 @@ const DEFAULT_CARRIERS_DATA = [
     funding: [], states: [], notes: "", requirements: [] },
 ];
 
-function loadCarriersData() {
+function loadCarriersData_DEPRECATED() {
   try {
     const saved = localStorage.getItem(CARRIERS_STORAGE_KEY);
     return saved ? JSON.parse(saved) : DEFAULT_CARRIERS_DATA;
   } catch(e) { return DEFAULT_CARRIERS_DATA; }
 }
-function persistCarriersData(list) {
+function persistCarriersData_DEPRECATED(list) {
   try { localStorage.setItem(CARRIERS_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 
 export default function App() {
+  // ── Supabase data loading ──
+  useEffect(() => {
+    async function loadAll() {
+      const [clients, carriers, tasks, ddr, meetings] = await Promise.all([
+        fetchClients(),
+        fetchCarriers(),
+        fetchTasks(),
+        fetchDDR(),
+        fetchMeetings(),
+      ]);
+      if (clients)  setClientsRaw(clients.map(applyDataFixes));
+      if (carriers) setCarriersDataRaw(carriers);
+      if (tasks)    setTasksDataRaw(tasks);
+      if (ddr)      setDueDateRulesRaw(ddr);
+      if (meetings) setMeetingsRaw(meetings);
+    }
+    loadAll();
+  }, []);
   // Load SheetJS for spreadsheet parsing
   React.useEffect(() => {
     if (window.XLSX) return;
@@ -6916,9 +6935,8 @@ export default function App() {
     s.async = true;
     document.head.appendChild(s);
   }, []);
-
-  const [clients, setClientsRaw] = useState(() => loadClients());
-  const [modal, setModal] = useState(null); // null | client object
+   const [clients, setClientsRaw] = useState([]);
+   const [modal, setModal] = useState(null); // null | client object
   const [search, setSearch] = useState("");
   const [filterTeam, setFilterTeam] = useState("All");
   const [filterMarket, setFilterMarket] = useState("All");
@@ -6937,7 +6955,7 @@ export default function App() {
   function setClients(updater) {
     setClientsRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      persistClients(next);
+      persistClients_DEPRECATED(next);
       return next;
     });
   }
@@ -6979,11 +6997,16 @@ export default function App() {
     setClients(prev => prev.some(c => c.id === data.id)
       ? prev.map(c => c.id === data.id ? data : c)
       : [...prev, data]);
+    // Sync to Supabase
+    upsertClient(data);
     // Modal stays open — user must click Cancel/✕ to close
   }
 
   function deleteClient(id) {
-    if (confirm("Remove this client?")) setClients(p => p.filter(c => c.id !== id));
+    if (confirm("Remove this client?")) {
+      setClients(p => p.filter(c => c.id !== id));
+      deleteClientDB(id);
+    }
   }
 
   // Stats
@@ -7011,11 +7034,14 @@ export default function App() {
 
   // View: "dashboard" | "clients" | "renewals" | "teams"
   const [view, setView] = useState("dashboard");
-  const [meetings, setMeetingsRaw] = useState(() => loadMeetings());
+  const [meetings, setMeetingsRaw] = useState([]);
   function setMeetings(updater) {
     setMeetingsRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      persistMeetings(next);
+      persistMeetings_DEPRECATED(next);
+      // Sync to Supabase — upsert all meetings
+      const nextArr = Array.isArray(next) ? next : [];
+      nextArr.forEach(m => upsertMeeting(m));
       return next;
     });
   }
@@ -7041,36 +7067,45 @@ export default function App() {
   // Keep backward-compat alias used in renewals view team pills
   const dashboardTeamFilter = dashFilter.team;
   function setDashboardTeamFilter(val) { setDashF("team", val); }
-  const [carriersData, setCarriersDataRaw] = useState(() => loadCarriersData());
+ const [carriersData, setCarriersDataRaw] = useState([]);
   function setCarriersData(updater) {
     setCarriersDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      persistCarriersData(next);
+      persistCarriersData_DEPRECATED(next);
+      // Sync each carrier to Supabase
+      const nextArr = Array.isArray(next) ? next : [];
+      nextArr.forEach(c => upsertCarrier(c));
       return next;
     });
   }
-  const [tasksData, setTasksDataRaw] = useState(() => loadTasksData());
+  const [tasksData, setTasksDataRaw] = useState([]);
   function setTasksData(updater) {
     setTasksDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      persistTasksData(next);
-      // Re-apply DDR to all clients when task templates change (dueDateRule on a task may have changed)
+      persistTasksData_DEPRECATED(next);
+      // Sync each task to Supabase
+      const nextArr = Array.isArray(next) ? next : [];
+      nextArr.forEach(t => upsertTask(t));
+      // Re-apply DDR to all clients when task templates change
       setClients(prevClients => {
-        const ddr = loadDueDateRules();
+        const ddr = loadDueDateRules_DEPRECATED();
         return prevClients.map(c => applyDueDateRulesToClient(c, next, ddr));
       });
       return next;
     });
   }
 
-  const [dueDateRules, setDueDateRulesRaw] = useState(() => loadDueDateRules());
+  const [dueDateRules, setDueDateRulesRaw] = useState([]);
   function setDueDateRules(updater) {
     setDueDateRulesRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      persistDueDateRules(next);
+      persistDueDateRules_DEPRECATED(next);
+      // Sync each rule to Supabase
+      const nextArr = Array.isArray(next) ? next : [];
+      nextArr.forEach(r => upsertDDR(r));
       // Re-apply DDR to all clients with the new rule set
       setClients(prevClients => {
-        const tasks = loadTasksData();
+        const tasks = loadTasksData_DEPRECATED();
         return prevClients.map(c => applyDueDateRulesToClient(c, tasks, next));
       });
       return next;
