@@ -6000,10 +6000,11 @@ function parseClientSpreadsheet(rows, tasksDb) {
 
 // ── Meetings View ─────────────────────────────────────────────────────────────
 
-function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient }) {
+function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient, currentUser, userTeamId }) {
+  const isRestricted = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!userTeamId;
   const [showForm, setShowForm]     = useState(false);
   const [editId, setEditId]         = useState(null);
-  const [filterTeam, setFilterTeam] = useState("All");
+  const [filterTeam, setFilterTeam] = useState(isRestricted ? userTeamId : "All");
   const [expandedId, setExpandedId] = useState(null);
   const [notifyState, setNotifyState] = useState({}); // { memberId: "sent"|"composing" }
 
@@ -6019,9 +6020,11 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
   const [form, setForm] = useState(emptyForm);
 
   // Collect all open tasks for the selected team's clients
-  const teamClients = form.team
-    ? clients.filter(c => c.team === form.team)
-    : clients;
+  const teamClients = clients.filter(c => {
+    if (isRestricted && c.team !== userTeamId) return false;
+    if (form.team && c.team !== form.team) return false;
+    return true;
+  });
 
   const allOpenTasks = teamClients.flatMap(c => {
     const days = daysUntil(c.renewalDate);
@@ -6139,7 +6142,11 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
   }
 
   const sorted = [...meetings]
-    .filter(m => filterTeam === "All" || m.team === filterTeam)
+    .filter(m => {
+      if (isRestricted && m.team !== userTeamId) return false;
+      if (filterTeam !== "All" && m.team !== filterTeam) return false;
+      return true;
+    })
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const fmtDate = d => d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "";
@@ -6153,11 +6160,13 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{sorted.length} meeting{sorted.length !== 1 ? "s" : ""} recorded</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
-            style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px" }}>
-            <option value="All">All Teams</option>
-            {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
-          </select>
+          {!isRestricted && (
+            <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px" }}>
+              <option value="All">All Teams</option>
+              {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
+            </select>
+          )}
           <button onClick={() => { setForm(emptyForm()); setShowForm(true); setEditId(null); }}
             style={btnPrimary}>+ New Meeting</button>
         </div>
@@ -7919,6 +7928,8 @@ export default function App() {
             onUpdateClient={saveClient}
             tasksDb={tasksData}
             onOpenClient={setModal}
+            currentUser={currentUser}
+            userTeamId={userTeamId}
           />
         )}
 
