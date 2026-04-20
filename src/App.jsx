@@ -6937,7 +6937,7 @@ function PinScreen({ onSuccess }) {
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "40px 48px", maxWidth: 400, width: "100%", boxShadow: "0 25px 60px rgba(0,0,0,.12)", textAlign: "center" }}>
-       <img src="/src/shield.png" style={{ height: 56, width: "auto", marginBottom: 16 }} alt="logo" />
+       <img src="/shield.png" style={{ height: 56, width: "auto", marginBottom: 16 }} alt="logo" />
         <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 24, color: "#0f172a", marginBottom: 4 }}>Client Management System</div>
         <div style={{ fontSize: 13, color: "#64748b", marginBottom: 32 }}>Sign in to continue</div>
 
@@ -7234,7 +7234,7 @@ export default function App() {
         boxShadow: "0 1px 3px rgba(0,0,0,.06)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-         <img src="/src/shield.png" style={{ height: 44, width: "auto" }} alt="logo" /> 
+         <img src="/shield.png" style={{ height: 44, width: "auto" }} alt="logo" /> 
           <div>
             <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 18, color: "#0f172a", lineHeight: 1 }}>
               Client Management System
