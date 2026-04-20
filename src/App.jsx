@@ -7150,7 +7150,7 @@ export default function App() {
   }
 
     const filtered = useMemo(() => {
-    const teamRestricted = currentUser && !["Team Lead","VP"].includes(currentUser.role) && userTeams.length === 1;
+    const teamRestricted = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!currentUser.team;
     let list = clients.filter(c => {
       if (teamRestricted && c.team !== currentUser.team) return false;
       const q = search.toLowerCase();
@@ -7422,7 +7422,7 @@ export default function App() {
           const allSitusD  = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
           const allFundingD = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
 
-          const teamRestricted2 = currentUser && !["Team Lead","VP"].includes(currentUser.role) && userTeams.length === 1;
+          const teamRestricted2 = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!currentUser.team;
           const dashFiltered = upcoming120.filter(c => {
             if (teamRestricted2 && c.team !== currentUser.team) return false;
             if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
@@ -8511,7 +8511,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   , [clients]);
 
   const clientRows = useMemo(() => {
-    const teamRestrictedOT = currentUser && !["Team Lead","VP"].includes(currentUser.role) && (userTeams || []).length === 1;
+    const teamRestrictedOT = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!currentUser.team;
     return clients
       .filter(c => !teamRestrictedOT || c.team === currentUser.team)
       .map(c => {
