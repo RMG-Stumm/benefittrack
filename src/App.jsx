@@ -7690,7 +7690,7 @@ export default function App() {
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeams={userTeams} />
+          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} />
         )}
 
 
@@ -8488,13 +8488,14 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeams }) {
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId }) {
+  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addForm, setAddForm] = useState({
     clientId: "", category: "Miscellaneous", title: "", assignee: "", dueDate: "", notes: "",
   });
-  const [ovTeam,     setOvTeam]     = useState("All");
+  const [ovTeam,     setOvTeam]     = useState(isRestricted ? userTeamId : "All");
   const [ovMarket,   setOvMarket]   = useState("All");
   const [ovCarrier,  setOvCarrier]  = useState("All");
   const [ovSitus,    setOvSitus]    = useState("All");
@@ -8524,7 +8525,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   , [clients]);
 
   const clientRows = useMemo(() => {
-    const teamRestrictedOT = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
+    const teamRestrictedOT = isRestricted;
     return clients
       .filter(c => !teamRestrictedOT || c.team === userTeamId)
       .map(c => {
@@ -8560,7 +8561,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         const bd = b._days === null ? 99999 : b._days;
         return ad - bd;
       });
-  }, [clients, ovWindow, ovTeam, ovMarket, ovCarrier, ovSitus, ovFunding, ovCat, ovAssignee, ovStatus, ovSort]);
+  }, [clients, ovWindow, ovTeam, ovMarket, ovCarrier, ovSitus, ovFunding, ovCat, ovAssignee, ovStatus, ovSort, currentUser, userTeamId]);
 
   const catColors = {
     "Pre-Renewal":     { bg: "#dce8f2", text: "#3e5878" },
@@ -8602,7 +8603,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             {clientRows.length} client{clientRows.length !== 1 ? "s" : ""} · {clientRows.reduce((n,c) => n + c._openTasks.length, 0)} open task{clientRows.reduce((n,c) => n + c._openTasks.length, 0) !== 1 ? "s" : ""}
             {activeFilters > 0 && (
               <button onClick={() => {
-                setOvTeam("All"); setOvMarket("All"); setOvCarrier("All"); setOvSitus("All");
+                setOvTeam(isRestricted ? userTeamId : "All"); setOvMarket("All"); setOvCarrier("All"); setOvSitus("All");
                 setOvFunding("All"); setOvCat("All"); setOvAssignee("All"); setOvStatus("All"); setOvWindow("all");
               }} style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
                 background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
@@ -8695,7 +8696,9 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                   onChange={e => setAddForm(p => ({ ...p, clientId: e.target.value, assignee: "" }))}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12 }}>
                   <option value="">— Select a client —</option>
-                  {[...clients].sort((a,b) => a.name.localeCompare(b.name)).map(c => (
+                  {[...clients]
+                    .filter(c => !isRestricted || c.team === userTeamId)
+                    .sort((a,b) => a.name.localeCompare(b.name)).map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
@@ -8775,14 +8778,16 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", letterSpacing: "1px",
             textTransform: "uppercase", whiteSpace: "nowrap", minWidth: 48 }}>Client</span>
-          <select value={ovTeam} onChange={e => setOvTeam(e.target.value)}
-            style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 10px",
-              background: ovTeam !== "All" ? "#dce8f0" : "#fff", flex: "1 1 120px", maxWidth: 160 }}>
-            <option value="All">All Teams</option>
-            {Object.entries(TEAMS).map(([key, t]) => (
-              <option key={key} value={key}>Team {t.label}</option>
-            ))}
-          </select>
+          {!isRestricted && (
+            <select value={ovTeam} onChange={e => setOvTeam(e.target.value)}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 10px",
+                background: ovTeam !== "All" ? "#dce8f0" : "#fff", flex: "1 1 120px", maxWidth: 160 }}>
+              <option value="All">All Teams</option>
+              {Object.entries(TEAMS).map(([key, t]) => (
+                <option key={key} value={key}>Team {t.label}</option>
+              ))}
+            </select>
+          )}
           {[
             { val: ovMarket,  set: setOvMarket,  opts: MARKET_SIZES,  placeholder: "All Markets" },
             { val: ovFunding, set: setOvFunding, opts: uniqueFunding,  placeholder: "All Funding" },
