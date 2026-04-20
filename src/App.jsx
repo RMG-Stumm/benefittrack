@@ -6937,7 +6937,7 @@ function PinScreen({ onSuccess }) {
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "40px 48px", maxWidth: 400, width: "100%", boxShadow: "0 25px 60px rgba(0,0,0,.12)", textAlign: "center" }}>
-        <img src="data:image/png;base64,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" style={{ height: 56, width: "auto", marginBottom: 16 }} alt="logo" />
+       <img src="/src/shield.png" style={{ height: 56, width: "auto", marginBottom: 16 }} alt="logo" />
         <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 24, color: "#0f172a", marginBottom: 4 }}>Client Management System</div>
         <div style={{ fontSize: 13, color: "#64748b", marginBottom: 32 }}>Sign in to continue</div>
 
@@ -7234,7 +7234,7 @@ export default function App() {
         boxShadow: "0 1px 3px rgba(0,0,0,.06)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <img src="data:image/png;base64,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" style={{ height: 44, width: "auto" }} alt="logo" />
+         <img src="/src/shield.png" style={{ height: 44, width: "auto" }} alt="logo" /> 
           <div>
             <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 18, color: "#0f172a", lineHeight: 1 }}>
               Client Management System
@@ -7257,41 +7257,8 @@ export default function App() {
               }}>{label}</button>
             ))}
           </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setModal(newClient(tasksData))} style={btnPrimary}>
-              + Add Client
-            </button>
-            
-            <label title="Import from spreadsheet" style={{
-              ...btnPrimary, display: "flex", alignItems: "center", gap: 6,
-              cursor: "pointer", userSelect: "none",
-            }}>
-              📂 Import
-              <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
-                onChange={e => {
-                  const file = e.target.files[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = evt => {
-                    try {
-                      const XLSX = window.XLSX;
-                      if (!XLSX) { alert("Spreadsheet reader not loaded yet — please try again in a moment."); return; }
-                      const wb = XLSX.read(evt.target.result, { type: "array" });
-                      const ws = wb.Sheets[wb.SheetNames[0]];
-                      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-                      const client = parseClientSpreadsheet(raw, tasksData);
-                      setModal(client);
-                    } catch(err) {
-                      alert("Could not parse spreadsheet: " + err.message);
-                    }
-                    e.target.value = "";
-                  };
-                  reader.readAsArrayBuffer(file);
-                }}
-              />
-            </label>
-            <button onClick={() => setCurrentUser(null)} style={{ ...btnOutline, fontSize: 12, padding: "7px 14px" }}>Sign Out</button>
+<div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setCurrentUser(null)} style={{ ...btnOutline, fontSize: 12, padding: "7px 14px" }}>Sign Out</button>
           </div>
         </div>
       </div>
@@ -7710,8 +7677,38 @@ export default function App() {
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
               <div>
-                <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
-                  All Clients
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
+                    All Clients
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setModal(newClient(tasksData))} style={btnPrimary}>+ Add Client</button>
+                    <label title="Import from spreadsheet" style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+                      📂 Import
+                      <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+                        onChange={e => {
+                          const file = e.target.files[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = evt => {
+                            try {
+                              const XLSX = window.XLSX;
+                              if (!XLSX) { alert("Spreadsheet reader not loaded yet — please try again in a moment."); return; }
+                              const wb = XLSX.read(evt.target.result, { type: "array" });
+                              const ws = wb.Sheets[wb.SheetNames[0]];
+                              const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+                              const client = parseClientSpreadsheet(raw, tasksData);
+                              setModal(client);
+                            } catch(err) {
+                              alert("Could not parse spreadsheet: " + err.message);
+                            }
+                            e.target.value = "";
+                          };
+                          reader.readAsArrayBuffer(file);
+                        }}
+                      />
+                    </label>
+                  </div>
                 </div>
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                   {filtered.length} of {clients.length} shown
