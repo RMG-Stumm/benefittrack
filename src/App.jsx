@@ -7028,8 +7028,10 @@ export default function App() {
     });
   }
 
-  const filtered = useMemo(() => {
+    const filtered = useMemo(() => {
+    const teamRestricted = currentUser && !["Team Lead","VP"].includes(currentUser.role) && userTeams.length === 1;
     let list = clients.filter(c => {
+      if (teamRestricted && c.team !== currentUser.team) return false;
       const q = search.toLowerCase();
       if (q && !c.name.toLowerCase().includes(q)) return false;
       if (filterTeam !== "All" && c.team !== filterTeam) return false;
@@ -7115,7 +7117,7 @@ export default function App() {
   }
   const [teams, setTeams] = useState(() => {
     try {
-      const saved = localStorage.getItem("benefittrack_teams_v1");
+           const saved = localStorage.getItem("benefittrack_teams_v1");
       return saved ? JSON.parse(saved) : Object.entries(TEAMS).map(([key, t]) => ({
         id: key, label: t.label, color: t.color, border: t.border, text: t.text,
         members: t.members,
@@ -7128,6 +7130,7 @@ export default function App() {
     }
   });
   const [teamModal, setTeamModal] = useState(null); // null | team object | "new"
+  const userTeams = currentUser ? [...new Set(teams.filter(t => t.members?.some(m => m.name === currentUser.name)).map(t => t.id))] : [];
   const [dashFilter, setDashFilter] = useState({
     team: "All", market: "All", carrier: "All", situs: "All", funding: "All",
   });
@@ -7331,7 +7334,9 @@ export default function App() {
           const allSitusD  = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
           const allFundingD = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
 
+          const teamRestricted2 = currentUser && !["Team Lead","VP"].includes(currentUser.role) && userTeams.length === 1;
           const dashFiltered = upcoming120.filter(c => {
+            if (teamRestricted2 && c.team !== currentUser.team) return false;
             if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
             if (dashFilter.market  !== "All" && c.marketSize !== dashFilter.market) return false;
             if (dashFilter.funding !== "All" && c.fundingMethod !== dashFilter.funding) return false;
@@ -7490,7 +7495,9 @@ export default function App() {
           const allSitusR   = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
           const allFundingR = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
 
+          const teamRestricted3 = currentUser && !["Team Lead","VP"].includes(currentUser.role);
           const renewalsFiltered = upcoming120.filter(c => {
+            if (teamRestricted3 && c.team !== currentUser.team) return false;
             if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
             if (dashFilter.market  !== "All" && c.marketSize !== dashFilter.market) return false;
             if (dashFilter.funding !== "All" && c.fundingMethod !== dashFilter.funding) return false;
@@ -7584,7 +7591,7 @@ export default function App() {
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} />
+          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeams={userTeams} />
         )}
 
 
@@ -7604,7 +7611,7 @@ export default function App() {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
-              {teams.map(team => (
+              {teams.filter(team => !currentUser || ["Team Lead","VP"].includes(currentUser.role) || userTeams.length > 1 || team.id === currentUser.team).map(team => (
                 <div key={team.id} style={{
                   background: "#fff", borderRadius: 14,
                   border: `2px solid ${team.border || "#e2e8f0"}`,
@@ -8350,7 +8357,7 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask }) {
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeams }) {
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -8386,7 +8393,9 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask }) {
   , [clients]);
 
   const clientRows = useMemo(() => {
+    const teamRestrictedOT = currentUser && !["Team Lead","VP"].includes(currentUser.role) && (userTeams || []).length === 1;
     return clients
+      .filter(c => !teamRestrictedOT || c.team === currentUser.team)
       .map(c => {
         const _days = daysUntil(c.renewalDate);
         // Window filter
