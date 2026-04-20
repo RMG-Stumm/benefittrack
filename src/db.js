@@ -164,3 +164,34 @@ export async function deleteMeeting(id) {
   const { error } = await supabase.from('meetings').delete().eq('id', id)
   if (error) console.error('deleteMeeting error:', error)
 }
+// ── TEAMS ─────────────────────────────────────────────────────────────────────
+
+export async function fetchTeams() {
+  const { data, error } = await supabase.from('teams').select('*')
+  if (error) { console.error('fetchTeams error:', error); return null }
+  return data.map(row => ({
+    id: row.id,
+    label: row.label,
+    color: row.color,
+    border: row.border,
+    text: row.text,
+    members: row.members || [],
+  }))
+}
+
+export async function upsertTeam(team) {
+  const { error } = await supabase.from('teams').upsert({
+    id: team.id,
+    label: team.label,
+    color: team.color,
+    border: team.border,
+    text: team.text,
+    members: team.members || [],
+  })
+  if (error) console.error('upsertTeam error:', error)
+}
+
+export async function deleteTeam(id) {
+  const { error } = await supabase.from('teams').delete().eq('id', id)
+  if (error) console.error('deleteTeam error:', error)
+}

@@ -1,6 +1,6 @@
 import React from "react";
 import { useState, useMemo, useEffect } from "react";
-import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB } from './db.js';
+import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB } from './db.js';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -6912,18 +6912,20 @@ export default function App() {
   // ── Supabase data loading ──
   useEffect(() => {
     async function loadAll() {
-      const [clients, carriers, tasks, ddr, meetings] = await Promise.all([
+      const [clients, carriers, tasks, ddr, meetings, teams] = await Promise.all([
         fetchClients(),
         fetchCarriers(),
         fetchTasks(),
         fetchDDR(),
         fetchMeetings(),
+        fetchTeams(),
       ]);
       if (clients)  setClientsRaw(clients.map(applyDataFixes));
       if (carriers) setCarriersDataRaw(carriers);
       if (tasks)    setTasksDataRaw(tasks);
       if (ddr)      setDueDateRulesRaw(ddr);
       if (meetings) setMeetingsRaw(meetings);
+      if (teams)    setTeams(teams);
     }
     loadAll();
   }, []);
@@ -7113,6 +7115,9 @@ export default function App() {
   }
   function persistTeams(list) {
     try { localStorage.setItem("benefittrack_teams_v1", JSON.stringify(list)); } catch(e) {}
+    // Sync to Supabase
+    const listArr = Array.isArray(list) ? list : [];
+    listArr.forEach(t => upsertTeam(t));
   }
 
   // Upcoming renewals within 120 days, sorted soonest first
