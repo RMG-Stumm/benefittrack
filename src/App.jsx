@@ -4957,7 +4957,25 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               if (!passesEligibilityRule(t)) return false;
               return true;
             });
-            if (applicableOngoing.length === 0) return null;
+            if (applicableOngoing.length === 0 && !((data.ongoingTasks || {}).__extra?.length)) return (
+              <>
+                <CollapseHeader id="ongoing" title="Ongoing Tasks" accent="#54652d" collapsed={collapsed} onToggle={toggleSection} />
+                {!collapsed.ongoing && (
+                  <div>
+                    <button type="button" onClick={() => setData(p => ({
+                      ...p, ongoingTasks: {
+                        ...(p.ongoingTasks || {}),
+                        __extra: [...((p.ongoingTasks || {}).__extra || []), { title: "", status: "Not Started", assignee: "", recurrence: "Monthly", lastCompleted: "", nextDue: "", notes: "" }]
+                      }
+                    }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      border: "1.5px dashed #67e8f9", background: "#f0fbff", color: "#0c4a6e",
+                      cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
+                      + Add Ongoing Task
+                    </button>
+                  </div>
+                )}
+              </>
+            );
 
             function advanceDate(dateStr, recurrence) {
               if (!dateStr) return "";
@@ -5071,6 +5089,88 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </div>
                       );
                     })}
+
+                    {/* Manual / extra ongoing tasks */}
+                    {((data.ongoingTasks || {}).__extra || []).map((t, idx) => {
+                      const isDue = t.nextDue && new Date(t.nextDue + "T12:00:00") <= new Date();
+                      function setExtraOngoing(field, val) {
+                        setData(p => {
+                          const ex = [...((p.ongoingTasks || {}).__extra || [])];
+                          ex[idx] = { ...ex[idx], [field]: val };
+                          return { ...p, ongoingTasks: { ...(p.ongoingTasks || {}), __extra: ex } };
+                        });
+                      }
+                      return (
+                        <div key={"ong_extra_"+idx} style={{
+                          background: "#f0fbff", borderRadius: 10, padding: "12px 14px",
+                          border: `1.5px solid ${isDue ? "#67e8f9" : "#bae6fd"}`,
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <input value={t.title || ""} onChange={e => setExtraOngoing("title", e.target.value)}
+                              placeholder="Task name..."
+                              style={{ ...inputStyle, marginTop: 0, flex: 1, fontWeight: 600, fontSize: 13 }} />
+                            <select value={t.recurrence || "Monthly"} onChange={e => setExtraOngoing("recurrence", e.target.value)}
+                              style={{ ...inputStyle, marginTop: 0, width: 120, fontSize: 12 }}>
+                              {["Monthly","Quarterly","Annually"].map(r => <option key={r} value={r}>{r}</option>)}
+                            </select>
+                            <StatusSelect value={t.status || "Not Started"} onChange={v => setExtraOngoing("status", v)} />
+                            <button type="button" onClick={() => setData(p => ({
+                              ...p, ongoingTasks: { ...(p.ongoingTasks || {}), __extra: ((p.ongoingTasks || {}).__extra || []).filter((_,i) => i !== idx) }
+                            }))} style={{ background: "#fee2e2", border: "none", borderRadius: 6, padding: "4px 8px",
+                              cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700 }}>✕</button>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                            <label style={{ ...labelStyle, marginTop: 0 }}>
+                              Assignee
+                              <select value={t.assignee || ""} onChange={e => setExtraOngoing("assignee", e.target.value)}
+                                style={{ ...inputStyle, marginTop: 3, fontSize: 12 }}>
+                                <option value="">— Select —</option>
+                                {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                              </select>
+                            </label>
+                            <label style={{ ...labelStyle, marginTop: 0 }}>
+                              Last Completed
+                              <input type="date" value={t.lastCompleted || ""} onChange={e => {
+                                const v = e.target.value;
+                                if (!v) { setExtraOngoing("lastCompleted", ""); return; }
+                                const d = new Date(v + "T12:00:00");
+                                const rec = t.recurrence || "Monthly";
+                                if (rec === "Monthly")   d.setMonth(d.getMonth() + 1);
+                                else if (rec === "Quarterly") d.setMonth(d.getMonth() + 3);
+                                else if (rec === "Annually")  d.setFullYear(d.getFullYear() + 1);
+                                const next = d.toISOString().split("T")[0];
+                                setData(p => {
+                                  const ex = [...((p.ongoingTasks || {}).__extra || [])];
+                                  ex[idx] = { ...ex[idx], lastCompleted: v, nextDue: next, status: "Not Started" };
+                                  return { ...p, ongoingTasks: { ...(p.ongoingTasks || {}), __extra: ex } };
+                                });
+                              }} style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                            </label>
+                            <label style={{ ...labelStyle, marginTop: 0 }}>
+                              Next Due
+                              <input type="date" value={t.nextDue || ""} onChange={e => setExtraOngoing("nextDue", e.target.value)}
+                                style={{ ...inputStyle, marginTop: 3, fontSize: 12, background: isDue ? "#fff7ed" : undefined }} />
+                            </label>
+                          </div>
+                          <label style={{ ...labelStyle, marginTop: 8 }}>
+                            Notes
+                            <input type="text" value={t.notes || ""} onChange={e => setExtraOngoing("notes", e.target.value)}
+                              placeholder="Notes…" style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                          </label>
+                        </div>
+                      );
+                    })}
+
+                    <button type="button" onClick={() => setData(p => ({
+                      ...p, ongoingTasks: {
+                        ...(p.ongoingTasks || {}),
+                        __extra: [...((p.ongoingTasks || {}).__extra || []), { title: "", status: "Not Started", assignee: "", recurrence: "Monthly", lastCompleted: "", nextDue: "", notes: "" }]
+                      }
+                    }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      border: "1.5px dashed #67e8f9", background: "#f0fbff", color: "#0c4a6e",
+                      cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
+                      + Add Ongoing Task
+                    </button>
                   </div>
                 )}
               </>
@@ -5486,6 +5586,7 @@ function ClientCard({ client, onEdit, onDelete, tasksDb }) {
 
         // Category display order: Pre-Renewal, Renewal, OE, Post-OE, Compliance, Misc, Ongoing
         const categories = [
+          // 1. Pre-Renewal
           {
             id: "preRenewal", label: "Pre-Renewal",
             tasks: PRERENEWAL_TASKS.filter(t => !t.acaOnly || client.marketSize === "ACA").map(t => ({
@@ -5494,36 +5595,7 @@ function ClientCard({ client, onEdit, onDelete, tasksDb }) {
               dueDate: (typeof (client.preRenewal || {})[t.id] === "object" ? (client.preRenewal || {})[t.id]?.dueDate : "") || "",
             })),
           },
-
-          ...(activeOETasks.length ? [{
-            id: "oe", label: "Open Enrollment",
-            tasks: activeOETasks.map(t => ({
-              label: getLabelForTask(t.id, tasksDb, t.label),
-              status: getTaskStatus((oe.tasks || {})[t.id]),
-              dueDate: (typeof (oe.tasks || {})[t.id] === "object" ? (oe.tasks || {})[t.id]?.dueDate : "") || "",
-            })),
-          }] : []),
-          ...(() => {
-            const hasCC = Object.values(client.benefitDecision || {}).some(v => v === "change_carrier");
-            const fixedDefs = [
-              { id: "elections_received",   label: "Elections Received?" },
-              { id: "oe_changes_processed", label: "OE Changes Processed?" },
-              ...(hasCC ? [{ id: "new_carrier_census", label: "New Carrier Submission Census Created?" }] : []),
-              { id: "carrier_bill_audited", label: "Carrier Bill Audited?" },
-              { id: "lineup_updated",       label: "Lineup Updated?" },
-              { id: "oe_wrapup_email",      label: "OE Wrap-Up Email Sent?" },
-            ];
-            const pof = client.postOEFixed || {};
-            const all = [
-              ...fixedDefs.map(d => ({ label: d.label, status: (pof[d.id] || {}).status || "Not Started", dueDate: (pof[d.id] || {}).dueDate || "" })),
-              ...postOETasks.map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.dueDate || "" })),
-            ];
-            return [{ id: "postOE", label: "Post-OE", tasks: all }];
-          })(),
-          ...(miscTasks.length ? [{
-            id: "misc", label: "Misc",
-            tasks: miscTasks.map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.dueDate || "" })),
-          }] : []),
+          // 2. Renewal
           ...(() => {
             const rm = client.renewalMeeting;
             const rmTask = (rm && typeof rm === "object") ? [{ label: "Schedule Renewal Meeting", status: rm.status || "Not Started", dueDate: rm.dueDate || "" }] : [];
@@ -5541,6 +5613,34 @@ function ClientCard({ client, onEdit, onDelete, tasksDb }) {
             const all = [...rmTask, ...autoTasks, ...manualTasks];
             return all.length ? [{ id: "renewal", label: "Renewal", tasks: all }] : [];
           })(),
+          // 3. Open Enrollment
+          ...(activeOETasks.length ? [{
+            id: "oe", label: "Open Enrollment",
+            tasks: activeOETasks.map(t => ({
+              label: getLabelForTask(t.id, tasksDb, t.label),
+              status: getTaskStatus((oe.tasks || {})[t.id]),
+              dueDate: (typeof (oe.tasks || {})[t.id] === "object" ? (oe.tasks || {})[t.id]?.dueDate : "") || "",
+            })),
+          }] : []),
+          // 4. Post-OE
+          ...(() => {
+            const hasCC = Object.values(client.benefitDecision || {}).some(v => v === "change_carrier");
+            const fixedDefs = [
+              { id: "elections_received",   label: "Elections Received?" },
+              { id: "oe_changes_processed", label: "OE Changes Processed?" },
+              ...(hasCC ? [{ id: "new_carrier_census", label: "New Carrier Submission Census Created?" }] : []),
+              { id: "carrier_bill_audited", label: "Carrier Bill Audited?" },
+              { id: "lineup_updated",       label: "Lineup Updated?" },
+              { id: "oe_wrapup_email",      label: "OE Wrap-Up Email Sent?" },
+            ];
+            const pof = client.postOEFixed || {};
+            const all = [
+              ...fixedDefs.map(d => ({ label: d.label, status: (pof[d.id] || {}).status || "Not Started", dueDate: (pof[d.id] || {}).dueDate || "" })),
+              ...postOETasks.map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.dueDate || "" })),
+            ];
+            return [{ id: "postOE", label: "Post-OE", tasks: all }];
+          })(),
+          // 5. Compliance
           {
             id: "compliance", label: "Compliance",
             tasks: COMPLIANCE_TASKS
@@ -5551,13 +5651,34 @@ function ClientCard({ client, onEdit, onDelete, tasksDb }) {
               dueDate: (typeof (client.compliance || {})[t.id] === "object" ? (client.compliance || {})[t.id]?.dueDate : "") || "",
             })),
           },
-          ...(Object.keys(ongoingTasks).length ? [{
-            id: "ongoing", label: "Ongoing",
-            tasks: Object.entries(ongoingTasks).map(([id, t]) => ({
-              label: getLabelForTask(id, tasksDb, id),
-              status: t?.status || "Not Started",
-              dueDate: t?.nextDue || "",
-            })),
+          // 6. Ongoing
+          ...(() => {
+            const medCarrierC  = (client.benefitCarriers || {}).medical || (client.carriers || [])[0] || "";
+            const medEnrolledC = Number((client.benefitEnrolled || {}).medical) || 0;
+            const medPlansC    = (client.benefitPlans || {}).medical || [];
+            const hasHMOC = medPlansC.some(p => p.type && p.type.toUpperCase().includes("HMO"));
+            const hasPPOC = medPlansC.some(p => p.type && p.type.toUpperCase().includes("PPO"));
+            const applicableOngoingC = (tasksDb || []).filter(t => {
+              if (t.category !== "Ongoing") return false;
+              if (t.markets && t.markets.length > 0 && !t.markets.includes(client.marketSize)) return false;
+              if (t.carriers && t.carriers.length > 0 && !t.carriers.includes(medCarrierC)) return false;
+              if (t.funding  && t.funding.length  > 0 && !t.funding.includes(client.fundingMethod)) return false;
+              if (t.eligibilityRule === "blue_insights" && !(medEnrolledC >= 50 && (hasHMOC || hasPPOC))) return false;
+              return true;
+            });
+            const extraOngoing = (ongoingTasks.__extra || []);
+            const dbTasks = applicableOngoingC.map(def => {
+              const stored = ongoingTasks[def.id] || {};
+              return { label: def.label, status: stored.status || "Not Started", dueDate: stored.nextDue || "" };
+            });
+            const manualTasks = extraOngoing.map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.nextDue || "" }));
+            const all = [...dbTasks, ...manualTasks];
+            return all.length ? [{ id: "ongoing", label: "Ongoing", tasks: all }] : [];
+          })(),
+          // 7. Miscellaneous
+          ...(miscTasks.length ? [{
+            id: "misc", label: "Miscellaneous",
+            tasks: miscTasks.map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.dueDate || "" })),
           }] : []),
         ].filter(cat => cat.tasks.length > 0);
 
@@ -7675,12 +7796,7 @@ export default function App() {
 
           return (
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                  <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
-                    All Clients
-                  </div>
+           
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => setModal(newClient(tasksData))} style={btnPrimary}>+ Add Client</button>
                     <label title="Import from spreadsheet" style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
@@ -7708,8 +7824,7 @@ export default function App() {
                         }}
                       />
                     </label>
-                  </div>
-                </div>
+ 
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                   {filtered.length} of {clients.length} shown
                   {activeFilterCount > 0 && (
@@ -7722,7 +7837,7 @@ export default function App() {
                     </button>
                   )}
                 </div>
-              </div>
+
             </div>
 
             {/* Filters row 1: search + core filters */}
@@ -8330,7 +8445,7 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
     });
   }
   // Miscellaneous
-  if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Miscellaneous" || categoryFilter === "Misc") {
+  if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Miscellaneous" || categoryFilter === "Miscellaneous") {
     (c.miscTasks || []).forEach((t, i) => push(t.title || "Unnamed", "Miscellaneous", t, "miscTasks", null, i));
   }
   // Ongoing
@@ -8341,12 +8456,18 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
     const hasHMOC = medPlansC.some(p => p.type && p.type.toUpperCase().includes("HMO"));
     const hasPPOC = medPlansC.some(p => p.type && p.type.toUpperCase().includes("PPO"));
     Object.entries(c.ongoingTasks || {}).forEach(([taskId, t]) => {
+      if (taskId === "__extra") return; // handled separately below
       if (!t || t.status === "N/A") return;
       const taskDef = (tasksDb || []).find(td => td.id === taskId);
       if (taskDef?.eligibilityRule === "blue_insights") {
         if (medEnrolledC < 50 || (!hasHMOC && !hasPPOC)) return;
       }
       push(taskDef?.label || taskId, "Ongoing", t, "ongoingTasks", taskId);
+    });
+    // Manual extra ongoing tasks
+    ((c.ongoingTasks || {}).__extra || []).forEach((t, i) => {
+      if (!t || t.status === "N/A") return;
+      push(t.title || "Unnamed", "Ongoing", { ...t, dueDate: t.nextDue || "" }, "ongoingTasksExtra", null, i);
     });
   }
   return items;
@@ -8358,7 +8479,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addForm, setAddForm] = useState({
-    clientId: "", category: "Misc", title: "", assignee: "", dueDate: "", notes: "",
+    clientId: "", category: "Miscellaneous", title: "", assignee: "", dueDate: "", notes: "",
   });
   const [ovTeam,     setOvTeam]     = useState("All");
   const [ovMarket,   setOvMarket]   = useState("All");
@@ -8435,7 +8556,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
     "Post-OE":         { bg: "#e8efd5", text: "#3d4f20" },
     "Compliance":      { bg: "#eef0e0", text: "#7a8a3d" },
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878" },
-    "Misc":            { bg: "#edf2f7", text: "#3e5878" },
+    "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878" },
     "Ongoing":         { bg: "#d8e6d0", text: "#54652d" },
   };
   const statusDot = { "Not Started": "#94a3b8", "In Progress": "#eab308" };
@@ -8517,7 +8638,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         const teamMembers = selClient
           ? (selClient.team === "India" ? INDIA_MEMBERS : JULIET_MEMBERS)
           : ALL_MEMBERS;
-        const TASK_CATS = ["Misc", "Post-OE", "Pre-Renewal", "Compliance", "Open Enrollment"];
+        const TASK_CATS = ["Miscellaneous", "Post-OE", "Pre-Renewal", "Compliance", "Open Enrollment"];
 
         function saveAddTask() {
           if (!addForm.clientId || !addForm.title.trim()) return;
@@ -8533,7 +8654,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             notes: addForm.notes,
             completedDate: "",
           };
-          if (addForm.category === "Misc") {
+          if (addForm.category === "Miscellaneous") {
             updated.miscTasks = [...(updated.miscTasks || []), newTask];
           } else if (addForm.category === "Post-OE") {
             updated.postOETasks = [...(updated.postOETasks || []), newTask];
@@ -8620,7 +8741,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                   color: (!addForm.clientId || !addForm.title.trim()) ? "#94a3b8" : "#fff",
                   border: "none", cursor: (!addForm.clientId || !addForm.title.trim()) ? "default" : "pointer",
                   fontFamily: "inherit" }}>Save Task</button>
-              <button type="button" onClick={() => { setShowAddTask(false); setAddForm({ clientId: "", category: "Misc", title: "", assignee: "", dueDate: "", notes: "" }); }}
+              <button type="button" onClick={() => { setShowAddTask(false); setAddForm({ clientId: "", category: "Miscellaneous", title: "", assignee: "", dueDate: "", notes: "" }); }}
                 style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                   border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569",
                   cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
@@ -8670,7 +8791,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
           <span style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", letterSpacing: "1px",
             textTransform: "uppercase", whiteSpace: "nowrap", minWidth: 48 }}>Task</span>
           {[
-            { val: ovCat,      set: setOvCat,      opts: ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Misc","Ongoing"], placeholder: "All Categories" },
+            { val: ovCat,      set: setOvCat,      opts: ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing"], placeholder: "All Categories" },
             { val: ovAssignee, set: setOvAssignee, opts: uniqueAssignees, placeholder: "All Assignees" },
             { val: ovStatus,   set: setOvStatus,   opts: ["Not Started","In Progress"], placeholder: "All Statuses" },
           ].map(({ val, set, opts, placeholder }) => (
@@ -8768,7 +8889,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                 {isOpen && (
                   <div style={{ padding: "10px 16px 14px" }}>
                     {Object.entries(byCategory).map(([cat, tasks]) => {
-                      const cc = catColors[cat] || catColors["Misc"];
+                      const cc = catColors[cat] || catColors["Miscellaneous"];
                       return (
                         <div key={cat} style={{ marginBottom: 10 }}>
                           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "1px",
@@ -9012,7 +9133,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules }) {
     "Post-OE":         { bg: "#e8efd5", text: "#3d4f20", border: "#54652d" },
     "Compliance":      { bg: "#eef0e0", text: "#7a8a3d", border: "#7a8a3d" },
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
-    "Misc":            { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
+    "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
     "Ongoing":         { bg: "#d8e6d0", text: "#54652d", border: "#7a8a3d" },
   };
 
@@ -9048,7 +9169,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules }) {
       {/* Category tabs */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {TASK_CATEGORIES_DB.map(cat => {
-          const cc = categoryColors[cat] || categoryColors["Misc"];
+          const cc = categoryColors[cat] || categoryColors["Miscellaneous"];
           const active = activeCategory === cat;
           return (
             <button key={cat} type="button" onClick={() => { setActiveCategory(cat); setEditingId(null); }} style={{
@@ -9268,7 +9389,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules }) {
           )}
           {filtered.map((task, idx) => {
             const isEditing = editingId === task.id;
-            const cc = categoryColors[task.category] || categoryColors["Misc"];
+            const cc = categoryColors[task.category] || categoryColors["Miscellaneous"];
             const ruleLabel = (dueDateRules || DUE_DATE_RULES).find(r => r.id === task.dueDateRule)?.label || "Manual";
             return (
               <div key={task.id} style={{
