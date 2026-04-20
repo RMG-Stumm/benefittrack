@@ -1,6 +1,7 @@
 import React from "react";
 import { useState, useMemo, useEffect } from "react";
 import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB } from './db.js';
+import { supabase } from './supabase.js';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -6908,7 +6909,72 @@ function persistCarriersData_DEPRECATED(list) {
   try { localStorage.setItem(CARRIERS_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 
+function PinScreen({ onSuccess }) {
+  const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState([]);
+
+  useEffect(() => {
+    supabase.from('users').select('*').then(({ data }) => {
+      if (data) setUsers(data);
+    });
+  }, []);
+
+  async function handleSubmit() {
+    if (!name || !pin) { setError("Please select your name and enter your PIN."); return; }
+    setLoading(true);
+    setError("");
+    const user = users.find(u => u.name === name);
+    if (!user) { setError("User not found."); setLoading(false); return; }
+    if (String(user.pin) !== String(pin)) { setError("Incorrect PIN. Please try again."); setPin(""); setLoading(false); return; }
+    onSuccess({ name: user.name, role: user.role, team: user.team });
+  }
+
+  const uniqueNames = [...new Set(users.map(u => u.name))].sort();
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "40px 48px", maxWidth: 400, width: "100%", boxShadow: "0 25px 60px rgba(0,0,0,.12)", textAlign: "center" }}>
+        <img src="data:image/png;base64,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" style={{ height: 56, width: "auto", marginBottom: 16 }} alt="logo" />
+        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 24, color: "#0f172a", marginBottom: 4 }}>BenefitTrack</div>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 32 }}>Sign in to continue</div>
+
+        <div style={{ textAlign: "left", marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 6 }}>Your Name</label>
+          <select value={name} onChange={e => setName(e.target.value)} style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8, fontSize: 14, fontFamily: "inherit", background: "#fff" }}>
+            <option value="">— Select your name —</option>
+            {uniqueNames.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+
+        <div style={{ textAlign: "left", marginBottom: 24 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 6 }}>PIN</label>
+          <input
+            type="password"
+            value={pin}
+            onChange={e => setPin(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
+            placeholder="Enter your PIN"
+            maxLength={8}
+            style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8, fontSize: 18, fontFamily: "inherit", letterSpacing: 8, textAlign: "center", boxSizing: "border-box" }}
+          />
+        </div>
+
+        {error && <div style={{ color: "#dc2626", fontSize: 13, fontWeight: 600, marginBottom: 16 }}>{error}</div>}
+
+        <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 9, border: "none", background: "linear-gradient(135deg,#3e5878,#507c9c)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
+          {loading ? "Checking..." : "Sign In"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+
   // ── Supabase data loading ──
   useEffect(() => {
     async function loadAll() {
@@ -7135,6 +7201,10 @@ export default function App() {
       .sort((a, b) => a._days - b._days); // most overdue first
   }, [clients]);
 
+  if (!currentUser) {
+    return <PinScreen onSuccess={setCurrentUser} />;
+  }
+
   return (
     <div style={{
       minHeight: "100vh", background: "#f8fafc",
@@ -7167,6 +7237,7 @@ export default function App() {
               BenefitTrack
             </div>
             <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500 }}>Client Renewal Management</div>
+           <div style={{ fontSize: 11, color: "#507c9c", marginTop: 2, fontWeight: 600 }}>👤 {currentUser.name}</div> 
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -7188,6 +7259,7 @@ export default function App() {
             <button onClick={() => setModal(newClient(tasksData))} style={btnPrimary}>
               + Add Client
             </button>
+            
             <label title="Import from spreadsheet" style={{
               ...btnPrimary, display: "flex", alignItems: "center", gap: 6,
               cursor: "pointer", userSelect: "none",
@@ -7216,6 +7288,7 @@ export default function App() {
                 }}
               />
             </label>
+            <button onClick={() => setCurrentUser(null)} style={{ ...btnOutline, fontSize: 12, padding: "7px 14px" }}>Sign Out</button>
           </div>
         </div>
       </div>
