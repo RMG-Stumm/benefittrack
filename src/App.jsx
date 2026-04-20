@@ -6001,7 +6001,7 @@ function parseClientSpreadsheet(rows, tasksDb) {
 // ── Meetings View ─────────────────────────────────────────────────────────────
 
 function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient, currentUser, userTeamId }) {
-  const isRestricted = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!userTeamId;
+  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
   const [showForm, setShowForm]     = useState(false);
   const [editId, setEditId]         = useState(null);
   const [filterTeam, setFilterTeam] = useState(isRestricted ? userTeamId : "All");
@@ -7161,7 +7161,7 @@ export default function App() {
   const userTeamId = currentUser?.team || null;
 
   const filtered = useMemo(() => {
-    const teamRestricted = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!userTeamId;
+    const teamRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
     let list = clients.filter(c => {
       if (teamRestricted && c.team !== userTeamId) return false;
       const q = search.toLowerCase();
@@ -7433,7 +7433,7 @@ export default function App() {
           const allSitusD  = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
           const allFundingD = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
 
-          const teamRestricted2 = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!userTeamId;
+          const teamRestricted2 = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
           const dashFiltered = upcoming120.filter(c => {
             if (teamRestricted2 && c.team !== userTeamId) return false;
             if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
@@ -7594,7 +7594,7 @@ export default function App() {
           const allSitusR   = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
           const allFundingR = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
 
-          const teamRestricted3 = currentUser && !["Team Lead","VP"].includes(currentUser.role);
+          const teamRestricted3 = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
           const renewalsFiltered = upcoming120.filter(c => {
             if (teamRestricted3 && c.team !== userTeamId) return false;
             if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
@@ -8524,7 +8524,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   , [clients]);
 
   const clientRows = useMemo(() => {
-    const teamRestrictedOT = currentUser && !["Team Lead","VP"].includes(currentUser.role) && !!userTeamId;
+    const teamRestrictedOT = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
     return clients
       .filter(c => !teamRestrictedOT || c.team === userTeamId)
       .map(c => {
