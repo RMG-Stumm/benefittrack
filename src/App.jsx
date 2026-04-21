@@ -8054,6 +8054,7 @@ function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
                 <select value={m.role || ""} onChange={e => updateMember(i, "role", e.target.value)}
                   style={{ padding: "7px 10px", border: "1.5px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }}>
                   <option value="">— Select Role —</option>
+                  <option value="VP">VP</option>
                   <option value="Team Lead">Team Lead</option>
                   <option value="Account Executive">Account Executive</option>
                   <option value="Account Manager">Account Manager</option>
@@ -8062,7 +8063,10 @@ function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
                 <input type="email" value={m.email || ""} onChange={e => updateMember(i, "email", e.target.value)}
                   placeholder="email@company.com"
                   style={{ padding: "7px 10px", border: "1.5px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }} />
-                <button onClick={() => removeMember(i)} style={{ background: "#fee2e2", border: "none", borderRadius: 6, padding: "7px 10px", cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700 }}>✕</button>
+                {canDeleteTeam && (
+                  <button onClick={() => removeMember(i)} style={{ background: "#fee2e2", border: "none", borderRadius: 6, padding: "7px 10px", cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700 }}>✕</button>
+                )}
+                {!canDeleteTeam && <div />}
               </div>
             ))}
             <button onClick={addMember} style={{
