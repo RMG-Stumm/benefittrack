@@ -152,17 +152,11 @@ export async function deleteDDR(id) {
 export async function fetchMeetings() {
   const { data, error } = await supabase.from('meetings').select('*').order('created_at', { ascending: false })
   if (error) { console.error('fetchMeetings error:', error); return null }
-  return data.map(row => row.data ? { ...row.data, id: row.id } : row)
+  return data
 }
 
 export async function upsertMeeting(meeting) {
-  const { error } = await supabase.from('meetings').upsert({
-    id: meeting.id,
-    team: meeting.team || '',
-    date: meeting.date || null,
-    data: meeting,
-    created_at: meeting.createdAt || new Date().toISOString(),
-  })
+  const { error } = await supabase.from('meetings').upsert(meeting)
   if (error) console.error('upsertMeeting error:', error)
 }
 
@@ -172,27 +166,38 @@ export async function deleteMeeting(id) {
 }
 // ── TEAMS ─────────────────────────────────────────────────────────────────────
 
+const TEAM_DEFAULTS = {
+  India:  { color: '#cceeff', border: '#00A2E8', text: '#006fa0' },
+  Juliet: { color: '#ccf5d8', border: '#2ADB5E', text: '#1a9040' },
+}
+
 export async function fetchTeams() {
   const { data, error } = await supabase.from('teams').select('*')
   if (error) { console.error('fetchTeams error:', error); return null }
-  return data.map(row => ({
-    id: row.id,
-    label: row.label,
-    color: row.color,
-    border: row.border,
-    text: row.text,
-    members: row.members || [],
-  }))
+  return data.map(row => {
+    const defaults = TEAM_DEFAULTS[row.id] || {}
+    return {
+      id: row.id,
+      label: row.label,
+      color: row.color || defaults.color || '#f1f5f9',
+      border: row.border || defaults.border || '#94a3b8',
+      text: row.text || defaults.text || '#475569',
+      members: row.members || [],
+      createdBy: row.created_by || '',
+    }
+  })
 }
 
 export async function upsertTeam(team) {
+  if (!team.id) { console.error('upsertTeam: missing id', team); return; }
   const { error } = await supabase.from('teams').upsert({
     id: team.id,
-    label: team.label,
-    color: team.color,
-    border: team.border,
-    text: team.text,
+    label: team.label || '',
+    color: team.color || '',
+    border: team.border || '',
+    text: team.text || '',
     members: team.members || [],
+    created_by: team.createdBy || '',
   })
   if (error) console.error('upsertTeam error:', error)
 }

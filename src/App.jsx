@@ -7459,7 +7459,7 @@ export default function App() {
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                   Next 120 days — {dashFiltered.length} of {upcoming120.length} client{upcoming120.length !== 1 ? "s" : ""}
                   {activeDashFilters > 0 && (
-                    <button onClick={() => setDashFilter({ team:"All",market:"All",carrier:"All",situs:"All",funding:"All" })}
+                    <button onClick={() => setDashFilter({ team: ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? "All" : (userTeamId || "All"), market:"All",carrier:"All",situs:"All",funding:"All" })}
                       style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
                         background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
                       Clear {activeDashFilters} filter{activeDashFilters > 1 ? "s" : ""}
@@ -7471,15 +7471,17 @@ export default function App() {
 
             {/* Filter bar */}
             <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-              {/* Team dropdown */}
-              <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
-                style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                  background: dashFilter.team !== "All" ? "#dce8f0" : undefined }}>
-                <option value="All">All Teams</option>
-                {Object.entries(TEAMS).map(([key, t]) => (
-                  <option key={key} value={key}>Team {t.label}</option>
-                ))}
-              </select>
+              {/* Team dropdown — Leads/VP only */}
+              {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
+                <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
+                    background: dashFilter.team !== "All" ? "#dce8f0" : undefined }}>
+                  <option value="All">All Teams</option>
+                  {Object.entries(TEAMS).map(([key, t]) => (
+                    <option key={key} value={key}>Team {t.label}</option>
+                  ))}
+                </select>
+              )}
               {/* Dropdown filters */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <select value={dashFilter.market} onChange={e => setDashF("market", e.target.value)}
@@ -7620,7 +7622,7 @@ export default function App() {
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                   Next 120 days — {renewalsFiltered.length} of {upcoming120.length} client{upcoming120.length !== 1 ? "s" : ""}
                   {activeRFilters > 0 && (
-                    <button onClick={() => setDashFilter({ team:"All",market:"All",carrier:"All",situs:"All",funding:"All" })}
+                    <button onClick={() => setDashFilter({ team: ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? "All" : (userTeamId || "All"), market:"All",carrier:"All",situs:"All",funding:"All" })}
                       style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
                         background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
                       Clear {activeRFilters} filter{activeRFilters > 1 ? "s" : ""}
@@ -7633,15 +7635,17 @@ export default function App() {
 
             {/* Filter bar — same structure as dashboard */}
             <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-              {/* Team dropdown */}
-              <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
-                style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                  background: dashFilter.team !== "All" ? "#dce8f0" : undefined }}>
-                <option value="All">All Teams</option>
-                {Object.entries(TEAMS).map(([key, t]) => (
-                  <option key={key} value={key}>Team {t.label}</option>
-                ))}
-              </select>
+              {/* Team dropdown — Leads/VP only */}
+              {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
+                <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
+                    background: dashFilter.team !== "All" ? "#dce8f0" : undefined }}>
+                  <option value="All">All Teams</option>
+                  {Object.entries(TEAMS).map(([key, t]) => (
+                    <option key={key} value={key}>Team {t.label}</option>
+                  ))}
+                </select>
+              )}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <select value={dashFilter.market} onChange={e => setDashF("market", e.target.value)}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 130px",
@@ -7706,11 +7710,17 @@ export default function App() {
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => setView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
-                <button onClick={() => setTeamModal({ id: "", label: "", members: [] })} style={btnPrimary}>+ Add Team</button>
+                {["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim()) && (
+                  <button onClick={() => setTeamModal({ id: "", label: "", members: [] })} style={btnPrimary}>+ Add Team</button>
+                )}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
-              {teams.filter(team => !currentUser || ["Team Lead","VP"].includes(currentUser.role) || team.id === userTeamId).map(team => (
+              {teams.filter(team => 
+                ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ||
+                team.id === userTeamId ||
+                team.createdBy === currentUser?.name
+              ).map(team => (
                 <div key={team.id} style={{
                   background: "#fff", borderRadius: 14,
                   border: `2px solid ${team.border || "#e2e8f0"}`,
@@ -7859,11 +7869,13 @@ export default function App() {
                 placeholder="🔍  Search clients..."
                 style={{ ...inputStyle, flex: "1 1 200px", minWidth: 160 }}
               />
-              <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
-                style={{ ...inputStyle, flex: "0 0 150px", background: filterTeam !== "All" ? "#dce8f0" : undefined }}>
-                <option value="All">All Teams</option>
-                {Object.keys(TEAMS).map(k => <option key={k} value={k}>Team {k}</option>)}
-              </select>
+              {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
+                <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+                  style={{ ...inputStyle, flex: "0 0 150px", background: filterTeam !== "All" ? "#dce8f0" : undefined }}>
+                  <option value="All">All Teams</option>
+                  {Object.keys(TEAMS).map(k => <option key={k} value={k}>Team {k}</option>)}
+                </select>
+              )}
               <select value={filterMarket} onChange={e => setFilterMarket(e.target.value)}
                 style={{ ...inputStyle, flex: "0 0 150px", background: filterMarket !== "All" ? "#dce8f0" : undefined }}>
                 <option value="All">All Markets</option>
@@ -7960,12 +7972,17 @@ export default function App() {
         <TeamEditModal
           team={teamModal}
           onSave={t => {
-            const updated = t.id && teams.some(x => x.id === t.id)
-              ? teams.map(x => x.id === t.id ? t : x)
-              : [...teams, { ...t, id: t.label.replace(/\s+/g,"_").toLowerCase() || Date.now().toString() }];
+            const isNew = !t.id || !teams.some(x => x.id === t.id);
+            const finalTeam = isNew
+              ? { ...t, id: t.label.replace(/\s+/g,"_").toLowerCase() || ("team_" + Date.now()), color: t.color || "#f1f5f9", border: t.border || "#94a3b8", text: t.text || "#475569", createdBy: currentUser?.name || "" }
+              : t;
+            const updated = isNew
+              ? [...teams, finalTeam]
+              : teams.map(x => x.id === finalTeam.id ? finalTeam : x);
             setTeams(updated);
             persistTeams(updated);
             setTeamModal(null);
+            if (isNew) alert(`Team "${finalTeam.label}" was saved successfully.`);
           }}
           onDelete={id => {
             if (confirm("Delete this team?")) {
