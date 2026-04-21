@@ -8042,9 +8042,14 @@ function TeamEditModal({ team, onSave, onDelete, onClose }) {
                 <input value={m.name || ""} onChange={e => updateMember(i, "name", e.target.value)}
                   placeholder="Name"
                   style={{ padding: "7px 10px", border: "1.5px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }} />
-                <input value={m.role || ""} onChange={e => updateMember(i, "role", e.target.value)}
-                  placeholder="Role"
-                  style={{ padding: "7px 10px", border: "1.5px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }} />
+                <select value={m.role || ""} onChange={e => updateMember(i, "role", e.target.value)}
+                  style={{ padding: "7px 10px", border: "1.5px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }}>
+                  <option value="">— Select Role —</option>
+                  <option value="Team Lead">Team Lead</option>
+                  <option value="Account Executive">Account Executive</option>
+                  <option value="Account Manager">Account Manager</option>
+                  <option value="Account Coordinator">Account Coordinator</option>
+                </select>
                 <input type="email" value={m.email || ""} onChange={e => updateMember(i, "email", e.target.value)}
                   placeholder="email@company.com"
                   style={{ padding: "7px 10px", border: "1.5px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }} />
