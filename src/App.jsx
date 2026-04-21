@@ -5345,7 +5345,8 @@ function CheckRow({ id, label, checked, onChange }) {
 
 // ── Client Card ───────────────────────────────────────────────────────────────
 
-function ClientCard({ client, onEdit, onDelete, tasksDb }) {
+function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
+  const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const [expandedCat, setExpandedCat] = useState(null);
   const team = TEAMS[client.team];
   const badge = renewalBadge(client.renewalDate);
@@ -5428,10 +5429,12 @@ function ClientCard({ client, onEdit, onDelete, tasksDb }) {
             background: "#f1f5f9", border: "none", borderRadius: 7, padding: "5px 10px",
             fontSize: 12, color: "#475569", cursor: "pointer", fontWeight: 600,
           }}>Edit</button>
-          <button onClick={() => onDelete(client.id)} style={{
-            background: "#fee2e2", border: "none", borderRadius: 7, padding: "5px 10px",
-            fontSize: 12, color: "#991b1b", cursor: "pointer", fontWeight: 600,
-          }}>✕</button>
+          {canDelete && (
+            <button onClick={() => onDelete(client.id)} style={{
+              background: "#fee2e2", border: "none", borderRadius: 7, padding: "5px 10px",
+              fontSize: 12, color: "#991b1b", cursor: "pointer", fontWeight: 600,
+            }}>✕</button>
+          )}
         </div>
       </div>
 
@@ -7684,7 +7687,7 @@ export default function App() {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 18 }}>
                 {renewalsFiltered.map(c => (
-                  <ClientCard key={c.id} client={c} onEdit={setModal} onDelete={deleteClient} tasksDb={tasksData} />
+                  <ClientCard key={c.id} client={c} onEdit={setModal} onDelete={deleteClient} tasksDb={tasksData} currentUser={currentUser} />
                 ))}
               </div>
             )}
@@ -7923,7 +7926,7 @@ export default function App() {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 18 }}>
                 {filtered.map(c => (
-                  <ClientCard key={c.id} client={c} onEdit={setModal} onDelete={deleteClient} tasksDb={tasksData} />
+                  <ClientCard key={c.id} client={c} onEdit={setModal} onDelete={deleteClient} tasksDb={tasksData} currentUser={currentUser} />
                 ))}
               </div>
             )}
@@ -7949,6 +7952,7 @@ export default function App() {
           <CarriersView
             carriers={carriersData}
             onSave={setCarriersData}
+            currentUser={currentUser}
           />
         )}
 
@@ -7958,6 +7962,7 @@ export default function App() {
             onSave={setTasksData}
             dueDateRules={dueDateRules}
             onSaveDueDateRules={setDueDateRules}
+            currentUser={currentUser}
           />
         )}
 
@@ -7993,6 +7998,7 @@ export default function App() {
             }
           }}
           onClose={() => setTeamModal(null)}
+          currentUser={currentUser}
         />
       )}
     </div>
@@ -8001,8 +8007,11 @@ export default function App() {
 
 // ── Team Edit Modal ──────────────────────────────────────────────────────────
 
-function TeamEditModal({ team, onSave, onDelete, onClose }) {
+function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
   const [data, setData] = useState({ ...team });
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const isAE = currentUser?.role?.trim() === "Account Executive";
+  const canDeleteTeam = isLead || (isAE && (team.createdBy === currentUser?.name || data.createdBy === currentUser?.name));
 
   function setField(k, v) { setData(p => ({ ...p, [k]: v })); }
 
@@ -8065,7 +8074,7 @@ function TeamEditModal({ team, onSave, onDelete, onClose }) {
         </div>
         <div style={{ padding: "14px 24px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: 10, background: "#f8fafc" }}>
           <div>
-            {team.id && (
+            {team.id && canDeleteTeam && (
               <button onClick={() => onDelete(data.id)} style={{ background: "#fee2e2", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>Delete Team</button>
             )}
           </div>
@@ -8081,7 +8090,8 @@ function TeamEditModal({ team, onSave, onDelete, onClose }) {
 
 // ── CarriersView ─────────────────────────────────────────────────────────────
 
-function CarriersView({ carriers, onSave }) {
+function CarriersView({ carriers, onSave, currentUser }) {
+  const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const [activeCategory, setActiveCategory] = useState("Medical");
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState(null);
@@ -8254,7 +8264,8 @@ function CarriersView({ carriers, onSave }) {
                     <button type="button" onClick={() => deleteCarrier(carrier.id)}
                       style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                        cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                        cursor: "pointer", fontFamily: "inherit",
+                        display: canDelete ? "inline-block" : "none" }}>✕</button>
                   </div>
                 </div>
               </div>
@@ -9069,7 +9080,8 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   );
 }
 
-function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules }) {
+function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUser }) {
+  const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const [activeCategory, setActiveCategory] = useState("Compliance");
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState(null);
@@ -9340,11 +9352,11 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules }) {
                               style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                                 border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#475569",
                                 cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
-                            <button type="button" onClick={() => {
+                            {canDelete && <button type="button" onClick={() => {
                               if (confirm("Delete this rule?")) onSaveDueDateRules(prev => prev.filter(r => r.id !== rule.id));
                             }} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                               border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                              cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                              cursor: "pointer", fontFamily: "inherit" }}>✕</button>}
                           </>
                         )}
                       </div>
@@ -9488,7 +9500,8 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules }) {
                     <button type="button" onClick={() => deleteTask(task.id)}
                       style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                        cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                        cursor: "pointer", fontFamily: "inherit",
+                        display: canDelete ? "inline-block" : "none" }}>✕</button>
                   </div>
                 </div>
               </div>
