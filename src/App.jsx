@@ -7259,7 +7259,8 @@ useEffect(() => {
   }, [clients]);
 
   // View: "dashboard" | "clients" | "renewals" | "teams"
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState(() => sessionStorage.getItem("bt_view") || "dashboard");
+  const changeView = (v) => { setView(v); sessionStorage.setItem("bt_view", v); };
   const [meetings, setMeetingsRaw] = useState([]);
   function setMeetings(updater) {
     setMeetingsRaw(prev => {
@@ -7403,7 +7404,7 @@ useEffect(() => {
           {/* Nav tabs */}
           <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 9, padding: 3, gap: 2 }}>
             {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"]].map(([v, label]) => (
-              <button key={v} onClick={() => setView(v)} style={{
+              <button key={v} onClick={() => changeview(v)} style={{
                 background: view === v ? "#fff" : "transparent",
                 border: "none", borderRadius: 7, padding: "6px 14px",
                 fontSize: 12, fontWeight: 700, cursor: "pointer",
@@ -7424,7 +7425,7 @@ useEffect(() => {
         {/* Stats tiles — Open Tasks */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(1,1fr)", gap: 14, marginBottom: 28, maxWidth: 320 }}>
           {[
-            { label: "Open Tasks", value: openTasksCount, icon: "🚨", color: "#ef4444", action: () => setView("overdue") },
+            { label: "Open Tasks", value: openTasksCount, icon: "🚨", color: "#ef4444", action: () => changeview("overdue") },
           ].map(s => (
             <div key={s.label}
               className="stat-tile"
@@ -7654,7 +7655,7 @@ useEffect(() => {
                   )}
                 </div>
               </div>
-              <button onClick={() => setView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
+              <button onClick={() => changeview("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
             </div>
 
             {/* Filter bar — same structure as dashboard */}
@@ -7733,7 +7734,7 @@ useEffect(() => {
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{teams.length} team{teams.length !== 1 ? "s" : ""}</div>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
+                <button onClick={() => changeview("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
                 {["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim()) && (
                   <button onClick={() => setTeamModal({ id: "", label: "", members: [] })} style={btnPrimary}>+ Add Team</button>
                 )}
