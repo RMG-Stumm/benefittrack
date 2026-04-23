@@ -7106,8 +7106,29 @@ function PinScreen({ onSuccess }) {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+  try { return JSON.parse(sessionStorage.getItem("bt_user")) || null; }
+  catch { return null; }
+});
 
+useEffect(() => {
+  if (!currentUser) return;
+  let timer;
+  const reset = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      setCurrentUser(null);
+      sessionStorage.removeItem("bt_user");
+    }, 30 * 60 * 1000);
+  };
+  const events = ["mousemove","mousedown","keydown","touchstart","scroll"];
+  events.forEach(e => window.addEventListener(e, reset));
+  reset();
+  return () => {
+    clearTimeout(timer);
+    events.forEach(e => window.removeEventListener(e, reset));
+  };
+}, [currentUser]);
   // ── Supabase data loading ──
   useEffect(() => {
     async function loadAll() {
@@ -7340,7 +7361,7 @@ export default function App() {
   }, [clients]);
 
   if (!currentUser) {
-    return <PinScreen onSuccess={setCurrentUser} />;
+  return <PinScreen onSuccess={user => { setCurrentUser(user); sessionStorage.setItem("bt_user", JSON.stringify(user)); }} />;
   }
 
   return (
@@ -7393,7 +7414,7 @@ export default function App() {
             ))}
           </div>
 <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => setCurrentUser(null)} style={{ ...btnOutline, fontSize: 12, padding: "7px 14px" }}>Sign Out</button>
+                      <button onClick={() => { setCurrentUser(null); sessionStorage.removeItem("bt_user"); }} style={{ ...btnOutline, fontSize: 12, padding: "7px 14px" }}>Sign Out</button>
           </div>
         </div>
       </div>
