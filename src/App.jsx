@@ -1338,6 +1338,26 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           </div>
         )}
 
+        {/* Task sub-tab bar — only shown when Tasks tab is active */}
+        {!historyTab && !archivePanel && activeTab === "tasks" && (
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: 0,
+            borderBottom: "2px solid #e2e8f0", background: "#fff",
+            paddingLeft: 20, flexShrink: 0,
+          }}>
+            {TASK_TABS.map(tt => (
+              <button key={tt.id} type="button" onClick={() => setTaskTab(tt.id)} style={{
+                padding: "9px 16px", fontSize: 12, fontWeight: 700,
+                fontFamily: "inherit", cursor: "pointer", border: "none",
+                borderBottom: taskTab === tt.id ? `3px solid ${tt.accent}` : "3px solid transparent",
+                background: taskTab === tt.id ? tt.bg : "transparent",
+                color: taskTab === tt.id ? tt.accent : "#94a3b8",
+                marginBottom: -2, transition: "all .12s", whiteSpace: "nowrap",
+              }}>{tt.label}</button>
+            ))}
+          </div>
+        )}
+
         {/* Body — History view OR normal record */}
         <div style={{ overflow: "auto", padding: "20px 28px", flex: 1 }}>
 
@@ -2375,53 +2395,94 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </label>
               </div>
             )}
-            {/* ── Add Benefit picker ── */}
+            {/* ── Add Coverage button + checklist table ── */}
             {(() => {
               const activeCatIds = Object.keys(data.benefitActive || {}).filter(k => !!(data.benefitActive || {})[k]);
-              const inactiveBenefits = BENEFITS_SCHEMA.filter(cat => !activeCatIds.includes(cat.id));
               const showPicker = !!(collapsed._showBenefitPicker);
               const setShowPicker = v => setCollapsed(p => ({ ...p, _showBenefitPicker: v }));
+
+              // Group BENEFITS_SCHEMA by category
+              const groups = [
+                { label: "Core Health",       ids: ["medical","dental","vision"] },
+                { label: "Life & Disability",  ids: ["basic_life","vol_life","std","ltd"] },
+                { label: "Worksite",           ids: ["worksite"] },
+                { label: "Wellness / Lifestyle",ids: ["telehealth","eap","identity_theft","prepaid_legal","pet_insurance"] },
+                { label: "Statutory",          ids: ["nydbl_pfl"] },
+                { label: "Tax-Advantaged",     ids: ["fsa","hsa_funding"] },
+              ];
+
+              // Benefits that need Rates/PEPM per plan
+              const RATE_BENEFITS = new Set(["medical","dental","vision","worksite"]);
+
               return (
-                <div style={{ marginBottom: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    {inactiveBenefits.length > 0 && (
-                      <button type="button" onClick={() => setShowPicker(!showPicker)}
-                        style={{ padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                          border: `1.5px solid ${showPicker ? "#507c9c" : "#cbd5e1"}`,
-                          background: showPicker ? "#dce8f0" : "#fff",
-                          color: showPicker ? "#2d4a6b" : "#475569",
-                          cursor: "pointer", fontFamily: "inherit" }}>
-                        {showPicker ? "✕ Close" : "+ Add Benefit"}
-                      </button>
-                    )}
-                    {activeCatIds.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: showPicker ? 12 : 0 }}>
+                    <button type="button" onClick={() => setShowPicker(!showPicker)} style={{
+                      padding: "8px 20px", borderRadius: 9, fontSize: 13, fontWeight: 700,
+                      border: `2px solid ${showPicker ? "#507c9c" : "#3e5878"}`,
+                      background: showPicker ? "#dce8f0" : "linear-gradient(135deg,#3e5878,#507c9c)",
+                      color: showPicker ? "#2d4a6b" : "#fff",
+                      cursor: "pointer", fontFamily: "inherit", transition: "all .15s",
+                    }}>
+                      {showPicker ? "✕ Close" : "＋ Add Coverage"}
+                    </button>
+                    {activeCatIds.length > 0 && !showPicker && (
                       <span style={{ fontSize: 11, color: "#94a3b8" }}>
-                        {activeCatIds.length} benefit{activeCatIds.length !== 1 ? "s" : ""} active
+                        {activeCatIds.length} line{activeCatIds.length !== 1 ? "s" : ""} of coverage active
                       </span>
                     )}
                   </div>
+
                   {showPicker && (
-                    <div style={{ background: "#f0f5fa", borderRadius: 10, border: "1.5px solid #507c9c",
-                      padding: "12px 14px", marginTop: 8 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#3e5878", marginBottom: 8 }}>
-                        Select a benefit to add:
+                    <div style={{ background: "#f0f5fa", borderRadius: 12, border: "1.5px solid #507c9c", padding: "16px" }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "#2d4a6b", marginBottom: 12 }}>
+                        Select lines of coverage to add — check all that apply:
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {inactiveBenefits.map(cat => (
-                          <button key={cat.id} type="button" onClick={() => {
-                            setData(p => {
-                              const newActive = { ...(p.benefitActive || {}), [cat.id]: true };
-                              const newDates = { ...(p.benefitEffectiveDates || {}) };
-                              if (!newDates[cat.id] && p.renewalDate) newDates[cat.id] = p.renewalDate;
-                              return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
-                            });
-                            setShowPicker(false);
-                          }} style={{ padding: "5px 14px", borderRadius: 99, fontSize: 12, fontWeight: 700,
-                            border: "1.5px solid #507c9c", background: "#fff", color: "#2d4a6b",
-                            cursor: "pointer", fontFamily: "inherit", transition: "all .12s" }}>
-                            {cat.label}
-                          </button>
-                        ))}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                        {groups.map(grp => {
+                          const schemaBenefits = grp.ids.map(id => BENEFITS_SCHEMA.find(c => c.id === id)).filter(Boolean);
+                          if (schemaBenefits.length === 0) return null;
+                          return (
+                            <div key={grp.label}>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".8px",
+                                textTransform: "uppercase", marginBottom: 6, paddingBottom: 4,
+                                borderBottom: "1px solid #cbd5e1" }}>{grp.label}</div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {schemaBenefits.map(cat => {
+                                  const isActive = !!(data.benefitActive || {})[cat.id];
+                                  return (
+                                    <label key={cat.id} style={{ display: "flex", alignItems: "center", gap: 9,
+                                      cursor: "pointer", padding: "5px 8px", borderRadius: 7,
+                                      background: isActive ? "#dce8f0" : "#fff",
+                                      border: `1.5px solid ${isActive ? "#507c9c" : "#e2e8f0"}`,
+                                      transition: "all .12s" }}>
+                                      <input type="checkbox" checked={isActive}
+                                        onChange={() => {
+                                          setData(p => {
+                                            const newActive = { ...(p.benefitActive || {}), [cat.id]: !isActive };
+                                            const newDates = { ...(p.benefitEffectiveDates || {}) };
+                                            if (!isActive && !newDates[cat.id] && p.renewalDate) newDates[cat.id] = p.renewalDate;
+                                            return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
+                                          });
+                                        }}
+                                        style={{ accentColor: "#507c9c", width: 15, height: 15, flexShrink: 0 }} />
+                                      <span style={{ fontSize: 13, fontWeight: isActive ? 700 : 500,
+                                        color: isActive ? "#2d4a6b" : "#334155" }}>{cat.label}</span>
+                                      {isActive && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700,
+                                        color: "#507c9c" }}>✓ Added</span>}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+                        <button type="button" onClick={() => setShowPicker(false)} style={{
+                          padding: "7px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                          border: "none", background: "linear-gradient(135deg,#3e5878,#507c9c)", color: "#fff",
+                          cursor: "pointer", fontFamily: "inherit" }}>Done</button>
                       </div>
                     </div>
                   )}
@@ -3418,21 +3479,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           {/* ═══════════════ TAB: TASKS ═══════════════ */}
           {activeTab === "tasks" && (<div>
 
-          {/* ── Task sub-tabs ── */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "10px 12px 0",
-            borderBottom: "2px solid #e2e8f0", background: "#f8fafc" }}>
-            {TASK_TABS.map(tt => (
-              <button key={tt.id} type="button" onClick={() => setTaskTab(tt.id)} style={{
-                padding: "7px 14px", borderRadius: "8px 8px 0 0", fontSize: 12, fontWeight: 700,
-                fontFamily: "inherit", cursor: "pointer", border: "none",
-                borderBottom: taskTab === tt.id ? `3px solid ${tt.accent}` : "3px solid transparent",
-                background: taskTab === tt.id ? tt.bg : "transparent",
-                color: taskTab === tt.id ? tt.accent : "#94a3b8",
-                marginBottom: -2, transition: "all .12s",
-              }}>{tt.label}</button>
-            ))}
-          </div>
-
           {/* Pre-Renewal */}
           {taskTab === "preRenewal" && (<div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
@@ -4146,7 +4192,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </button>
             </div>
 
-          </div></div>)} {/* end preRenewal tab */}
+          </div>)} {/* end preRenewal tab */}
 
           {/* Renewal */}
           {taskTab === "renewal" && (<div>
@@ -4469,7 +4515,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </button>
             </div>
 
-          </div></div>)} {/* end renewal tab */}
+          </div>)} {/* end renewal tab */}
 
           {/* Open Enrollment */}
           {taskTab === "oe" && (<div>
@@ -4725,7 +4771,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </button>
             </div>
 
-          </div></div>)} {/* end oe tab */}
+          </div>)} {/* end oe tab */}
 
           {/* Post-OE */}
           {taskTab === "postOE" && (<div>
@@ -4905,7 +4951,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </button>
             </div>
 
-          </div></div>)} {/* end postOE tab */}
+          </div>)} {/* end postOE tab */}
 
           {/* Compliance */}
           {taskTab === "compliance" && (<div>
@@ -5302,7 +5348,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             );
           })()}
 
-          </div></div>)} {/* end compliance tab */}
+          </div>)} {/* end compliance tab */}
 
           {/* Miscellaneous */}
           {taskTab === "misc" && (<div>
