@@ -1191,7 +1191,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
-        background: "#fff", borderRadius: 16, width: "100%", maxWidth: 780,
+        background: "#fff", borderRadius: 16, width: "100%", maxWidth: 1000,
         maxHeight: "92vh", overflow: "hidden", display: "flex", flexDirection: "column",
         boxShadow: "0 25px 60px rgba(0,0,0,.2)",
       }}>
@@ -1359,7 +1359,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
         )}
 
         {/* Body — History view OR normal record */}
-        <div style={{ overflow: "auto", padding: "20px 28px", flex: 1 }}>
+        <div style={{ overflow: "auto", overflowX: "hidden", padding: "20px 28px", flex: 1 }}>
 
           {historyTab ? (
             /* ── Plan Year History ── */
@@ -3486,142 +3486,126 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               {/* Medical Renewal Status — all groups */}
               {(() => {
                 const showRateRelief = !(data.marketSize === "ACA" && data.fundingMethod === "Fully Insured");
+                const rr = data.rateRelief || {};
+                const rv = data.renewalReceived || {};
                 return (
                 <div style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", padding: "12px 14px" }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 10 }}>
                     Medical Renewal Status
                   </div>
-                  {/* Renewal Received */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", paddingBottom: 10, marginBottom: 10, borderBottom: "1px solid #fde68a" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", minWidth: 180 }}>
-                      <input type="checkbox" checked={!!(data.renewalReceived||{}).received}
-                        onChange={e => set("renewalReceived", { ...(data.renewalReceived||{}), received: e.target.checked })}
-                        style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>Renewal Received</span>
-                    </label>
-                    {(data.renewalReceived||{}).received && (
-                      <>
-                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                          Date:
-                          <input type="date" value={(data.renewalReceived||{}).date||""}
-                            onChange={e => {
-                              const newRec = { ...(data.renewalReceived||{}), date: e.target.value };
-                              setData(p => applyDDR({ ...p, renewalReceived: newRec }));
-                            }}
-                            style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: "auto" }} />
-                        </label>
-                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                          Renewal %:
-                          <div style={{ display: "flex", alignItems: "center" }}>
-                            <input type="number" value={(data.renewalReceived||{}).pct||""}
-                              onChange={e => set("renewalReceived", { ...(data.renewalReceived||{}), pct: e.target.value })}
-                              placeholder="0"
-                              style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: 72, textAlign: "right" }} />
-                            <span style={{ marginLeft: 3, fontWeight: 700, color: "#475569" }}>%</span>
-                          </div>
-                        </label>
-                      </>
-                    )}
-                  </div>
-                  {/* Decisions Received Date */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10,
-                    padding: "8px 12px", borderRadius: 9, border: "1px solid #e2e8f0",
-                    background: "#f8fafc" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>
-                      📋 Decisions Received
-                    </span>
-                    <input type="date"
-                      value={data.decisionsReceivedDate || ""}
-                      onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
+
+                  {/* Column headers */}
+                  <div style={{ display: "grid", gridTemplateColumns: `1.4fr 80px 120px 80px${showRateRelief ? " 120px 120px 90px" : ""}`, gap: 6, marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #fde68a" }}>
+                    {["Carrier", "Received", "Date Received", "Renewal %", ...(showRateRelief ? ["Rate Relief Req.", "Rate Relief Rec.", "Negotiated %"] : [])].map(h => (
+                      <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" }}>{h}</div>
+                    ))}
                   </div>
 
-                  {/* Rate Relief — hidden for ACA + Fully Insured */}
-                  {showRateRelief && (
-                    <>
-                  {/* Rate Relief Requested */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", paddingBottom: 10, marginBottom: 10, borderBottom: "1px solid #fde68a" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", minWidth: 180 }}>
-                      <input type="checkbox" checked={!!(data.rateRelief||{}).requested}
-                        onChange={e => set("rateRelief", { ...(data.rateRelief||{}), requested: e.target.checked })}
+                  {/* Single data row */}
+                  <div style={{ display: "grid", gridTemplateColumns: `1.4fr 80px 120px 80px${showRateRelief ? " 120px 120px 90px" : ""}`, gap: 6, alignItems: "center", background: rv.received ? "#fffde7" : "#fff", borderRadius: 6, padding: "4px 0" }}>
+                    {/* Carrier */}
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#78350f", paddingLeft: 4 }}>
+                      {(data.benefitCarriers || {}).medical || <span style={{ opacity: 0.4, fontStyle: "italic", fontWeight: 400 }}>Medical carrier</span>}
+                    </div>
+                    {/* Renewal Received checkbox */}
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+                      <input type="checkbox" checked={!!rv.received}
+                        onChange={e => set("renewalReceived", { ...rv, received: e.target.checked })}
                         style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>Rate Relief Requested</span>
                     </label>
-                    {(data.rateRelief||{}).requested && (
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                        Date:
-                        <input type="date" value={(data.rateRelief||{}).requestedDate||""}
-                          onChange={e => set("rateRelief", { ...(data.rateRelief||{}), requestedDate: e.target.value })}
-                          style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: "auto" }} />
+                    {/* Date Received */}
+                    <input type="date" value={rv.date || ""}
+                      onChange={e => {
+                        const newRec = { ...rv, date: e.target.value };
+                        setData(p => applyDDR({ ...p, renewalReceived: newRec }));
+                      }}
+                      disabled={!rv.received}
+                      style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
+                        opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc" }} />
+                    {/* Renewal % */}
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      <input type="number" value={rv.pct || ""}
+                        onChange={e => set("renewalReceived", { ...rv, pct: e.target.value })}
+                        placeholder="0" disabled={!rv.received}
+                        style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
+                          opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc" }} />
+                      <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
+                    </div>
+                    {/* Rate Relief Requested */}
+                    {showRateRelief && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+                        <input type="checkbox" checked={!!rr.requested}
+                          onChange={e => set("rateRelief", { ...rr, requested: e.target.checked })}
+                          style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
+                        <span style={{ fontSize: 11, color: rr.requested ? "#92400e" : "#94a3b8", fontWeight: rr.requested ? 700 : 400 }}>
+                          {rr.requested ? "Requested" : "No"}
+                        </span>
                       </label>
                     )}
-                  </div>
-                  {/* Rate Relief Received */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", paddingBottom: 10, marginBottom: 10, borderBottom: "1px solid #fde68a" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", minWidth: 180 }}>
-                      <input type="checkbox" checked={!!(data.rateRelief||{}).received}
-                        onChange={e => set("rateRelief", { ...(data.rateRelief||{}), received: e.target.checked })}
-                        style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>Rate Relief Received</span>
-                    </label>
-                    {(data.rateRelief||{}).received && (
-                      <>
-                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                          Date:
-                          <input type="date" value={(data.rateRelief||{}).receivedDate||""}
-                            onChange={e => set("rateRelief", { ...(data.rateRelief||{}), receivedDate: e.target.value })}
-                            style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: "auto" }} />
-                        </label>
-                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                          Rate:
-                          <div style={{ display: "flex", alignItems: "center" }}>
-                            <input type="number" value={(data.rateRelief||{}).pct||""}
-                              onChange={e => set("rateRelief", { ...(data.rateRelief||{}), pct: e.target.value })}
-                              placeholder="0"
-                              style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: 72, textAlign: "right" }} />
-                            <span style={{ marginLeft: 3, fontWeight: 700, color: "#475569" }}>%</span>
-                          </div>
-                        </label>
-                      </>
-                    )}
-                  </div>
-                    </>
-                  )}
-                  {/* Renewal Tracker Updated — Mid-Market and Large only */}
-                  {["Mid-Market", "Large"].includes(data.marketSize) && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", paddingBottom: 10, marginBottom: 10, borderBottom: "1px solid #fde68a" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", minWidth: 180 }}>
-                      <input type="checkbox" checked={!!data.renewalTrackerUpdated}
-                        onChange={e => set("renewalTrackerUpdated", e.target.checked)}
-                        style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>Renewal Tracker Updated</span>
-                    </label>
-                    {data.renewalTrackerUpdated && (
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                        Date:
-                        <input type="date" value={data.renewalTrackerUpdatedDate || ""}
-                          onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
-                          style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: "auto" }} />
+                    {/* Rate Relief Received */}
+                    {showRateRelief && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+                        <input type="checkbox" checked={!!rr.received}
+                          onChange={e => set("rateRelief", { ...rr, received: e.target.checked })}
+                          style={{ accentColor: "#22c55e", width: 15, height: 15 }} />
+                        <span style={{ fontSize: 11, color: rr.received ? "#166534" : "#94a3b8", fontWeight: rr.received ? 700 : 400 }}>
+                          {rr.received ? "Received" : "No"}
+                        </span>
                       </label>
                     )}
+                    {/* Negotiated Renewal % */}
+                    {showRateRelief && (
+                      <div style={{ display: "flex", alignItems: "center" }}>
+                        <input type="number" value={data.negotiatedRenewalPct || ""}
+                          onChange={e => set("negotiatedRenewalPct", e.target.value)}
+                          placeholder="0"
+                          style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
+                            background: data.negotiatedRenewalPct ? "#f0fdf4" : "#fff",
+                            borderColor: data.negotiatedRenewalPct ? "#86efac" : undefined }} />
+                        <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
+                      </div>
+                    )}
                   </div>
-                  )}
-                  {/* Carrier Change Tracker Updated */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", minWidth: 180 }}>
-                      <input type="checkbox" checked={!!data.carrierChangeTrackerUpdated}
-                        onChange={e => set("carrierChangeTrackerUpdated", e.target.checked)}
-                        style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>Carrier Change Tracker Updated</span>
-                    </label>
-                    {data.carrierChangeTrackerUpdated && (
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                        Date:
+
+                  {/* Decisions Received + tracker rows below */}
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10,
+                      padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>📋 Decisions Received</span>
+                      <input type="date" value={data.decisionsReceivedDate || ""}
+                        onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
+                    </div>
+                    {["Mid-Market", "Large"].includes(data.marketSize) && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10,
+                        padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", flex: 1 }}>
+                          <input type="checkbox" checked={!!data.renewalTrackerUpdated}
+                            onChange={e => set("renewalTrackerUpdated", e.target.checked)}
+                            style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Renewal Tracker Updated</span>
+                        </label>
+                        {data.renewalTrackerUpdated && (
+                          <input type="date" value={data.renewalTrackerUpdatedDate || ""}
+                            onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
+                            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
+                        )}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10,
+                      padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", flex: 1 }}>
+                        <input type="checkbox" checked={!!data.carrierChangeTrackerUpdated}
+                          onChange={e => set("carrierChangeTrackerUpdated", e.target.checked)}
+                          style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Carrier Change Tracker Updated</span>
+                      </label>
+                      {data.carrierChangeTrackerUpdated && (
                         <input type="date" value={data.carrierChangeTrackerUpdatedDate || ""}
                           onChange={e => set("carrierChangeTrackerUpdatedDate", e.target.value)}
-                          style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: "auto" }} />
-                      </label>
-                    )}
+                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
+                      )}
+                    </div>
                   </div>
                 </div>
                 );
@@ -3651,8 +3635,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       Ancillary Renewal Status
                     </div>
                     {/* Column headers */}
-                    <div style={{ display: "grid", gridTemplateColumns: "150px 120px 90px 130px 90px 130px 130px", gap: 6, marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #fde68a" }}>
-                      {["Line of Coverage", "Carrier", "Received", "Date Received", "Renewal %", "Rate Relief Req.", "Rate Relief Rec."].map(h => (
+                    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.2fr 80px 120px 80px 120px 120px 90px", gap: 6, marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #fde68a" }}>
+                      {["Line of Coverage", "Carrier", "Received", "Date Received", "Renewal %", "Rate Relief Req.", "Rate Relief Rec.", "Negotiated %"].map(h => (
                         <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" }}>{h}</div>
                       ))}
                     </div>
@@ -3668,7 +3652,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       }));
                       const rowBg = stored.received ? "#fffde7" : "#fff";
                       return (
-                        <div key={key} style={{ display: "grid", gridTemplateColumns: "150px 120px 90px 130px 90px 130px 130px", gap: 6, marginBottom: 5, alignItems: "center", background: rowBg, borderRadius: 6, padding: "4px 0" }}>
+                        <div key={key} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.2fr 80px 120px 80px 120px 120px 90px", gap: 6, marginBottom: 5, alignItems: "center", background: rowBg, borderRadius: 6, padding: "4px 0" }}>
                           {/* Line name */}
                           <div style={{ fontSize: 12, fontWeight: 700, color: "#78350f", paddingLeft: 4 }}>{b.label}</div>
                           {/* Carrier */}
@@ -3715,6 +3699,16 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               {stored.rrReceived ? "Received" : "No"}
                             </span>
                           </label>
+                          {/* Negotiated Renewal % */}
+                          <div style={{ display: "flex", alignItems: "center" }}>
+                            <input type="number" value={stored.negotiatedPct || ""}
+                              onChange={e => setAnc("negotiatedPct", e.target.value)}
+                              placeholder="0"
+                              style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
+                                background: stored.negotiatedPct ? "#f0fdf4" : "#fff",
+                                borderColor: stored.negotiatedPct ? "#86efac" : undefined }} />
+                            <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
+                          </div>
                         </div>
                       );
                     })}
