@@ -203,7 +203,7 @@ const STATUS_STYLES = {
 
 // Each task stored as { status, assignee, dueDate }
 function emptyTask(overrides) { 
-  return { status: "Not Started", assignee: "", dueDate: "", completedDate: "", ...overrides }; 
+  return { status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [], ...overrides }; 
 }
 function emptyTaskMap(tasks) {
   return Object.fromEntries(tasks.map(t => [t.id, emptyTask()]));
@@ -601,6 +601,7 @@ function newClient(tasksDb) {
       tasks: {},
     },
     miscTasks: [],
+    transactions: [],      // [{ id, label, memberName, changeType, receivedDate, status, assignee, dueDate, completedDate, notes, followUps }]
     postOETasks: [],
     ongoingTasks: {},   // { taskId: { status, assignee, lastCompleted, nextDue, notes } }
     planYears: [],      // [ { id, archivedAt, effectiveFrom, effectiveTo, notes, correctionNotes, ...snapshot } ]
@@ -612,6 +613,7 @@ function newClient(tasksDb) {
     benefitNotes: {},
     benefitPolicyNumbers: {},
     benefitEnrolled: {},
+    benefitRates: {},          // { cat.id: { ee, es, ec, ff } } — PEPM rates per coverage tier
     benefitPlans: {},         // { cat.id: [ { name, type, groupNumber } ] }
     benefitDecision: {},      // { cat.id: "renew_as_is"|"change_plans"|"change_carrier"|"" }
     benefitCommissions: {},   // { cat.id: { type: "PEPM"|"Flat %"|"Graded"|"", amount: "" } }
@@ -1158,7 +1160,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
   // Collapsible section state
   const [collapsed, setCollapsed] = useState({
-    clientInfo: true, teamAssignment: true, benefitsSection: true,
+    clientInfo: true, teamAssignment: true, benefitsSection: false,
     preRenewal: true, renewalTasks: true, oe: true, postOE: true,
     compliance: true, misc: true, employeeClasses: true, ongoing: true,
   });
@@ -2119,7 +2121,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         })}
                         {activeBenefits.length === 0 && (
                           <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
-                            No active benefits on this client yet — add them in Benefits &amp; Carriers first.
+                            No active benefits on this client yet — add them in Benefits & Carriers first.
                           </div>
                         )}
                       </div>}
@@ -2325,59 +2327,100 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </label>
               </div>
             )}
+            {/* ── Add Benefit picker ── */}
             {(() => {
-              let lastActiveCatId = null;
-              return BENEFITS_SCHEMA.map(cat => {
-              const prevActiveCatId = lastActiveCatId;
-              if (!!(data.benefitActive || {})[cat.id]) lastActiveCatId = cat.id;
-              if (hideNoClass && hasClasses) {
-                const isOfferedCheck = !!(data.benefitActive || {})[cat.id];
-                if (isOfferedCheck) {
-                  const anyAssigned = (data.employeeClasses || []).some(
-                    cls => !!(cls.classBenefits || {})[cat.id]?.included
-                  );
-                  if (!anyAssigned) return null;
-                }
+              const activeCatIds = Object.keys(data.benefitActive || {}).filter(k => !!(data.benefitActive || {})[k]);
+              const inactiveBenefits = BENEFITS_SCHEMA.filter(cat => !activeCatIds.includes(cat.id));
+              const showPicker = !!(collapsed._showBenefitPicker);
+              const setShowPicker = v => setCollapsed(p => ({ ...p, _showBenefitPicker: v }));
+              return (
+                <div style={{ marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {inactiveBenefits.length > 0 && (
+                      <button type="button" onClick={() => setShowPicker(!showPicker)}
+                        style={{ padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                          border: `1.5px solid ${showPicker ? "#507c9c" : "#cbd5e1"}`,
+                          background: showPicker ? "#dce8f0" : "#fff",
+                          color: showPicker ? "#2d4a6b" : "#475569",
+                          cursor: "pointer", fontFamily: "inherit" }}>
+                        {showPicker ? "✕ Close" : "+ Add Benefit"}
+                      </button>
+                    )}
+                    {activeCatIds.length > 0 && (
+                      <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                        {activeCatIds.length} benefit{activeCatIds.length !== 1 ? "s" : ""} active
+                      </span>
+                    )}
+                  </div>
+                  {showPicker && (
+                    <div style={{ background: "#f0f5fa", borderRadius: 10, border: "1.5px solid #507c9c",
+                      padding: "12px 14px", marginTop: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#3e5878", marginBottom: 8 }}>
+                        Select a benefit to add:
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {inactiveBenefits.map(cat => (
+                          <button key={cat.id} type="button" onClick={() => {
+                            setData(p => {
+                              const newActive = { ...(p.benefitActive || {}), [cat.id]: true };
+                              const newDates = { ...(p.benefitEffectiveDates || {}) };
+                              if (!newDates[cat.id] && p.renewalDate) newDates[cat.id] = p.renewalDate;
+                              return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
+                            });
+                            setShowPicker(false);
+                          }} style={{ padding: "5px 14px", borderRadius: 99, fontSize: 12, fontWeight: 700,
+                            border: "1.5px solid #507c9c", background: "#fff", color: "#2d4a6b",
+                            cursor: "pointer", fontFamily: "inherit", transition: "all .12s" }}>
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {/* ── Active benefits only ── */}
+            {(() => {
+              return BENEFITS_SCHEMA.filter(cat => !!(data.benefitActive || {})[cat.id]).map(cat => {
+              if (hasClasses && collapsed._hideNoClass) {
+                const anyAssigned = (data.employeeClasses || []).some(
+                  cls => !!(cls.classBenefits || {})[cat.id]?.included
+                );
+                if (!anyAssigned) return null;
               }
               const leaves = cat.children.length > 0 ? cat.children : [{ id: cat.id, label: cat.label }];
-              const isOffered = !!(data.benefitActive || {})[cat.id];
+              const isOffered = true;
               const carrierOptions = carriersForBenefit(cat.id);
               const currentCarrier = (data.benefitCarriers || {})[cat.id] || "";
               const effectiveDate = (data.benefitEffectiveDates || {})[cat.id] || "";
 
               function toggleOffered() {
-                const nowOffered = !isOffered;
+                if (!confirm(`Remove ${cat.label} from this client's benefits?`)) return;
                 setData(p => {
-                  const newActive = { ...(p.benefitActive || {}), [cat.id]: nowOffered };
-                  const newDates = { ...(p.benefitEffectiveDates || {}) };
-                  // Default effective date to renewal date when first enabled
-                  if (nowOffered && !newDates[cat.id] && p.renewalDate) {
-                    newDates[cat.id] = p.renewalDate;
-                  }
-                  return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
+                  const newActive = { ...(p.benefitActive || {}), [cat.id]: false };
+                  return { ...p, benefitActive: newActive };
                 });
               }
 
               return (
                 <div key={cat.id} style={{
                   borderRadius: 12,
-                  border: `1.5px solid ${isOffered ? "#507c9c" : "#e2e8f0"}`,
-                  background: isOffered ? "#f0f5fa" : "#f8fafc",
+                  border: "1.5px solid #507c9c",
+                  background: "#f0f5fa",
                   overflow: "hidden",
-                  transition: "border-color .15s, background .15s",
                 }}>
-                  {/* ── Header row: always visible ── */}
+                  {/* ── Header row ── */}
                   <div style={{
                     display: "flex", alignItems: "center", gap: 10,
                     padding: "10px 14px",
-                    borderBottom: isOffered && !((data.benefitCollapsed || {})[cat.id]) ? "1px solid #ccdaeb" : "none",
+                    borderBottom: !((data.benefitCollapsed || {})[cat.id]) ? "1px solid #ccdaeb" : "none",
                   }}>
-                    <input
-                      type="checkbox"
-                      checked={isOffered}
-                      onChange={toggleOffered}
-                      style={{ accentColor: "#507c9c", width: 16, height: 16, flexShrink: 0, cursor: "pointer" }}
-                    />
+                    <button type="button" onClick={toggleOffered}
+                      title={`Remove ${cat.label}`}
+                      style={{ padding: "2px 7px", borderRadius: 5, fontSize: 12, flexShrink: 0,
+                        border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                        cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}>✕</button>
                     <span
                       onClick={() => isOffered && setData(p => ({
                         ...p,
@@ -2605,6 +2648,38 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                       </div>
 
+                      {/* Rate Tiers Table */}
+                      <div style={{ background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".8px", textTransform: "uppercase", marginBottom: 8 }}>
+                          Rates / PEPM
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                          {[["EE", "ee"], ["EE + Spouse", "es"], ["EE + Child(ren)", "ec"], ["Family", "ff"]].map(([label, key]) => (
+                            <label key={key} style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+                              {label}
+                              <div style={{ display: "flex", alignItems: "center", marginTop: 4 }}>
+                                <span style={{ padding: "6px 8px", background: "#f1f5f9",
+                                  border: "1.5px solid #e2e8f0", borderRight: "none",
+                                  borderRadius: "8px 0 0 8px", fontSize: 12, color: "#475569", fontWeight: 600 }}>$</span>
+                                <input
+                                  type="number" min="0" step="0.01"
+                                  value={((data.benefitRates || {})[cat.id] || {})[key] || ""}
+                                  onChange={e => setData(p => ({
+                                    ...p,
+                                    benefitRates: {
+                                      ...(p.benefitRates || {}),
+                                      [cat.id]: { ...((p.benefitRates || {})[cat.id] || {}), [key]: e.target.value },
+                                    },
+                                  }))}
+                                  placeholder="0.00"
+                                  style={{ ...inputStyle, marginTop: 0, borderRadius: "0 8px 8px 0", fontSize: 12, padding: "6px 8px", flex: 1 }}
+                                />
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
                       {/* # of Plans + plan details */}
                       {(() => {
                         const plans = (data.benefitPlans || {})[cat.id] || [];
@@ -2705,24 +2780,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             letterSpacing: ".8px", textTransform: "uppercase" }}>
                             Eligibility Rules
                           </div>
-                          {prevActiveCatId && (
-                            <button type="button" onClick={() => {
-                              const prev = prevActiveCatId;
-                              setData(p => ({
-                                ...p,
-                                benefitEligibility: {
-                                  ...(p.benefitEligibility || {}),
-                                  [cat.id]: JSON.parse(JSON.stringify((p.benefitEligibility || {})[prev] || {})),
-                                },
-                              }));
-                            }} style={{
-                              padding: "2px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700,
-                              border: "1.5px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8",
-                              cursor: "pointer", fontFamily: "inherit",
-                            }}>
-                              ↑ Same as {BENEFITS_SCHEMA.find(c => c.id === prevActiveCatId)?.label || "Above"}
-                            </button>
-                          )}
+
                         </div>
 
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
@@ -3456,98 +3514,99 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 );
               })()}
 
-              {/* Ancillary Renewal Status */}
+              {/* Ancillary Renewal Status — per line */}
               {(() => {
-                // Benefits to track for ancillary renewal status
                 const ANCILLARY_BENEFIT_IDS = [
                   "dental", "vision", "std", "ltd", "basic_life", "vol_life",
-                  "worksite", "telehealth", "identity_theft", "prepaid_legal",
+                  "worksite", "nydbl_pfl", "eap", "telehealth", "identity_theft",
+                  "prepaid_legal", "pet_insurance",
                 ];
-                const carriers = data.benefitCarriers || {};
-                const active = data.benefitActive || {};
-
-                // Only include active benefits that have a carrier set
+                const ancCarriers = data.benefitCarriers || {};
+                const ancActive = data.benefitActive || {};
                 const activeBenefits = ANCILLARY_BENEFIT_IDS
-                  .filter(id => active[id])
+                  .filter(id => ancActive[id])
                   .map(id => {
                     const cat = BENEFITS_SCHEMA.find(c => c.id === id);
-                    const carrier = carriers[id] || "";
+                    const carrier = ancCarriers[id] || "";
                     return { id, label: cat ? cat.label : id, carrier };
-                  })
-                  .filter(b => b.carrier && b.carrier !== "__other__");
-
+                  });
                 if (activeBenefits.length === 0) return null;
 
-                // Group by carrier
-                const byCarrier = {};
-                activeBenefits.forEach(b => {
-                  if (!byCarrier[b.carrier]) byCarrier[b.carrier] = [];
-                  byCarrier[b.carrier].push(b);
-                });
-                const carrierGroups = Object.entries(byCarrier);
-                const allSameCarrier = carrierGroups.length === 1;
-
-                return carrierGroups.map(([carrier, benefits]) => {
-                  const key = "anc_" + carrier.replace(/\s+/g, "_");
-                  const stored = (data.ancillaryRenewalReceived || {})[key] || {};
-                  const setAnc = (field, val) => setData(p => ({
-                    ...p,
-                    ancillaryRenewalReceived: {
-                      ...(p.ancillaryRenewalReceived || {}),
-                      [key]: { ...((p.ancillaryRenewalReceived || {})[key] || {}), [field]: val },
-                    },
-                  }));
-                  const title = allSameCarrier
-                    ? "Ancillary Renewal Status"
-                    : `${carrier} Renewal Status`;
-
-                  return (
-                    <div key={key} style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", padding: "12px 14px" }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 6 }}>
-                        {title}
-                      </div>
-                      {!allSameCarrier && (
-                        <div style={{ fontSize: 11, color: "#78350f", marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {benefits.map(b => (
-                            <span key={b.id} style={{ background: "#fef3c7", border: "1px solid #fcd34d",
-                              borderRadius: 99, padding: "1px 8px", fontSize: 11, fontWeight: 600, color: "#92400e" }}>
-                              {b.label}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {/* Renewal Received */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", minWidth: 180 }}>
-                          <input type="checkbox" checked={!!stored.received}
-                            onChange={e => setAnc("received", e.target.checked)}
-                            style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                          <span style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>Renewal Received</span>
-                        </label>
-                        {stored.received && (
-                          <>
-                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                              Date:
-                              <input type="date" value={stored.date || ""}
-                                onChange={e => setAnc("date", e.target.value)}
-                                style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: "auto" }} />
-                            </label>
-                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-                              Renewal %:
-                              <div style={{ display: "flex", alignItems: "center" }}>
-                                <input type="number" value={stored.pct || ""}
-                                  onChange={e => setAnc("pct", e.target.value)}
-                                  placeholder="0"
-                                  style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", width: 72, textAlign: "right" }} />
-                                <span style={{ marginLeft: 3, fontWeight: 700, color: "#475569" }}>%</span>
-                              </div>
-                            </label>
-                          </>
-                        )}
-                      </div>
+                return (
+                  <div style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 10 }}>
+                      Ancillary Renewal Status
                     </div>
-                  );
-                });
+                    {/* Column headers */}
+                    <div style={{ display: "grid", gridTemplateColumns: "150px 120px 90px 130px 90px 130px 130px", gap: 6, marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #fde68a" }}>
+                      {["Line of Coverage", "Carrier", "Received", "Date Received", "Renewal %", "Rate Relief Req.", "Rate Relief Rec."].map(h => (
+                        <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" }}>{h}</div>
+                      ))}
+                    </div>
+                    {activeBenefits.map(b => {
+                      const key = "anc_line_" + b.id;
+                      const stored = (data.ancillaryRenewalReceived || {})[key] || {};
+                      const setAnc = (field, val) => setData(p => ({
+                        ...p,
+                        ancillaryRenewalReceived: {
+                          ...(p.ancillaryRenewalReceived || {}),
+                          [key]: { ...((p.ancillaryRenewalReceived || {})[key] || {}), [field]: val },
+                        },
+                      }));
+                      const rowBg = stored.received ? "#fffde7" : "#fff";
+                      return (
+                        <div key={key} style={{ display: "grid", gridTemplateColumns: "150px 120px 90px 130px 90px 130px 130px", gap: 6, marginBottom: 5, alignItems: "center", background: rowBg, borderRadius: 6, padding: "4px 0" }}>
+                          {/* Line name */}
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#78350f", paddingLeft: 4 }}>{b.label}</div>
+                          {/* Carrier */}
+                          <div style={{ fontSize: 11, color: "#64748b" }}>
+                            {b.carrier && b.carrier !== "__other__" ? b.carrier : <span style={{ opacity: 0.4, fontStyle: "italic" }}>No carrier</span>}
+                          </div>
+                          {/* Received checkbox */}
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+                            <input type="checkbox" checked={!!stored.received}
+                              onChange={e => setAnc("received", e.target.checked)}
+                              style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
+                          </label>
+                          {/* Date received */}
+                          <input type="date" value={stored.date || ""}
+                            onChange={e => setAnc("date", e.target.value)}
+                            disabled={!stored.received}
+                            style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
+                              opacity: stored.received ? 1 : 0.35, background: stored.received ? "#fff" : "#f8fafc" }} />
+                          {/* Renewal % */}
+                          <div style={{ display: "flex", alignItems: "center" }}>
+                            <input type="number" value={stored.pct || ""}
+                              onChange={e => setAnc("pct", e.target.value)}
+                              placeholder="0"
+                              disabled={!stored.received}
+                              style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
+                                opacity: stored.received ? 1 : 0.35, background: stored.received ? "#fff" : "#f8fafc" }} />
+                            <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
+                          </div>
+                          {/* Rate Relief Requested */}
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+                            <input type="checkbox" checked={!!stored.rrRequested}
+                              onChange={e => setAnc("rrRequested", e.target.checked)}
+                              style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
+                            <span style={{ fontSize: 11, color: stored.rrRequested ? "#92400e" : "#94a3b8", fontWeight: stored.rrRequested ? 700 : 400 }}>
+                              {stored.rrRequested ? "Requested" : "No"}
+                            </span>
+                          </label>
+                          {/* Rate Relief Received */}
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+                            <input type="checkbox" checked={!!stored.rrReceived}
+                              onChange={e => setAnc("rrReceived", e.target.checked)}
+                              style={{ accentColor: "#22c55e", width: 15, height: 15 }} />
+                            <span style={{ fontSize: 11, color: stored.rrReceived ? "#166534" : "#94a3b8", fontWeight: stored.rrReceived ? 700 : 400 }}>
+                              {stored.rrReceived ? "Received" : "No"}
+                            </span>
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
               })()}
               {PRERENEWAL_TASKS.filter(t => !t.acaOnly || data.marketSize === "ACA").map(t => {
                 const task = getTask("preRenewal", t.id, tasksDb);
@@ -5254,13 +5313,59 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                       </div>
+                      {/* Follow-ups */}
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #e2e8f0" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+                          <span style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px" }}>
+                            Follow-ups {(t.followUps||[]).length > 0 ? `(${(t.followUps||[]).length})` : ""}
+                          </span>
+                          <button type="button" onClick={() => setData(p => {
+                            const tasks = [...(p.miscTasks||[])];
+                            const fu = { id: Date.now(), date: new Date().toISOString().split("T")[0], note: "" };
+                            tasks[idx] = { ...tasks[idx], followUps: [...(tasks[idx].followUps||[]), fu] };
+                            return { ...p, miscTasks: tasks };
+                          })} style={{ fontSize: 10, fontWeight: 700, color: "#3b82f6", background: "#dbeafe",
+                            border: "none", borderRadius: 5, padding: "2px 7px", cursor: "pointer", fontFamily: "inherit" }}>
+                            + Follow-up
+                          </button>
+                        </div>
+                        {(t.followUps||[]).map((fu, fi) => (
+                          <div key={fu.id || fi} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+                            <input type="date" value={fu.date||""}
+                              onChange={e => setData(p => {
+                                const tasks = [...(p.miscTasks||[])];
+                                const fus = [...(tasks[idx].followUps||[])];
+                                fus[fi] = { ...fus[fi], date: e.target.value };
+                                tasks[idx] = { ...tasks[idx], followUps: fus };
+                                return { ...p, miscTasks: tasks };
+                              })}
+                              style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, width: 140, flexShrink: 0 }} />
+                            <input type="text" value={fu.note||""}
+                              onChange={e => setData(p => {
+                                const tasks = [...(p.miscTasks||[])];
+                                const fus = [...(tasks[idx].followUps||[])];
+                                fus[fi] = { ...fus[fi], note: e.target.value };
+                                tasks[idx] = { ...tasks[idx], followUps: fus };
+                                return { ...p, miscTasks: tasks };
+                              })}
+                              placeholder="Follow-up note..."
+                              style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, flex: 1 }} />
+                            <button type="button" onClick={() => setData(p => {
+                              const tasks = [...(p.miscTasks||[])];
+                              tasks[idx] = { ...tasks[idx], followUps: (tasks[idx].followUps||[]).filter((_,i)=>i!==fi) };
+                              return { ...p, miscTasks: tasks };
+                            })} style={{ padding: "3px 6px", borderRadius: 5, fontSize: 10, border: "1.5px solid #fca5a5",
+                              background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   );
                 })}
               </div>
               <button type="button" onClick={() => setData(p => ({
                 ...p,
-                miscTasks: [...(p.miscTasks||[]), { title: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "" }]
+                miscTasks: [...(p.miscTasks||[]), { id: Date.now(), title: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [] }]
               }))} style={{
                 marginTop: 8, padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #c4b5fd", background: "#faf5ff", color: "#7c3aed",
@@ -5268,6 +5373,129 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               }}>+ Add Miscellaneous Task</button>
             </div>
           )}
+          {/* Transactions */}
+          <CollapseHeader id="transactions" title="Transactions" accent="#9d174d" collapsed={collapsed} onToggle={toggleSection} />
+          {!collapsed.transactions && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* Email drop zone */}
+              <div
+                onDragOver={e => { e.preventDefault(); e.currentTarget.style.background="#fce7f3"; e.currentTarget.style.borderColor="#f472b6"; }}
+                onDragLeave={e => { e.currentTarget.style.background="#fdf4ff"; e.currentTarget.style.borderColor="#f0abfc"; }}
+                onDrop={e => {
+                  e.preventDefault();
+                  e.currentTarget.style.background="#fdf4ff";
+                  e.currentTarget.style.borderColor="#f0abfc";
+                  const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text") || "";
+                  const today = new Date().toISOString().split("T")[0];
+                  const newTxn = {
+                    id: Date.now(), label: text ? text.slice(0, 120) : "Enrollment Change",
+                    memberName: "", changeType: "", receivedDate: today,
+                    status: "Not Started", assignee: "", dueDate: "", completedDate: "",
+                    notes: text || "", followUps: [],
+                  };
+                  setData(p => ({ ...p, transactions: [...(p.transactions||[]), newTxn] }));
+                }}
+                style={{ border: "2px dashed #f0abfc", borderRadius: 10, background: "#fdf4ff",
+                  padding: "14px", textAlign: "center", color: "#9d174d", fontSize: 12, fontWeight: 600, cursor: "default" }}>
+                📧 Drag & drop an e-mail here to auto-create a transaction task
+              </div>
+
+              <button type="button" onClick={() => {
+                const today = new Date().toISOString().split("T")[0];
+                setData(p => ({
+                  ...p,
+                  transactions: [...(p.transactions||[]), {
+                    id: Date.now(), label: "", memberName: "", changeType: "",
+                    receivedDate: today, status: "Not Started", assignee: "",
+                    dueDate: "", completedDate: "", notes: "", followUps: [],
+                  }],
+                }));
+              }} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                border: "1.5px dashed #f472b6", background: "#fdf4ff", color: "#9d174d",
+                cursor: "pointer", fontFamily: "inherit", alignSelf: "flex-start" }}>
+                + Add Transaction
+              </button>
+
+              {(data.transactions||[]).length === 0 && (
+                <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, padding: "12px 0", fontStyle: "italic" }}>
+                  No transactions yet. Add one manually or drag an e-mail above.
+                </div>
+              )}
+
+              {(data.transactions||[]).map((txn, ti) => (
+                <div key={txn.id || ti} style={{ background: "#fdf4ff", borderRadius: 10, border: "1.5px solid #f0abfc", padding: "12px 14px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                    <label style={{ ...labelStyle, marginTop: 0 }}>
+                      Member Name
+                      <input value={txn.memberName||""} placeholder="Employee / Dependent"
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,memberName:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3 }} />
+                    </label>
+                    <label style={{ ...labelStyle, marginTop: 0 }}>
+                      Change Type
+                      <select value={txn.changeType||""}
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,changeType:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3 }}>
+                        <option value="">— Select —</option>
+                        {["New Enrollment","Termination","Qualifying Event","Dependent Add","Dependent Remove","Address Change","Plan Change","Beneficiary Change","COBRA","Other"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, marginTop: 0 }}>
+                      Date Received
+                      <input type="date" value={txn.receivedDate||""}
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,receivedDate:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3 }} />
+                    </label>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                    <label style={{ ...labelStyle, marginTop: 0 }}>
+                      Description
+                      <input value={txn.label||""} placeholder="Brief description..."
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,label:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3 }} />
+                    </label>
+                    <label style={{ ...labelStyle, marginTop: 0 }}>
+                      Assignee
+                      <select value={txn.assignee||""}
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,assignee:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3 }}>
+                        <option value="">— Unassigned —</option>
+                        {teamMembers.map(m=><option key={m}>{m}</option>)}
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, marginTop: 0 }}>
+                      Due Date
+                      <input type="date" value={txn.dueDate||""}
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,dueDate:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3 }} />
+                    </label>
+                    <div style={{ ...labelStyle, marginTop: 0 }}>
+                      Status
+                      <div style={{ marginTop: 5 }}>
+                        <StatusSelect value={txn.status||"Not Started"}
+                          onChange={v => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,status:v}:t) }))} />
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", flex: 1, marginRight: 8 }}>
+                      Notes
+                      <input value={txn.notes||""} placeholder="Additional notes..."
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,notes:e.target.value}:t) }))}
+                        style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                    </label>
+                    <button type="button" onClick={() => {
+                      if (confirm("Remove this transaction?"))
+                        setData(p => ({ ...p, transactions: p.transactions.filter((_,i)=>i!==ti) }));
+                    }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, flexShrink: 0, marginTop: 16,
+                      border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                      cursor: "pointer", fontFamily: "inherit" }}>Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* General Notes */}
           <SectionHeader>General Notes</SectionHeader>
           <textarea
@@ -5360,7 +5588,7 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
   const bed = client.benefitEffectiveDates || {};
   const activeCategories = BENEFITS_SCHEMA.map(cat => {
     const leaves = cat.children.length > 0 ? cat.children : [{ id: cat.id, label: cat.label }];
-    const activePlans = leaves.filter(l => client.benefits[l.id]).map(l => l.label);
+    const activePlans = leaves.filter(l => (client.benefits || {})[l.id]).map(l => l.label);
     const carrier = bc[cat.id] || null;
     const effectiveDate = bed[cat.id] || null;
     // isActive: use benefitActive flag if present, otherwise fall back to legacy activePlans check
@@ -6626,6 +6854,17 @@ function applyDataFixes(c) {
   if (!fixed.postOETasks)    fixed.postOETasks     = [];
   if (!fixed.postOEFixed)    fixed.postOEFixed      = {};
   if (!fixed.miscTasks)      fixed.miscTasks       = [];
+  // Ensure new fields from recent updates exist on older records
+  if (!fixed.transactions)   fixed.transactions    = [];
+  if (!fixed.benefitRates)   fixed.benefitRates    = {};
+  if (!fixed.ancillaryRenewalReceived) fixed.ancillaryRenewalReceived = {};
+  if (!fixed.benefits)       fixed.benefits        = {};
+  // Ensure miscTasks entries have followUps array (older entries won't have it)
+  if (Array.isArray(fixed.miscTasks)) {
+    fixed.miscTasks = fixed.miscTasks.map(t =>
+      t.followUps ? t : { ...t, followUps: [] }
+    );
+  }
   if (fixed.clientStatusDate === undefined) fixed.clientStatusDate = "";
   // Auto-assign Illinois situs for BCBSIL medical carrier
   if (!fixed.groupSitus) {
@@ -6773,7 +7012,7 @@ function persistMeetings_DEPRECATED(list) {
 const TASKS_STORAGE_KEY    = "benefittrack_tasks_v4";
 
 // ── Default Task Database ────────────────────────────────────────────────────
-const TASK_CATEGORIES_DB = ["Pre-Renewal", "Renewal", "Open Enrollment", "Post-OE", "Compliance", "Miscellaneous", "Ongoing"];
+const TASK_CATEGORIES_DB = ["Pre-Renewal", "Renewal", "Open Enrollment", "Post-OE", "Compliance", "Miscellaneous", "Ongoing", "Transactions"];
 
 const RECURRENCE_OPTIONS = ["Monthly", "Quarterly", "Annually"];
 
@@ -6892,6 +7131,13 @@ function loadTasksData_DEPRECATED() {
 function persistTasksData_DEPRECATED(list) {
   try { localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
+
+const CARRIER_CONTACT_ROLES = [
+  "Sales Representative", "Service Team", "Account Manager",
+  "Underwriting Contact", "Broker Liaison", "Enrollment Specialist",
+  "Billing Contact", "Claims Contact", "General Contact",
+];
+const CARRIER_EMPLOYER_TYPES = ["Any", "For-Profit", "Non-Profit", "Government", "Union/Taft-Hartley", "Association"];
 
 const CARRIER_SEGMENTS = ["ACA", "Mid-Market", "Large"];
 const CARRIER_TYPES = ["National", "Regional/Local"];
@@ -7296,6 +7542,17 @@ useEffect(() => {
   const dashboardTeamFilter = dashFilter.team;
   function setDashboardTeamFilter(val) { setDashF("team", val); }
  const [carriersData, setCarriersDataRaw] = useState([]);
+  const [benefitsDb, setBenefitsDbRaw] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("benefittrack_benefitsdb_v1") || "[]"); }
+    catch { return []; }
+  });
+  function setBenefitsDb(updater) {
+    setBenefitsDbRaw(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("benefittrack_benefitsdb_v1", JSON.stringify(next)); } catch(e) {}
+      return next;
+    });
+  }
   function setCarriersData(updater) {
     setCarriersDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -7403,7 +7660,7 @@ useEffect(() => {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {/* Nav tabs */}
           <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 9, padding: 3, gap: 2 }}>
-            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"]].map(([v, label]) => (
+            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"],["benefitsDb","💊 Benefits DB"]].map(([v, label]) => (
               <button key={v} onClick={() => changeView(v)} style={{
                 background: view === v ? "#fff" : "transparent",
                 border: "none", borderRadius: 7, padding: "6px 14px",
@@ -7978,6 +8235,14 @@ useEffect(() => {
           />
         )}
 
+        {view === "benefitsDb" && (
+          <BenefitsDbView
+            benefitsDb={benefitsDb}
+            onSave={setBenefitsDb}
+            currentUser={currentUser}
+          />
+        )}
+
         {view === "tasks" && (
           <TasksView
             tasks={tasksData}
@@ -8114,6 +8379,155 @@ function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
   );
 }
 
+// ── BenefitsDbView ────────────────────────────────────────────────────────────
+function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
+  const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState(null);
+  const [activeType, setActiveType] = useState("All");
+
+  const BENEFIT_TYPES_DB = ["Medical","Dental","Vision","Life/AD&D","Disability","Worksite","FSA/HSA/HRA","EAP","Other"];
+
+  const filtered = (benefitsDb||[])
+    .filter(b => activeType === "All" || b.type === activeType)
+    .sort((a,b) => (a.name||"").localeCompare(b.name||""));
+
+  function startNew() {
+    const id = "bd_" + Date.now();
+    setEditingId(id);
+    setEditData({ id, name: "", type: "Medical", description: "", planTypes: [], features: "", regulatoryNotes: "" });
+  }
+  function startEdit(b) { setEditingId(b.id); setEditData(JSON.parse(JSON.stringify(b))); }
+  function saveEdit() {
+    if (!editData.name.trim()) return;
+    onSave(prev => {
+      const exists = (prev||[]).find(b => b.id === editData.id);
+      return exists ? prev.map(b => b.id === editData.id ? editData : b) : [...(prev||[]), editData];
+    });
+    setEditingId(null); setEditData(null);
+  }
+  function deleteBenefit(id) {
+    if (confirm("Delete this benefit definition?")) {
+      onSave(prev => (prev||[]).filter(b => b.id !== id));
+      if (editingId === id) { setEditingId(null); setEditData(null); }
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>Benefits Database</div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Reference library of employee benefit types, plan structures, and features</div>
+        </div>
+        <button type="button" onClick={startNew} style={{ background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
+          border: "none", borderRadius: 9, padding: "9px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Benefit</button>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {["All",...BENEFIT_TYPES_DB].map(t => (
+          <button key={t} type="button" onClick={() => setActiveType(t)} style={{
+            padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+            border: `1.5px solid ${activeType===t?"#4a7fa5":"#e2e8f0"}`,
+            background: activeType===t?"#dce8f0":"#fff",
+            color: activeType===t?"#2d4a6b":"#64748b",
+          }}>{t} {activeType===t && (benefitsDb||[]).filter(b=>t==="All"||b.type===t).length > 0 ? `(${(benefitsDb||[]).filter(b=>t==="All"||b.type===t).length})` : ""}</button>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: editingId ? "1fr 380px" : "1fr", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.length === 0 && (
+            <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>💊</div>
+              <div style={{ fontWeight: 700 }}>No {activeType !== "All" ? activeType : ""} benefits defined yet</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add Benefit" to build your reference library</div>
+            </div>
+          )}
+          {filtered.map(b => {
+            const isEditing = editingId === b.id;
+            return (
+              <div key={b.id} style={{ background: isEditing ? "#f0f5fa":"#fff", borderRadius: 12, padding: "14px 18px",
+                border: `1.5px solid ${isEditing?"#4a7fa5":"#e2e8f0"}`, transition: "all .15s" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>{b.name}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: "#dce8f0", color: "#2d4a6b" }}>{b.type}</span>
+                      {(b.planTypes||[]).map(pt => (
+                        <span key={pt} style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 99, background: "#f1f5f9", color: "#475569" }}>{pt}</span>
+                      ))}
+                    </div>
+                    {b.description && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 3 }}>{b.description}</div>}
+                    {b.features && <div style={{ fontSize: 11, color: "#475569" }}>📋 {b.features}</div>}
+                    {b.regulatoryNotes && <div style={{ fontSize: 11, color: "#854d0e", marginTop: 3 }}>⚖️ {b.regulatoryNotes}</div>}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <button type="button" onClick={() => isEditing ? (setEditingId(null),setEditData(null)) : startEdit(b)}
+                      style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                        border: `1.5px solid ${isEditing?"#4a7fa5":"#e2e8f0"}`, background: isEditing?"#dce8f0":"#f8fafc",
+                        color: isEditing?"#2d4a6b":"#475569", cursor: "pointer", fontFamily: "inherit" }}>{isEditing?"Close":"Edit"}</button>
+                    {canDelete && <button type="button" onClick={() => deleteBenefit(b.id)}
+                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                        border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                        cursor: "pointer", fontFamily: "inherit" }}>✕</button>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {editingId && editData && (
+          <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #4a7fa5", padding: "20px",
+            position: "sticky", top: 80, alignSelf: "flex-start", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#2d4a6b", marginBottom: 16 }}>
+              {(benefitsDb||[]).find(b=>b.id===editingId) ? "Edit Benefit" : "New Benefit"}
+            </div>
+            <label style={labelStyle}>Benefit Name
+              <input value={editData.name} onChange={e => setEditData(p=>({...p,name:e.target.value}))}
+                placeholder="e.g. Dental PPO — Contributory" style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+            <label style={{ ...labelStyle, marginTop: 12 }}>Type
+              <select value={editData.type} onChange={e => setEditData(p=>({...p,type:e.target.value}))}
+                style={{ ...inputStyle, marginTop: 3 }}>
+                {BENEFIT_TYPES_DB.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+            <label style={{ ...labelStyle, marginTop: 12 }}>Description
+              <textarea value={editData.description||""} onChange={e => setEditData(p=>({...p,description:e.target.value}))}
+                placeholder="Brief description of this benefit type..."
+                rows={2} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
+            </label>
+            <label style={{ ...labelStyle, marginTop: 12 }}>Plan Types / Structures
+              <input value={(editData.planTypes||[]).join(", ")||""}
+                onChange={e => setEditData(p=>({...p,planTypes:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)}))}
+                placeholder="e.g. PPO, HMO, DHMO (comma-separated)"
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+            <label style={{ ...labelStyle, marginTop: 12 }}>Features / Key Provisions
+              <textarea value={editData.features||""} onChange={e => setEditData(p=>({...p,features:e.target.value}))}
+                placeholder="Network types, typical benefit levels, contribution structures..."
+                rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
+            </label>
+            <label style={{ ...labelStyle, marginTop: 12 }}>Regulatory / Compliance Notes
+              <textarea value={editData.regulatoryNotes||""} onChange={e => setEditData(p=>({...p,regulatoryNotes:e.target.value}))}
+                placeholder="ACA requirements, ERISA, state mandates..."
+                rows={2} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
+            </label>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={saveEdit} style={{ flex:1, background:"linear-gradient(135deg,#2d4a6b,#4a7fa5)", color:"#fff",
+                border:"none", borderRadius:8, padding:"9px 0", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Save</button>
+              <button type="button" onClick={() => { setEditingId(null); setEditData(null); }} style={{ background:"#f1f5f9", border:"none",
+                borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:700, color:"#475569", cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── CarriersView ─────────────────────────────────────────────────────────────
 
 function CarriersView({ carriers, onSave, currentUser }) {
@@ -8135,6 +8549,8 @@ function CarriersView({ carriers, onSave, currentUser }) {
     const blank = {
       id: newId, name: "", type: "National", category: activeCategory,
       segments: [], products: [], funding: [], states: [], notes: "", requirements: [],
+      contacts: [],        // [{ role, name, email, phone, market, employerType, fundingType }]
+      benefitDetails: "",  // coverage offered / plan descriptions
     };
     setEditingId(newId);
     setEditData(blank);
@@ -8268,6 +8684,25 @@ function CarriersView({ carriers, onSave, currentUser }) {
                             <strong style={{ color: "#475569" }}>{r.label}:</strong> {r.value}
                           </span>
                         ))}
+                      </div>
+                    )}
+                    {carrier.benefitDetails && (
+                      <div style={{ fontSize: 11, color: "#3a5a2a", marginTop: 4, fontStyle: "italic" }}>
+                        📋 {carrier.benefitDetails}
+                      </div>
+                    )}
+                    {(carrier.contacts || []).length > 0 && (
+                      <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                        {(carrier.contacts || []).slice(0, 4).map((ct, i) => (
+                          <span key={i} style={{ fontSize: 10, padding: "2px 9px", borderRadius: 99,
+                            background: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}>
+                            👤 {ct.role}: {ct.name}{ct.email ? ` · ${ct.email}` : ""}{ct.phone ? ` · ${ct.phone}` : ""}
+                            {ct.market && ct.market !== "Any" ? ` (${ct.market})` : ""}
+                          </span>
+                        ))}
+                        {(carrier.contacts || []).length > 4 && (
+                          <span style={{ fontSize: 10, color: "#94a3b8", padding: "2px 6px" }}>+{(carrier.contacts||[]).length - 4} more</span>
+                        )}
                       </div>
                     )}
                     {carrier.notes && (
@@ -8405,11 +8840,87 @@ function CarriersView({ carriers, onSave, currentUser }) {
             </div>
 
             <label style={{ ...labelStyle, marginTop: 12 }}>
-              Notes
+              Benefit Details / Coverage Offered
+              <textarea value={editData.benefitDetails || ""} onChange={e => setEditData(p => ({ ...p, benefitDetails: e.target.value }))}
+                placeholder="Plan types, networks, tier structures, special features..."
+                rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
+            </label>
+
+            <label style={{ ...labelStyle, marginTop: 12 }}>
+              Notes / Underwriting Caveats
               <textarea value={editData.notes} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))}
                 placeholder="Special conditions, eligibility rules, caveats..."
                 rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
             </label>
+
+            {/* ── Contacts ── */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Contacts</div>
+                <button type="button" onClick={() => setEditData(p => ({
+                  ...p,
+                  contacts: [...(p.contacts || []), { role: "Sales Representative", name: "", email: "", phone: "", market: "Any", employerType: "Any", fundingType: "Any" }],
+                }))} style={{ fontSize: 11, fontWeight: 700, color: "#2d4a6b", background: "#dce8f0",
+                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add Contact
+                </button>
+              </div>
+              {(editData.contacts || []).length === 0 && (
+                <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", textAlign: "center", padding: "8px 0" }}>
+                  No contacts yet — click "+ Add Contact" to add sales reps, service teams, etc.
+                </div>
+              )}
+              {(editData.contacts || []).map((contact, ci) => (
+                <div key={ci} style={{ background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px", marginBottom: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6, marginBottom: 6 }}>
+                    <select value={contact.role || "Sales Representative"}
+                      onChange={e => { const c = [...(editData.contacts||[])]; c[ci] = { ...c[ci], role: e.target.value }; setEditData(p => ({ ...p, contacts: c })); }}
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
+                      {CARRIER_CONTACT_ROLES.map(r => <option key={r}>{r}</option>)}
+                    </select>
+                    <input value={contact.name || ""} placeholder="Full Name"
+                      onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],name:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                    <button type="button" onClick={() => setEditData(p => ({ ...p, contacts: p.contacts.filter((_, i) => i !== ci) }))}
+                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
+                        background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                    <input value={contact.email || ""} placeholder="email@carrier.com" type="email"
+                      onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],email:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                    <input value={contact.phone || ""} placeholder="Phone number"
+                      onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],phone:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                    <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Market Segment
+                      <select value={contact.market || "Any"}
+                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],market:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                        style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
+                        <option>Any</option>
+                        {CARRIER_SEGMENTS.map(s => <option key={s}>{s}</option>)}
+                      </select>
+                    </label>
+                    <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Employer Type
+                      <select value={contact.employerType || "Any"}
+                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],employerType:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                        style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
+                        {CARRIER_EMPLOYER_TYPES.map(t => <option key={t}>{t}</option>)}
+                      </select>
+                    </label>
+                    <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Funding Type
+                      <select value={contact.fundingType || "Any"}
+                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],fundingType:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                        style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
+                        <option>Any</option>
+                        {FUNDING_OPTIONS.map(f => <option key={f}>{f}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={saveEdit} style={{
@@ -8631,7 +9142,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878" },
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878" },
     "Ongoing":         { bg: "#d8e6d0", text: "#54652d" },
-  };
+    "Transactions":    { bg: "#fce7f3", text: "#9d174d" },  };
   const statusDot = { "Not Started": "#94a3b8", "In Progress": "#eab308" };
   const statusChip = {
     "Not Started": { bg: "#f1f5f9", text: "#64748b" },
@@ -8822,7 +9333,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                   cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
               {selClient && (
                 <span style={{ fontSize: 11, color: "#64748b", alignSelf: "center", marginLeft: 4 }}>
-                  → will appear in {selClient.name}&apos;s {addForm.category} tasks
+                  → will appear in {selClient.name}'s {addForm.category} tasks
                 </span>
               )}
             </div>
@@ -9213,6 +9724,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
     "Ongoing":         { bg: "#d8e6d0", text: "#54652d", border: "#7a8a3d" },
+    "Transactions":    { bg: "#fce7f3", text: "#9d174d", border: "#f472b6" },
   };
 
   return (
