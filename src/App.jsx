@@ -1168,11 +1168,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
   // Tab state
   const [activeTab, setActiveTab] = useState("info");
+  const [taskTab, setTaskTab] = useState("preRenewal");
   const TABS = [
     { id: "info",        label: "Client Information" },
     { id: "eligibility", label: "Eligibility" },
     { id: "benefits",    label: "Benefits" },
     { id: "tasks",       label: "Tasks" },
+  ];
+  const TASK_TABS = [
+    { id: "preRenewal",   label: "Pre-Renewal",       accent: "#92400e", bg: "#fffbeb", border: "#fde68a" },
+    { id: "renewal",      label: "Renewal",            accent: "#1e40af", bg: "#eff6ff", border: "#bfdbfe" },
+    { id: "oe",           label: "Open Enrollment",    accent: "#065f46", bg: "#ecfdf5", border: "#6ee7b7" },
+    { id: "postOE",       label: "Post-OE",            accent: "#5b21b6", bg: "#f5f3ff", border: "#c4b5fd" },
+    { id: "compliance",   label: "Compliance",         accent: "#9f1239", bg: "#fff1f2", border: "#fda4af" },
+    { id: "misc",         label: "Miscellaneous",      accent: "#374151", bg: "#f9fafb", border: "#d1d5db" },
+    { id: "transactions", label: "Transactions",       accent: "#9d174d", bg: "#fdf4ff", border: "#f0abfc" },
   ];
 
   return (
@@ -3408,10 +3418,24 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           {/* ═══════════════ TAB: TASKS ═══════════════ */}
           {activeTab === "tasks" && (<div>
 
-          {/* Pre-Renewal Tasks */}
-          <CollapseHeader id="preRenewal" title="Pre-Renewal Tasks" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.preRenewal && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* ── Task sub-tabs ── */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "10px 12px 0",
+            borderBottom: "2px solid #e2e8f0", background: "#f8fafc" }}>
+            {TASK_TABS.map(tt => (
+              <button key={tt.id} type="button" onClick={() => setTaskTab(tt.id)} style={{
+                padding: "7px 14px", borderRadius: "8px 8px 0 0", fontSize: 12, fontWeight: 700,
+                fontFamily: "inherit", cursor: "pointer", border: "none",
+                borderBottom: taskTab === tt.id ? `3px solid ${tt.accent}` : "3px solid transparent",
+                background: taskTab === tt.id ? tt.bg : "transparent",
+                color: taskTab === tt.id ? tt.accent : "#94a3b8",
+                marginBottom: -2, transition: "all .12s",
+              }}>{tt.label}</button>
+            ))}
+          </div>
+
+          {/* Pre-Renewal */}
+          {taskTab === "preRenewal" && (<div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
 
               {/* Medical Renewal Status — all groups */}
               {(() => {
@@ -4121,12 +4145,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 + Add Task
               </button>
             </div>
-          )}
 
-          {/* Renewal Tasks */}
-          <CollapseHeader id="renewalTasks" title="Renewal Tasks" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.renewalTasks && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          </div></div>)} {/* end preRenewal tab */}
+
+          {/* Renewal */}
+          {taskTab === "renewal" && (<div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
               {/* ── Schedule Renewal Meeting — fixed task ── */}
               {(() => {
                 const rm = data.renewalMeeting || {};
@@ -4444,12 +4468,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 + Add Task
               </button>
             </div>
-          )}
 
-          {/* Open Enrollment Tasks */}
-          <CollapseHeader id="oe" title="Open Enrollment Tasks" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.oe && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          </div></div>)} {/* end renewal tab */}
+
+          {/* Open Enrollment */}
+          {taskTab === "oe" && (<div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
 
               {/* 1. OE Dates */}
               <div style={{ background: "#f8fafc", borderRadius: 12, border: "1.5px solid #e2e8f0", padding: "14px 16px" }}>
@@ -4700,12 +4724,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 + Add OE Task
               </button>
             </div>
-          )}
 
-          {/* Post-OE Tasks */}
-          <CollapseHeader id="postOE" title="Post-OE Tasks" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.postOE && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          </div></div>)} {/* end oe tab */}
+
+          {/* Post-OE */}
+          {taskTab === "postOE" && (<div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
               {(() => {
                 // Check if any benefit has change_carrier decision
                 const hasCarrierChange = Object.values(data.benefitDecision || {}).some(v => v === "change_carrier");
@@ -4880,12 +4904,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 + Add Task
               </button>
             </div>
-          )}
 
-          {/* Compliance Tasks */}
-          <CollapseHeader id="compliance" title="Compliance Tasks" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.compliance && (
-            <div>
+          </div></div>)} {/* end postOE tab */}
+
+          {/* Compliance */}
+          {taskTab === "compliance" && (<div>
+            <div style={{ padding: "8px 0" }}>
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
                 <button onClick={autoFillDueDates} type="button" style={{
                   background: "#dce8f2", border: "1.5px solid #507c9c", borderRadius: 7,
@@ -5030,7 +5054,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 + Add Task
               </button>
             </div>
-          )}
 
           {/* Ongoing Tasks */}
           {(() => {
@@ -5279,10 +5302,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             );
           })()}
 
-          {/* Miscellaneous Tasks */}
-          <CollapseHeader id="misc" title="Miscellaneous Tasks" accent="#7a8a3d" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.misc && (
-            <div>
+          </div></div>)} {/* end compliance tab */}
+
+          {/* Miscellaneous */}
+          {taskTab === "misc" && (<div>
+            <div style={{ padding: "8px 0" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {(data.miscTasks || []).map((t, idx) => {
                   const isDone = t.status === "Complete";
@@ -5415,11 +5439,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 cursor: "pointer", fontFamily: "inherit", width: "100%",
               }}>+ Add Miscellaneous Task</button>
             </div>
-          )}
+          </div>)} {/* end misc tab */}
+
           {/* Transactions */}
-          <CollapseHeader id="transactions" title="Transactions" accent="#9d174d" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.transactions && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {taskTab === "transactions" && (<div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
               {/* Email drop zone */}
               <div
                 onDragOver={e => { e.preventDefault(); e.currentTarget.style.background="#fce7f3"; e.currentTarget.style.borderColor="#f472b6"; }}
@@ -5537,7 +5561,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </div>
               ))}
             </div>
-          )}
+          </div>)} {/* end transactions tab */}
 
           </div>)} {/* end Tasks tab */}
 
