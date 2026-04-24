@@ -1158,13 +1158,22 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   const teamInfo = TEAMS[data.team];
   const teamMembers = data.team === "India" ? INDIA_MEMBERS : JULIET_MEMBERS;
 
-  // Collapsible section state
+  // Collapsible section state (still used within tabs)
   const [collapsed, setCollapsed] = useState({
-    clientInfo: true, teamAssignment: true, benefitsSection: false,
-    preRenewal: true, renewalTasks: true, oe: true, postOE: true,
-    compliance: true, misc: true, employeeClasses: true, ongoing: true,
+    clientInfo: false, teamAssignment: false, benefitsSection: false,
+    preRenewal: false, renewalTasks: false, oe: false, postOE: false,
+    compliance: false, misc: false, employeeClasses: false, ongoing: false,
   });
   function toggleSection(id) { setCollapsed(p => ({ ...p, [id]: !p[id] })); }
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState("info");
+  const TABS = [
+    { id: "info",        label: "Client Information" },
+    { id: "eligibility", label: "Eligibility" },
+    { id: "benefits",    label: "Benefits" },
+    { id: "tasks",       label: "Tasks" },
+  ];
 
   return (
     <div style={{
@@ -1233,6 +1242,25 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             }}>✕</button>
           </div>
         </div>
+
+        {/* Tab bar */}
+        {!historyTab && !archivePanel && (
+          <div style={{
+            display: "flex", borderBottom: "2px solid #e2e8f0",
+            background: "#f8fafc", paddingLeft: 20, flexShrink: 0,
+          }}>
+            {TABS.map(tab => (
+              <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} style={{
+                padding: "11px 22px", fontSize: 13, fontWeight: 700,
+                fontFamily: "inherit", cursor: "pointer", border: "none",
+                borderBottom: activeTab === tab.id ? "3px solid #3e5878" : "3px solid transparent",
+                background: "none",
+                color: activeTab === tab.id ? "#3e5878" : "#94a3b8",
+                marginBottom: -2, transition: "all .15s",
+              }}>{tab.label}</button>
+            ))}
+          </div>
+        )}
 
         {/* Archive plan year panel */}
         {archivePanel && (
@@ -1565,10 +1593,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               )}
             </div>
           ) : (
-          /* ── Normal client record ── */
+          /* ── Normal client record — Tabbed ── */
           <div>
 
-          {/* Basic Info */}
+          {/* ═══════════════ TAB: CLIENT INFORMATION ═══════════════ */}
+          {activeTab === "info" && (<div>
+
+          {/* Client Information — always expanded */}
           <CollapseHeader id="clientInfo" title="Client Information" collapsed={collapsed} onToggle={toggleSection} />
           {!collapsed.clientInfo && (() => {
             const subHdr = (label) => (
@@ -1977,6 +2008,51 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           </>
           )}
 
+          {/* Team Assignment — inside Client Information tab, simplified */}
+          <div style={{ padding: "12px 0 4px" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", letterSpacing: "1px",
+              textTransform: "uppercase", marginBottom: 10, borderTop: "1.5px solid #e8edf4", paddingTop: 12 }}>
+              Team Assignment
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Team</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {Object.entries(TEAMS).map(([key, t]) => (
+                    <button key={key} type="button" onClick={() => set("team", key)} style={{
+                      padding: "7px 20px", borderRadius: 9, fontSize: 13, fontWeight: 700,
+                      fontFamily: "inherit", cursor: "pointer",
+                      border: `2px solid ${data.team === key ? t.border : "#e2e8f0"}`,
+                      background: data.team === key ? t.color : "#fafafa",
+                      color: data.team === key ? t.text : "#475569",
+                      transition: "all .12s",
+                    }}>{t.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Lead</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {["RG", "DS"].map(opt => (
+                    <button key={opt} type="button" onClick={() => set("lead", data.lead === opt ? "" : opt)} style={{
+                      padding: "7px 20px", borderRadius: 9, fontSize: 13, fontWeight: 700,
+                      fontFamily: "inherit", cursor: "pointer",
+                      border: `2px solid ${data.lead === opt ? "#6366f1" : "#e2e8f0"}`,
+                      background: data.lead === opt ? "#eef2ff" : "#fff",
+                      color: data.lead === opt ? "#4338ca" : "#64748b",
+                      transition: "all .12s",
+                    }}>{opt}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          </div>)} {/* end Info tab */}
+
+          {/* ═══════════════ TAB: ELIGIBILITY ═══════════════ */}
+          {activeTab === "eligibility" && (<div>
+
           {/* Employee Classes */}
           <CollapseHeader id="employeeClasses" title="Employee Classes" collapsed={collapsed} onToggle={toggleSection} />
           {!collapsed.employeeClasses && (() => {
@@ -2262,48 +2338,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             );
           })()}
 
-          {/* Team */}
-          <CollapseHeader id="teamAssignment" title="Team Assignment" collapsed={collapsed} onToggle={toggleSection} />
-          {!collapsed.teamAssignment && (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-            {Object.entries(TEAMS).map(([key, t]) => (
-              <div key={key}
-                onClick={() => set("team", key)}
-                style={{
-                  border: `2px solid ${data.team === key ? t.border : "#e2e8f0"}`,
-                  background: data.team === key ? t.color : "#fafafa",
-                  borderRadius: 12, padding: "12px 18px", cursor: "pointer",
-                  transition: "all .15s", minWidth: 160,
-                }}>
-                <div style={{ fontWeight: 700, color: data.team === key ? t.text : "#475569", fontSize: 14, marginBottom: 6 }}>
-                  Team {t.label}
-                </div>
-                {sortMembers(t.members).map(m => (
-                  <div key={m.name} style={{ fontSize: 12, color: "#64748b" }}>
-                    <span style={{ fontWeight: 600 }}>{m.name}</span> · {m.role}
-                  </div>
-                ))}
-              </div>
-            ))}
-            {/* Lead selector */}
-            <div style={{ background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 12, padding: "12px 18px", minWidth: 120 }}>
-              <div style={{ fontWeight: 700, color: "#475569", fontSize: 14, marginBottom: 10 }}>Lead</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {["RG", "DS"].map(opt => (
-                  <button key={opt} type="button"
-                    onClick={() => set("lead", data.lead === opt ? "" : opt)}
-                    style={{
-                      padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                      border: `2px solid ${data.lead === opt ? "#6366f1" : "#e2e8f0"}`,
-                      background: data.lead === opt ? "#eef2ff" : "#fff",
-                      color: data.lead === opt ? "#4338ca" : "#64748b",
-                      cursor: "pointer", fontFamily: "inherit", transition: "all .12s",
-                    }}>{opt}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-          )}
+          </div>)} {/* end Eligibility tab */}
+
+          {/* ═══════════════ TAB: BENEFITS ═══════════════ */}
+          {activeTab === "benefits" && (<div>
 
           {/* Benefits & Carriers */}
           <CollapseHeader id="benefitsSection" title="Benefits &amp; Carriers" collapsed={collapsed} onToggle={toggleSection} />
@@ -3364,6 +3402,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           </div>
           );
           })()}
+
+          </div>)} {/* end Benefits tab */}
+
+          {/* ═══════════════ TAB: TASKS ═══════════════ */}
+          {activeTab === "tasks" && (<div>
 
           {/* Pre-Renewal Tasks */}
           <CollapseHeader id="preRenewal" title="Pre-Renewal Tasks" collapsed={collapsed} onToggle={toggleSection} />
@@ -5496,7 +5539,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             </div>
           )}
 
-          {/* General Notes */}
+          </div>)} {/* end Tasks tab */}
+
+          {/* General Notes — always visible in footer area */}
+          {activeTab === "info" && (<>
           <SectionHeader>General Notes</SectionHeader>
           <textarea
             value={data.notes}
@@ -5505,6 +5551,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             placeholder="Any additional notes..."
             style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "inherit" }}
           />
+          </>)}
 
           </div>
           )}
@@ -7543,13 +7590,13 @@ useEffect(() => {
   function setDashboardTeamFilter(val) { setDashF("team", val); }
  const [carriersData, setCarriersDataRaw] = useState([]);
   const [benefitsDb, setBenefitsDbRaw] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("benefittrack_benefitsdb_v1") || "[]"); }
+    try { return JSON.parse(localStorage.getItem("benefittrack_benefitsdb_v2") || "[]"); }
     catch { return []; }
   });
   function setBenefitsDb(updater) {
     setBenefitsDbRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      try { localStorage.setItem("benefittrack_benefitsdb_v1", JSON.stringify(next)); } catch(e) {}
+      try { localStorage.setItem("benefittrack_benefitsdb_v2", JSON.stringify(next)); } catch(e) {}
       return next;
     });
   }
@@ -7660,7 +7707,7 @@ useEffect(() => {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {/* Nav tabs */}
           <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 9, padding: 3, gap: 2 }}>
-            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"],["benefitsDb","💊 Benefits DB"]].map(([v, label]) => (
+            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"],["benefitsDb","💊 Benefits"]].map(([v, label]) => (
               <button key={v} onClick={() => changeView(v)} style={{
                 background: view === v ? "#fff" : "transparent",
                 border: "none", borderRadius: 7, padding: "6px 14px",
@@ -8379,150 +8426,379 @@ function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
   );
 }
 
+// ── Benefits constants ────────────────────────────────────────────────────────
+const BENEFITS_DB_CATEGORIES = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Tax-Advantaged"];
+
+const BENEFITS_DB_OPTIONS = {
+  planDesign: {
+    "Core Health":        ["PPO","HMO","EPO","HDHP","DMO","Network","Embedded","Stand-alone"],
+    "Life & AD&D":        ["Flat $ Amount","Salary Multiple","Incremental Elections ($10k units)","Incremental Elections ($25k units)"],
+    "Income Protection":  ["% of Income","Benefit Increments ($50 units)","Benefit Increments ($100 units)"],
+    "Statutory Income":   ["State-Defined Benefit Formula"],
+    "Worksite":           ["Fixed Schedule of Benefits","Condition/Treatment-Based Payouts","Lump Sum by Diagnosis","Per Diem / Admission Benefits"],
+    "Wellness":           ["Embedded","Stand-alone"],
+    "Lifestyle":          ["Embedded","Stand-alone","Reimbursement Model"],
+    "Tax-Advantaged":     ["Health FSA","Limited Purpose FSA","Dependent Care FSA","HSA (paired w/ HDHP)","HRA (ICHRA / QSEHRA / Integrated)","Transit / Parking (Sec. 132(f))"],
+  },
+  variant: {
+    "Core Health":        ["Medical","Dental","Vision","Rx","Behavioral Health"],
+    "Life & AD&D":        ["Basic Life","Basic AD&D","Supplemental Life","Supplemental AD&D","Dependent Life","Voluntary Life","Voluntary AD&D"],
+    "Income Protection":  ["Short-Term Disability (STD)","Long-Term Disability (LTD)","Voluntary STD","Voluntary LTD"],
+    "Statutory Income":   ["NY DBL","NY PFL","NJ TDI","NJ FLI","CA SDI","CA PFL","WA PFML","MA PFML","CT PFML","OR PFML","CO FAMLI"],
+    "Worksite":           ["Accident","Critical Illness","Cancer","Hospital Indemnity"],
+    "Wellness":           ["EAP","Telehealth","Wellness Program"],
+    "Lifestyle":          ["Pet Insurance","Identity Theft Protection","Legal Services (Prepaid)","Financial Wellness","Commuter Benefits"],
+    "Tax-Advantaged":     ["Health FSA","Limited Purpose FSA","Dependent Care FSA","HSA","HRA","ICHRA","QSEHRA","Transit","Parking"],
+  },
+  fundingMethod:    ["Fully Insured","Level-Funded","Self-Insured","State","Trust/Custodial","Self-Insured (Unfunded)","Unfunded"],
+  billingMethod:    ["Composite","Age-Based","Age-Banded","Composite/Age-Based","Composite/Age-Banded","Age-Issued/Age-Attained","N/A"],
+  contributionMethod: ["Non-Contributory","Contributory","Voluntary","Non-Contrib / Contrib","Non-Contrib / Contrib / Voluntary","Contrib (Employee)"],
+  planType:         ["Sec. 105","Sec. 125","Sec. 105 / 125","Sec. 79","After-tax / 125","125 (if pre-tax)","After-tax","Sec. 223","Sec. 132(f)","State","N/A"],
+  erisa:            ["Yes","No"],
+  ndtApplicability: ["Yes","No","Yes (105(h) if self-funded)","Yes (if self-funded)","Yes (key employee test)","Yes (125)","Yes (125 + 105(h) for HFSA)","Yes (comparability)","Limited","No"],
+};
+
+const BENEFITS_DB_SEED = [
+  { id:"bds_1",  benefit:"Medical",           category:"Core Health",       planDesign:"PPO / HMO / EPO / HDHP / Indemnity",    variant:"",  fundingMethod:"Fully Insured / Level-Funded / Self-Insured", billingMethod:"Composite/Age-Based",     contributionMethod:"Non-Contrib / Contrib",             planType:"Sec. 105 / 125", erisa:"Yes", ndtApplicability:"Yes (105(h) if self-funded)",      notes:"" },
+  { id:"bds_2",  benefit:"Dental",            category:"Core Health",       planDesign:"PPO / DMO / Indemnity",                  variant:"",  fundingMethod:"Fully Insured / Self-Insured",                billingMethod:"Composite/Age-Based",     contributionMethod:"Non-Contrib / Contrib / Voluntary", planType:"Sec. 105 / 125", erisa:"Yes", ndtApplicability:"Yes (if self-funded)",             notes:"" },
+  { id:"bds_3",  benefit:"Vision",            category:"Core Health",       planDesign:"PPO / Network / Indemnity",              variant:"",  fundingMethod:"Fully Insured / Self-Insured",                billingMethod:"Composite",               contributionMethod:"Non-Contrib / Contrib / Voluntary", planType:"Sec. 105 / 125", erisa:"Yes", ndtApplicability:"Yes (if self-funded)",             notes:"" },
+  { id:"bds_4",  benefit:"Telehealth",        category:"Core Health",       planDesign:"Embedded / Stand-alone",                 variant:"",  fundingMethod:"Fully Insured / Self-Insured",                billingMethod:"Composite",               contributionMethod:"Non-Contrib / Contrib",             planType:"Sec. 105",       erisa:"Yes", ndtApplicability:"Yes (if stand-alone/self-funded)", notes:"" },
+  { id:"bds_5",  benefit:"Base Life/AD&D",    category:"Life & AD&D",       planDesign:"Flat $ / Salary Multiple",               variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Non-Contrib",                       planType:"Sec. 79",        erisa:"Yes", ndtApplicability:"Yes (key employee test)",          notes:"" },
+  { id:"bds_6",  benefit:"Vol Life",          category:"Life & AD&D",       planDesign:"Increments",                             variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Age-Banded",              contributionMethod:"Voluntary",                         planType:"After-tax / 125", erisa:"Yes", ndtApplicability:"Limited",                         notes:"" },
+  { id:"bds_7",  benefit:"AD&D",              category:"Life & AD&D",       planDesign:"Increments",                             variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite/Age-Banded",    contributionMethod:"",                                  planType:"",               erisa:"Yes", ndtApplicability:"Limited",                         notes:"" },
+  { id:"bds_8",  benefit:"STD",               category:"Income Protection", planDesign:"% of Income / Benefit Increments",       variant:"",  fundingMethod:"Fully Insured / Self-Insured",                billingMethod:"Composite/Age-Banded",    contributionMethod:"Non-Contrib / Contrib / Voluntary", planType:"125 (if pre-tax)", erisa:"Yes", ndtApplicability:"No",                              notes:"" },
+  { id:"bds_9",  benefit:"LTD",               category:"Income Protection", planDesign:"% of Income / Benefit Increments",       variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite/Age-Banded",    contributionMethod:"Non-Contrib / Contrib / Voluntary", planType:"125 (if pre-tax)", erisa:"Yes", ndtApplicability:"No",                              notes:"" },
+  { id:"bds_10", benefit:"IDI",               category:"Income Protection", planDesign:"% of Income / Benefit Increments",       variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite/Age-Banded",    contributionMethod:"",                                  planType:"",               erisa:"Yes", ndtApplicability:"No",                              notes:"" },
+  { id:"bds_11", benefit:"NYDBL & PFL",       category:"Statutory Income",  planDesign:"State-defined benefit formula",          variant:"",  fundingMethod:"State / Fully Insured",                       billingMethod:"Composite",               contributionMethod:"Non-Contrib* / Contrib*",           planType:"State",          erisa:"No",  ndtApplicability:"No",                              notes:"Contribution rules vary by state" },
+  { id:"bds_12", benefit:"Accident",          category:"Worksite",          planDesign:"Fixed schedule of benefits",             variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125)",                        notes:"" },
+  { id:"bds_13", benefit:"Cancer",            category:"Worksite",          planDesign:"Condition/treatment-based payouts",      variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Age-Issued/Age-Attained", contributionMethod:"Voluntary",                         planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125)",                        notes:"" },
+  { id:"bds_14", benefit:"Critical Illness",  category:"Worksite",          planDesign:"Lump sum by diagnosis",                  variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Age-Issued/Age-Attained", contributionMethod:"Voluntary",                         planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125)",                        notes:"" },
+  { id:"bds_15", benefit:"Hospital Indemnity",category:"Worksite",          planDesign:"Per diem / admission benefits",          variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125)",                        notes:"" },
+  { id:"bds_16", benefit:"EAP",               category:"Wellness",          planDesign:"Embedded / Stand-alone",                 variant:"",  fundingMethod:"Fully Insured / Self-Insured",                billingMethod:"Composite",               contributionMethod:"Non-Contrib / Contrib / Voluntary", planType:"Sec. 105",       erisa:"Yes", ndtApplicability:"No",                              notes:"" },
+  { id:"bds_17", benefit:"Identity Theft",    category:"Lifestyle",         planDesign:"Embedded / Stand-alone",                 variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"125 (if pre-tax)", erisa:"Yes", ndtApplicability:"Yes (125)",                       notes:"" },
+  { id:"bds_18", benefit:"Prepaid Legal",     category:"Lifestyle",         planDesign:"Embedded / Stand-alone",                 variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125)",                        notes:"" },
+  { id:"bds_19", benefit:"Pet Insurance",     category:"Lifestyle",         planDesign:"Reimbursement model",                    variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"After-tax",      erisa:"No",  ndtApplicability:"No",                              notes:"" },
+  { id:"bds_20", benefit:"FSA",               category:"Tax-Advantaged",    planDesign:"Health / LP / Dependent Care",           variant:"",  fundingMethod:"Self-Insured (Unfunded)",                     billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125 + 105(h) for HFSA)",     notes:"" },
+  { id:"bds_21", benefit:"HSA",               category:"Tax-Advantaged",    planDesign:"ER Funding / No ER Funding",             variant:"",  fundingMethod:"Trust/Custodial",                             billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 223",       erisa:"No",  ndtApplicability:"Yes (comparability)",              notes:"Must be paired with HDHP" },
+  { id:"bds_22", benefit:"HRA",               category:"Tax-Advantaged",    planDesign:"ICHRA / QSEHRA / Integrated",            variant:"",  fundingMethod:"Self-Insured",                                billingMethod:"",                        contributionMethod:"Non-Contrib",                       planType:"Sec. 105",       erisa:"Yes", ndtApplicability:"Yes (105(h))",                     notes:"" },
+  { id:"bds_23", benefit:"Commuter",          category:"Tax-Advantaged",    planDesign:"Transit / Parking",                      variant:"",  fundingMethod:"Unfunded",                                    billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 132(f)",    erisa:"No",  ndtApplicability:"No",                              notes:"" },
+];
+
 // ── BenefitsDbView ────────────────────────────────────────────────────────────
 function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim());
   const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [activeCategory, setActiveCategory] = useState("All");
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState(null);
-  const [activeType, setActiveType] = useState("All");
 
-  const BENEFIT_TYPES_DB = ["Medical","Dental","Vision","Life/AD&D","Disability","Worksite","FSA/HSA/HRA","EAP","Other"];
+  // Seed default data if empty
+  const records = (benefitsDb||[]).length > 0 ? benefitsDb : BENEFITS_DB_SEED;
 
-  const filtered = (benefitsDb||[])
-    .filter(b => activeType === "All" || b.type === activeType)
-    .sort((a,b) => (a.name||"").localeCompare(b.name||""));
+  const filtered = records
+    .filter(b => activeCategory === "All" || b.category === activeCategory)
+    .sort((a,b) => {
+      const ci = BENEFITS_DB_CATEGORIES.indexOf(a.category) - BENEFITS_DB_CATEGORIES.indexOf(b.category);
+      return ci !== 0 ? ci : (a.variant||"").localeCompare(b.variant||"");
+    });
 
   function startNew() {
     const id = "bd_" + Date.now();
+    const newRow = { id, benefit:"", category: activeCategory === "All" ? "Core Health" : activeCategory,
+      planDesign:"", variant:"", fundingMethod:"", billingMethod:"", contributionMethod:"",
+      planType:"", erisa:"Yes", ndtApplicability:"No", notes:"" };
+    const base = (benefitsDb||[]).length > 0 ? benefitsDb : BENEFITS_DB_SEED;
+    onSave(() => [...base, newRow]);
     setEditingId(id);
-    setEditData({ id, name: "", type: "Medical", description: "", planTypes: [], features: "", regulatoryNotes: "" });
+    setEditData(newRow);
   }
   function startEdit(b) { setEditingId(b.id); setEditData(JSON.parse(JSON.stringify(b))); }
   function saveEdit() {
-    if (!editData.name.trim()) return;
-    onSave(prev => {
-      const exists = (prev||[]).find(b => b.id === editData.id);
-      return exists ? prev.map(b => b.id === editData.id ? editData : b) : [...(prev||[]), editData];
+    if (!editData.category) return;
+    const base = (benefitsDb||[]).length > 0 ? benefitsDb : BENEFITS_DB_SEED;
+    onSave(() => {
+      const exists = base.find(b => b.id === editData.id);
+      return exists ? base.map(b => b.id === editData.id ? editData : b) : [...base, editData];
     });
     setEditingId(null); setEditData(null);
   }
-  function deleteBenefit(id) {
-    if (confirm("Delete this benefit definition?")) {
-      onSave(prev => (prev||[]).filter(b => b.id !== id));
-      if (editingId === id) { setEditingId(null); setEditData(null); }
-    }
+  function deleteRecord(id) {
+    if (!confirm("Delete this benefit record?")) return;
+    const base = (benefitsDb||[]).length > 0 ? benefitsDb : BENEFITS_DB_SEED;
+    onSave(() => base.filter(b => b.id !== id));
+    if (editingId === id) { setEditingId(null); setEditData(null); }
+  }
+  function resetToDefaults() {
+    if (!confirm("Reset the Benefits database to default data? Any custom entries will be replaced.")) return;
+    onSave(() => BENEFITS_DB_SEED);
+    setEditingId(null); setEditData(null);
+  }
+
+  const catCounts = {};
+  records.forEach(b => { catCounts[b.category] = (catCounts[b.category]||0) + 1; });
+
+  const COL_HEADERS = ["Benefit","Category","Plan Design","Variant","Funding Method","Billing Method","Contribution Method","Plan Type (Tax Code)","ERISA","NDT Applicability","Notes",""];
+  const colWidths = "140px 180px 180px 180px 130px 180px 150px 55px 200px 1fr 70px";
+
+  const thStyle = { fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".7px",
+    textTransform: "uppercase", padding: "8px 10px", background: "#f1f5f9",
+    borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap", userSelect: "none" };
+  const tdStyle = { fontSize: 12, color: "#334155", padding: "8px 10px",
+    borderBottom: "1px solid #f1f5f9", verticalAlign: "top", lineHeight: 1.4 };
+
+  const catColors = {
+    "Core Health":       { bg:"#dbeafe", text:"#1d4ed8" },
+    "Life & AD&D":       { bg:"#f3e8ff", text:"#7e22ce" },
+    "Income Protection": { bg:"#fce7f3", text:"#9d174d" },
+    "Statutory Income":  { bg:"#fef3c7", text:"#92400e" },
+    "Worksite":          { bg:"#dcfce7", text:"#166534" },
+    "Wellness":          { bg:"#e0f2fe", text:"#0369a1" },
+    "Lifestyle":         { bg:"#fde68a", text:"#78350f" },
+    "Tax-Advantaged":    { bg:"#d1fae5", text:"#065f46" },
+  };
+
+  function DropdownCell({ field, value, options, onChange }) {
+    return (
+      <select value={value||""} onChange={e => onChange(e.target.value)}
+        style={{ width:"100%", border:"1.5px solid #e2e8f0", borderRadius:6, padding:"4px 6px",
+          fontSize:11, fontFamily:"inherit", background:"#fff", color:"#334155", cursor:"pointer" }}>
+        <option value="">—</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
   }
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
         <div>
-          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>Benefits Database</div>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Reference library of employee benefit types, plan structures, and features</div>
+          <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontWeight:800, fontSize:20, color:"#0f172a" }}>Benefits</div>
+          <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>Reference database of employee benefit types, structures, and regulatory attributes</div>
         </div>
-        <button type="button" onClick={startNew} style={{ background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
-          border: "none", borderRadius: 9, padding: "9px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Benefit</button>
+        <div style={{ display:"flex", gap:8 }}>
+          {canEdit && <button type="button" onClick={resetToDefaults}
+            style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:700, fontFamily:"inherit",
+              border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", cursor:"pointer" }}>
+            ↺ Reset to Defaults
+          </button>}
+          {canEdit && <button type="button" onClick={startNew}
+            style={{ background:"linear-gradient(135deg,#2d4a6b,#4a7fa5)", color:"#fff",
+              border:"none", borderRadius:9, padding:"9px 20px", fontSize:13, fontWeight:700,
+              cursor:"pointer", fontFamily:"inherit" }}>+ Add Row</button>}
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-        {["All",...BENEFIT_TYPES_DB].map(t => (
-          <button key={t} type="button" onClick={() => setActiveType(t)} style={{
-            padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
-            border: `1.5px solid ${activeType===t?"#4a7fa5":"#e2e8f0"}`,
-            background: activeType===t?"#dce8f0":"#fff",
-            color: activeType===t?"#2d4a6b":"#64748b",
-          }}>{t} {activeType===t && (benefitsDb||[]).filter(b=>t==="All"||b.type===t).length > 0 ? `(${(benefitsDb||[]).filter(b=>t==="All"||b.type===t).length})` : ""}</button>
-        ))}
+      {/* Category filter tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+        {["All", ...BENEFITS_DB_CATEGORIES].map(cat => {
+          const count = cat === "All" ? records.length : (catCounts[cat]||0);
+          const cc = catColors[cat] || { bg:"#f1f5f9", text:"#475569" };
+          const isActive = activeCategory === cat;
+          return (
+            <button key={cat} type="button" onClick={() => setActiveCategory(cat)} style={{
+              padding:"5px 12px", borderRadius:8, fontSize:11, fontWeight:700, fontFamily:"inherit",
+              cursor:"pointer", transition:"all .12s",
+              border: isActive ? `1.5px solid ${cc.text}` : "1.5px solid #e2e8f0",
+              background: isActive ? cc.bg : "#fff",
+              color: isActive ? cc.text : "#64748b",
+            }}>{cat} <span style={{ opacity:.7 }}>({count})</span></button>
+          );
+        })}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: editingId ? "1fr 380px" : "1fr", gap: 16 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtered.length === 0 && (
-            <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>💊</div>
-              <div style={{ fontWeight: 700 }}>No {activeType !== "All" ? activeType : ""} benefits defined yet</div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add Benefit" to build your reference library</div>
-            </div>
-          )}
-          {filtered.map(b => {
-            const isEditing = editingId === b.id;
-            return (
-              <div key={b.id} style={{ background: isEditing ? "#f0f5fa":"#fff", borderRadius: 12, padding: "14px 18px",
-                border: `1.5px solid ${isEditing?"#4a7fa5":"#e2e8f0"}`, transition: "all .15s" }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>{b.name}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: "#dce8f0", color: "#2d4a6b" }}>{b.type}</span>
-                      {(b.planTypes||[]).map(pt => (
-                        <span key={pt} style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 99, background: "#f1f5f9", color: "#475569" }}>{pt}</span>
-                      ))}
-                    </div>
-                    {b.description && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 3 }}>{b.description}</div>}
-                    {b.features && <div style={{ fontSize: 11, color: "#475569" }}>📋 {b.features}</div>}
-                    {b.regulatoryNotes && <div style={{ fontSize: 11, color: "#854d0e", marginTop: 3 }}>⚖️ {b.regulatoryNotes}</div>}
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button type="button" onClick={() => isEditing ? (setEditingId(null),setEditData(null)) : startEdit(b)}
-                      style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        border: `1.5px solid ${isEditing?"#4a7fa5":"#e2e8f0"}`, background: isEditing?"#dce8f0":"#f8fafc",
-                        color: isEditing?"#2d4a6b":"#475569", cursor: "pointer", fontFamily: "inherit" }}>{isEditing?"Close":"Edit"}</button>
-                    {canDelete && <button type="button" onClick={() => deleteBenefit(b.id)}
-                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                        cursor: "pointer", fontFamily: "inherit" }}>✕</button>}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      {/* Table */}
+      <div style={{ background:"#fff", borderRadius:12, border:"1.5px solid #e2e8f0", overflow:"hidden" }}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1200 }}>
+            <thead>
+              <tr>
+                {COL_HEADERS.map(h => <th key={h} style={thStyle}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr><td colSpan={11} style={{ ...tdStyle, textAlign:"center", padding:"40px", color:"#94a3b8" }}>
+                  No records in this category
+                </td></tr>
+              )}
+              {filtered.map((b, i) => {
+                const isEditing = editingId === b.id;
+                const cc = catColors[b.category] || { bg:"#f1f5f9", text:"#475569" };
+                const rowBg = isEditing ? "#f0f5fa" : (i % 2 === 0 ? "#fff" : "#fafafa");
+                return (
+                  <tr key={b.id} style={{ background: rowBg, transition:"background .1s",
+                      outline: isEditing ? "2px solid #4a7fa5" : "none", outlineOffset: -1 }}
+                    onMouseEnter={e => !isEditing && (e.currentTarget.style.background="#f0f5fa")}
+                    onMouseLeave={e => !isEditing && (e.currentTarget.style.background=rowBg)}>
 
-        {editingId && editData && (
-          <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #4a7fa5", padding: "20px",
-            position: "sticky", top: 80, alignSelf: "flex-start", maxHeight: "80vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: "#2d4a6b", marginBottom: 16 }}>
-              {(benefitsDb||[]).find(b=>b.id===editingId) ? "Edit Benefit" : "New Benefit"}
-            </div>
-            <label style={labelStyle}>Benefit Name
-              <input value={editData.name} onChange={e => setEditData(p=>({...p,name:e.target.value}))}
-                placeholder="e.g. Dental PPO — Contributory" style={{ ...inputStyle, marginTop: 3 }} />
-            </label>
-            <label style={{ ...labelStyle, marginTop: 12 }}>Type
-              <select value={editData.type} onChange={e => setEditData(p=>({...p,type:e.target.value}))}
-                style={{ ...inputStyle, marginTop: 3 }}>
-                {BENEFIT_TYPES_DB.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </label>
-            <label style={{ ...labelStyle, marginTop: 12 }}>Description
-              <textarea value={editData.description||""} onChange={e => setEditData(p=>({...p,description:e.target.value}))}
-                placeholder="Brief description of this benefit type..."
-                rows={2} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
-            </label>
-            <label style={{ ...labelStyle, marginTop: 12 }}>Plan Types / Structures
-              <input value={(editData.planTypes||[]).join(", ")||""}
-                onChange={e => setEditData(p=>({...p,planTypes:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)}))}
-                placeholder="e.g. PPO, HMO, DHMO (comma-separated)"
-                style={{ ...inputStyle, marginTop: 3 }} />
-            </label>
-            <label style={{ ...labelStyle, marginTop: 12 }}>Features / Key Provisions
-              <textarea value={editData.features||""} onChange={e => setEditData(p=>({...p,features:e.target.value}))}
-                placeholder="Network types, typical benefit levels, contribution structures..."
-                rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
-            </label>
-            <label style={{ ...labelStyle, marginTop: 12 }}>Regulatory / Compliance Notes
-              <textarea value={editData.regulatoryNotes||""} onChange={e => setEditData(p=>({...p,regulatoryNotes:e.target.value}))}
-                placeholder="ACA requirements, ERISA, state mandates..."
-                rows={2} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
-            </label>
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={saveEdit} style={{ flex:1, background:"linear-gradient(135deg,#2d4a6b,#4a7fa5)", color:"#fff",
-                border:"none", borderRadius:8, padding:"9px 0", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Save</button>
-              <button type="button" onClick={() => { setEditingId(null); setEditData(null); }} style={{ background:"#f1f5f9", border:"none",
-                borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:700, color:"#475569", cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
-            </div>
-          </div>
-        )}
+                    {/* Benefit */}
+                    <td style={{ ...tdStyle, fontWeight:700, color:"#0f172a" }}>
+                      {isEditing ? (
+                        <input value={editData.benefit||""} onChange={e=>setEditData(p=>({...p,benefit:e.target.value}))}
+                          placeholder="e.g. Medical"
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff", boxSizing:"border-box" }} />
+                      ) : b.benefit}
+                    </td>
+
+                    {/* Category */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.category||""} onChange={e=>setEditData(p=>({...p,category:e.target.value,planDesign:"",variant:""}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          {BENEFITS_DB_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+                        </select>
+                      ) : (
+                        <span style={{ fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:99,
+                          background:cc.bg, color:cc.text, whiteSpace:"nowrap" }}>{b.category}</span>
+                      )}
+                    </td>
+
+                    {/* Plan Design */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.planDesign||""} onChange={e=>setEditData(p=>({...p,planDesign:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {(BENEFITS_DB_OPTIONS.planDesign[editData.category]||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.planDesign}
+                    </td>
+
+                    {/* Variant */}
+                    <td style={{ ...tdStyle, fontWeight: isEditing ? 400 : 600, color: isEditing ? "#334155" : "#1e3a5f" }}>
+                      {isEditing ? (
+                        <select value={editData.variant||""} onChange={e=>setEditData(p=>({...p,variant:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {(BENEFITS_DB_OPTIONS.variant[editData.category]||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.variant}
+                    </td>
+
+                    {/* Funding Method */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.fundingMethod||""} onChange={e=>setEditData(p=>({...p,fundingMethod:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {BENEFITS_DB_OPTIONS.fundingMethod.map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.fundingMethod}
+                    </td>
+
+                    {/* Billing Method */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.billingMethod||""} onChange={e=>setEditData(p=>({...p,billingMethod:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {BENEFITS_DB_OPTIONS.billingMethod.map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.billingMethod}
+                    </td>
+
+                    {/* Contribution Method */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.contributionMethod||""} onChange={e=>setEditData(p=>({...p,contributionMethod:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {BENEFITS_DB_OPTIONS.contributionMethod.map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.contributionMethod}
+                    </td>
+
+                    {/* Plan Type */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.planType||""} onChange={e=>setEditData(p=>({...p,planType:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {BENEFITS_DB_OPTIONS.planType.map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.planType ? (
+                        <span style={{ fontSize:11, fontWeight:700, padding:"1px 7px", borderRadius:99,
+                          background:"#fef3c7", color:"#92400e" }}>{b.planType}</span>
+                      ) : null}
+                    </td>
+
+                    {/* ERISA */}
+                    <td style={{ ...tdStyle, textAlign:"center" }}>
+                      {isEditing ? (
+                        <select value={editData.erisa||""} onChange={e=>setEditData(p=>({...p,erisa:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          {BENEFITS_DB_OPTIONS.erisa.map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : (
+                        <span style={{ fontSize:11, fontWeight:800,
+                          color: b.erisa==="Yes" ? "#166534" : "#991b1b" }}>{b.erisa}</span>
+                      )}
+                    </td>
+
+                    {/* NDT */}
+                    <td style={tdStyle}>
+                      {isEditing ? (
+                        <select value={editData.ndtApplicability||""} onChange={e=>setEditData(p=>({...p,ndtApplicability:e.target.value}))}
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
+                          <option value="">— Select —</option>
+                          {BENEFITS_DB_OPTIONS.ndtApplicability.map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      ) : b.ndtApplicability ? (
+                        <span style={{ fontSize:11,
+                          color: b.ndtApplicability==="No" ? "#64748b" : "#7c2d12",
+                          fontWeight: b.ndtApplicability==="No" ? 400 : 600 }}>{b.ndtApplicability}</span>
+                      ) : null}
+                    </td>
+
+                    {/* Notes */}
+                    <td style={{ ...tdStyle, fontSize:11 }}>
+                      {isEditing ? (
+                        <input value={editData.notes||""} onChange={e=>setEditData(p=>({...p,notes:e.target.value}))}
+                          placeholder="Notes..."
+                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff", boxSizing:"border-box" }} />
+                      ) : (
+                        <span style={{ color:"#64748b", fontStyle: b.notes ? "normal" : "italic" }}>{b.notes || ""}</span>
+                      )}
+                    </td>
+
+                    {/* Actions */}
+                    <td style={{ ...tdStyle, whiteSpace:"nowrap" }}>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {canEdit && (
+                          isEditing ? (
+                            <>
+                              <button type="button" onClick={saveEdit}
+                                style={{ padding:"3px 10px", borderRadius:6, fontSize:11, fontWeight:700,
+                                  border:"1.5px solid #4a7fa5", background:"#2d4a6b", color:"#fff",
+                                  cursor:"pointer", fontFamily:"inherit" }}>Save</button>
+                              <button type="button" onClick={()=>{setEditingId(null);setEditData(null);}}
+                                style={{ padding:"3px 8px", borderRadius:6, fontSize:11, fontWeight:700,
+                                  border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#475569",
+                                  cursor:"pointer", fontFamily:"inherit" }}>✕</button>
+                            </>
+                          ) : (
+                            <button type="button" onClick={() => startEdit(b)}
+                              style={{ padding:"3px 10px", borderRadius:6, fontSize:11, fontWeight:700,
+                                border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#475569",
+                                cursor:"pointer", fontFamily:"inherit" }}>Edit</button>
+                          )
+                        )}
+                        {canDelete && <button type="button" onClick={() => deleteRecord(b.id)}
+                          style={{ padding:"3px 7px", borderRadius:6, fontSize:11, fontWeight:700,
+                            border:"1.5px solid #fca5a5", background:"#fee2e2", color:"#991b1b",
+                            cursor:"pointer", fontFamily:"inherit" }}>✕</button>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style={{ fontSize:11, color:"#94a3b8", marginTop:8, textAlign:"right" }}>
+        {filtered.length} record{filtered.length!==1?"s":""} shown
       </div>
     </div>
   );
