@@ -998,7 +998,7 @@ function SaveButton({ onSave }) {
 
 // ── Client Form Modal ─────────────────────────────────────────────────────────
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb }) {
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData }) {
   const [data, setData] = useState(() => {
     const base = JSON.parse(JSON.stringify(client));
     return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
@@ -1768,8 +1768,50 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           {/* ═══════════════ TAB: CLIENT INFORMATION ═══════════════ */}
           {activeTab === "info" && (<div>
 
-          {/* Client Information — always expanded */}
-          <CollapseHeader id="clientInfo" title="Client Information" collapsed={collapsed} onToggle={toggleSection} />
+          {/* Client Information header with Team Assignment inline */}
+          <div onClick={() => toggleSection("clientInfo")} style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            cursor: "pointer", userSelect: "none",
+            borderBottom: "2px solid #507c9c",
+            paddingBottom: 8, marginBottom: collapsed.clientInfo ? 0 : 12, marginTop: 4,
+          }}>
+            {/* Left: section title */}
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "1.5px",
+              textTransform: "uppercase", color: "#3e5878" }}>
+              Client Information
+            </span>
+            {/* Right: Team + Lead pickers + chevron */}
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}
+              onClick={e => e.stopPropagation()}>
+              {/* Team */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase" }}>Team</span>
+                {Object.entries(TEAMS).map(([key, t]) => (
+                  <button key={key} type="button" onClick={() => set("team", key)} style={{
+                    padding: "3px 12px", borderRadius: 7, fontSize: 12, fontWeight: 700,
+                    fontFamily: "inherit", cursor: "pointer", transition: "all .12s",
+                    border: `2px solid ${data.team === key ? t.border : "#e2e8f0"}`,
+                    background: data.team === key ? t.color : "#fafafa",
+                    color: data.team === key ? t.text : "#94a3b8",
+                  }}>{t.label}</button>
+                ))}
+              </div>
+              {/* Lead */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase" }}>Lead</span>
+                {["RG","DS"].map(opt => (
+                  <button key={opt} type="button" onClick={() => set("lead", data.lead === opt ? "" : opt)} style={{
+                    padding: "3px 12px", borderRadius: 7, fontSize: 12, fontWeight: 700,
+                    fontFamily: "inherit", cursor: "pointer", transition: "all .12s",
+                    border: `2px solid ${data.lead === opt ? "#6366f1" : "#e2e8f0"}`,
+                    background: data.lead === opt ? "#eef2ff" : "#fafafa",
+                    color: data.lead === opt ? "#4338ca" : "#94a3b8",
+                  }}>{opt}</button>
+                ))}
+              </div>
+              <span style={{ fontSize: 14, color: "#507c9c" }}>{collapsed.clientInfo ? "▼" : "▲"}</span>
+            </div>
+          </div>
           {!collapsed.clientInfo && (() => {
             const subHdr = (label) => (
               <div style={{ gridColumn: "1 / -1", borderTop: "1.5px solid #e8edf4",
@@ -2209,46 +2251,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
           </>
           )}
-
-          {/* Team Assignment — inside Client Information tab, simplified */}
-          <div style={{ padding: "12px 0 4px" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", letterSpacing: "1px",
-              textTransform: "uppercase", marginBottom: 10, borderTop: "1.5px solid #e8edf4", paddingTop: 12 }}>
-              Team Assignment
-            </div>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Team</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {Object.entries(TEAMS).map(([key, t]) => (
-                    <button key={key} type="button" onClick={() => set("team", key)} style={{
-                      padding: "7px 20px", borderRadius: 9, fontSize: 13, fontWeight: 700,
-                      fontFamily: "inherit", cursor: "pointer",
-                      border: `2px solid ${data.team === key ? t.border : "#e2e8f0"}`,
-                      background: data.team === key ? t.color : "#fafafa",
-                      color: data.team === key ? t.text : "#475569",
-                      transition: "all .12s",
-                    }}>{t.label}</button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Lead</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {["RG", "DS"].map(opt => (
-                    <button key={opt} type="button" onClick={() => set("lead", data.lead === opt ? "" : opt)} style={{
-                      padding: "7px 20px", borderRadius: 9, fontSize: 13, fontWeight: 700,
-                      fontFamily: "inherit", cursor: "pointer",
-                      border: `2px solid ${data.lead === opt ? "#6366f1" : "#e2e8f0"}`,
-                      background: data.lead === opt ? "#eef2ff" : "#fff",
-                      color: data.lead === opt ? "#4338ca" : "#64748b",
-                      transition: "all .12s",
-                    }}>{opt}</button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
 
           </div>)} {/* end Info tab */}
 
@@ -3002,19 +3004,55 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         };
                         return (
                           <div style={{ background: "#fafafa", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px" }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: plans.length > 0 ? 10 : 4 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase" }}>
-                                Plans ({plans.length})
+                            {/* Plan limit warning from carrier DB */}
+                            {(() => {
+                              const carrierObj = (carriersData || []).find(c => c.name === currentCarrier);
+                              const limit = (carrierObj?.planLimits || []).find(pl =>
+                                pl.benefit && cat.label && pl.benefit.toLowerCase() === cat.label.toLowerCase()
+                              );
+                              if (!limit || !limit.maxPlans) return null;
+                              const max = parseInt(limit.maxPlans);
+                              const over = plans.length > max;
+                              return (
+                                <div style={{ marginBottom: 8, padding: "5px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600,
+                                  background: over ? "#fee2e2" : "#f0fdf4",
+                                  border: `1px solid ${over ? "#fca5a5" : "#86efac"}`,
+                                  color: over ? "#991b1b" : "#166534" }}>
+                                  {over ? "⚠️" : "ℹ️"} {currentCarrier} allows max {max} plan{max!==1?"s":""} for {cat.label}
+                                  {limit.condition ? ` (${limit.condition})` : ""}
+                                  {over ? ` — currently ${plans.length} configured` : ""}
+                                </div>
+                              );
+                            })()}
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: plans.length > 0 ? 10 : 4 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase", flexShrink: 0 }}>
+                                # of Plans
                               </div>
-                              <button type="button"
-                                onClick={() => setPlans([...plans, {
-                                  name: "", type: "", groupNumber: "", carrierPlanNumber: "",
-                                  rates: { ee: "", es: "", ec: "", ff: "" },
-                                  enrolled: { ee: "", es: "", ec: "", ff: "" },
-                                }])}
-                                style={{ padding: "3px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                                  border: "1.5px solid #507c9c", background: "#dce8f2", color: "#3e5878",
-                                  cursor: "pointer", fontFamily: "inherit" }}>+ Add Plan</button>
+                              <input
+                                type="text" inputMode="numeric"
+                                value={plans.length || ""}
+                                placeholder="0"
+                                onChange={e => {
+                                  const n = parseInt(e.target.value.replace(/\D/g,"")) || 0;
+                                  const blank = () => ({ name: "", type: "", groupNumber: "", carrierPlanNumber: "",
+                                    rates: { ee: "", es: "", ec: "", ff: "" },
+                                    enrolled: { ee: "", es: "", ec: "", ff: "" } });
+                                  if (n > plans.length) {
+                                    setPlans([...plans, ...Array(n - plans.length).fill(null).map(blank)]);
+                                  } else if (n < plans.length) {
+                                    if (n === 0 || confirm(`Reduce to ${n} plan${n!==1?"s":""}? Extra plans will be removed.`))
+                                      setPlans(plans.slice(0, n));
+                                  }
+                                }}
+                                style={{ width: 56, padding: "5px 10px", border: "1.5px solid #e2e8f0",
+                                  borderRadius: 8, fontSize: 14, fontWeight: 700, color: "#2d4a6b",
+                                  fontFamily: "inherit", textAlign: "center", background: "#fff" }}
+                              />
+                              {plans.length > 0 && (
+                                <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                                  {plans.length} plan{plans.length !== 1 ? "s" : ""} configured
+                                </span>
+                              )}
                             </div>
 
                             {plans.map((pl, idx) => (
@@ -3087,7 +3125,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                       {["Coverage Tier", "# Enrolled", "Rate / PEPM", "Monthly Total", ...(isBCBSIL ? [""] : [])].slice(0, isBCBSIL ? 5 : 4).map((h, i) => (
                                         <div key={i} style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
                                           letterSpacing: ".6px", textTransform: "uppercase",
-                                          ...(i === 0 ? {} : { textAlign: "center" }),
+                                          textAlign: i === 0 || i === 1 ? "left" : "center",
                                           ...(i === (isBCBSIL ? 4 : 3) ? { visibility: "hidden" } : {}) }}>{h}</div>
                                       ))}
                                     </div>
@@ -8722,7 +8760,7 @@ useEffect(() => {
       </div>
 
       {modal && (
-        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} />
+        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} />
       )}
 
       {/* Team Edit/Add Modal */}
@@ -9246,6 +9284,7 @@ function CarriersView({ carriers, onSave, currentUser }) {
       segments: [], products: [], funding: [], states: [], notes: "", requirements: [],
       contacts: [],        // [{ role, name, email, phone, market, employerType, fundingType }]
       benefitDetails: "",  // coverage offered / plan descriptions
+      planLimits: [],      // [{ benefit, maxPlans, condition }]
     };
     setEditingId(newId);
     setEditData(blank);
@@ -9384,6 +9423,16 @@ function CarriersView({ carriers, onSave, currentUser }) {
                     {carrier.benefitDetails && (
                       <div style={{ fontSize: 11, color: "#3a5a2a", marginTop: 4, fontStyle: "italic" }}>
                         📋 {carrier.benefitDetails}
+                      </div>
+                    )}
+                    {(carrier.planLimits || []).length > 0 && (
+                      <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {(carrier.planLimits || []).map((pl, i) => (
+                          <span key={i} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99,
+                            background: "#fef3c7", color: "#92400e", fontWeight: 600, border: "1px solid #fde68a" }}>
+                            {pl.benefit}: max {pl.maxPlans} plan{pl.maxPlans !== "1" ? "s" : ""}{pl.condition ? ` (${pl.condition})` : ""}
+                          </span>
+                        ))}
                       </div>
                     )}
                     {(carrier.contacts || []).length > 0 && (
@@ -9549,6 +9598,51 @@ function CarriersView({ carriers, onSave, currentUser }) {
                 placeholder="Special conditions, eligibility rules, caveats..."
                 rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
             </label>
+
+            {/* ── Plan Limits ── */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Plan Limits</div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>Max # of plans allowed per benefit line</div>
+                </div>
+                <button type="button" onClick={() => setEditData(p => ({
+                  ...p,
+                  planLimits: [...(p.planLimits || []), { benefit: "Medical", maxPlans: "", condition: "" }],
+                }))} style={{ fontSize: 11, fontWeight: 700, color: "#2d4a6b", background: "#dce8f0",
+                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add Limit
+                </button>
+              </div>
+              {(editData.planLimits || []).length === 0 && (
+                <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", textAlign: "center", padding: "6px 0" }}>
+                  No plan limits defined
+                </div>
+              )}
+              {(editData.planLimits || []).map((pl, pli) => (
+                <div key={pli} style={{ display: "grid", gridTemplateColumns: "1fr 80px 1fr auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                  <select value={pl.benefit || "Medical"}
+                    onChange={e => { const lims=[...(editData.planLimits||[])]; lims[pli]={...lims[pli],benefit:e.target.value}; setEditData(p=>({...p,planLimits:lims})); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
+                    {["Medical","Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Worksite","FSA","HSA","HRA","EAP","Telehealth"].map(b => <option key={b}>{b}</option>)}
+                  </select>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>Max</span>
+                    <input type="text" inputMode="numeric" value={pl.maxPlans || ""}
+                      onChange={e => { const lims=[...(editData.planLimits||[])]; lims[pli]={...lims[pli],maxPlans:e.target.value.replace(/\D/g,"")}; setEditData(p=>({...p,planLimits:lims})); }}
+                      placeholder="0"
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 6px", textAlign: "center", fontWeight: 700 }} />
+                  </div>
+                  <input type="text" value={pl.condition || ""}
+                    onChange={e => { const lims=[...(editData.planLimits||[])]; lims[pli]={...lims[pli],condition:e.target.value}; setEditData(p=>({...p,planLimits:lims})); }}
+                    placeholder="Condition (e.g. 5+ enrolled, ACA only...)"
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                  <button type="button" onClick={() => setEditData(p => ({ ...p, planLimits: p.planLimits.filter((_,i)=>i!==pli) }))}
+                    style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
+                      background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                </div>
+              ))}
+            </div>
 
             {/* ── Contacts ── */}
             <div style={{ marginTop: 14 }}>
