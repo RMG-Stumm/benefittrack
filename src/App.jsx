@@ -64,7 +64,50 @@ const TASK_ROLES = [
 
 // Resolve a role string ("Account Coordinator" etc.) to the actual person
 // on the given team. Falls back gracefully if role isn't filled on that team.
-// Auto-format a phone number as (XXX) XXX-XXXX while typing
+// Sync standard tasks from task DB to a client's miscTasks.
+// Standard tasks that match the client's market/funding/carriers are added;
+// existing standard tasks whose template was updated get the new label;
+// standard tasks whose template was deleted or no longer matches are removed.
+function syncStandardTasks(client, tasksDb) {
+  if (!tasksDb || !tasksDb.length) return client;
+  const standardTemplates = tasksDb.filter(t => t.isStandard);
+  if (!standardTemplates.length) return client;
+
+  function clientMatchesTemplate(c, tmpl) {
+    if (tmpl.markets?.length && !tmpl.markets.includes(c.marketSize)) return false;
+    if (tmpl.funding?.length && !tmpl.funding.includes(c.fundingMethod)) return false;
+    if (tmpl.states?.length && c.groupSitus && !tmpl.states.includes(c.groupSitus)) return false;
+    if (tmpl.carriers?.length) {
+      const clientCarriers = Object.values(c.benefitCarriers || {}).filter(Boolean);
+      if (!tmpl.carriers.some(tc => clientCarriers.includes(tc))) return false;
+    }
+    return true;
+  }
+
+  const existing = client.miscTasks || [];
+  // Keep non-standard tasks unchanged
+  const manualTasks = existing.filter(t => !t._standardTemplateId);
+  // Build the new set of standard tasks for this client
+  const newStandard = standardTemplates
+    .filter(tmpl => clientMatchesTemplate(client, tmpl))
+    .map(tmpl => {
+      const found = existing.find(t => t._standardTemplateId === tmpl.id);
+      return found
+        ? { ...found, title: tmpl.label } // update label if changed, keep status/dates
+        : {
+            id: "std_" + tmpl.id + "_" + client.id,
+            _standardTemplateId: tmpl.id,
+            title: tmpl.label,
+            status: "Not Started",
+            assignee: resolveAssignee(tmpl.defaultAssignee || "", client.team) || "",
+            dueDate: "", completedDate: "", notes: "", followUps: [],
+          };
+    });
+
+  return { ...client, miscTasks: [...newStandard, ...manualTasks] };
+}
+
+
 function formatPhone(raw) {
   const digits = (raw || "").replace(/\D/g, "").slice(0, 10);
   if (digits.length === 0) return "";
@@ -955,7 +998,7 @@ function SaveButton({ onSave }) {
 
 // ── Client Form Modal ─────────────────────────────────────────────────────────
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules }) {
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb }) {
   const [data, setData] = useState(() => {
     const base = JSON.parse(JSON.stringify(client));
     return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
@@ -1915,7 +1958,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </label>
               <label style={labelStyle}>
                 Annual Revenue
-                <div style={{ display: "flex", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ padding: "8px 10px", background: "#f1f5f9", border: "1.5px solid #e2e8f0",
                     borderRight: "none", borderRadius: "8px 0 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>$</span>
                   <input type="text"
@@ -1930,6 +1973,37 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     }}
                     placeholder="0"
                     style={{ ...inputStyle, borderRadius: "0 8px 8px 0", marginTop: 0, flex: 1 }} />
+                  <button type="button" title="Auto-calculate from benefit commissions"
+                    onClick={() => {
+                      const TIERS_CALC = ["ee","es","ec","ff"];
+                      let totalAnnual = 0;
+                      BENEFITS_SCHEMA.forEach(cat => {
+                        if (!(data.benefitActive || {})[cat.id]) return;
+                        const comm = (data.benefitCommissions || {})[cat.id] || {};
+                        const commType = comm.type || "";
+                        const commAmt = parseFloat(comm.amount) || 0;
+                        if (!commType || !commAmt) return;
+                        const plans = (data.benefitPlans || {})[cat.id] || [];
+                        const totalMonthly = plans.reduce((ps, pl) =>
+                          ps + TIERS_CALC.reduce((ts, k) =>
+                            ts + ((parseFloat((pl.rates||{})[k])||0) * (parseInt((pl.enrolled||{})[k])||0)), 0), 0);
+                        const enrolled = plans.reduce((s,pl) =>
+                          s + TIERS_CALC.reduce((ts,k) => ts + (parseInt((pl.enrolled||{})[k])||0), 0), 0)
+                          || parseInt((data.benefitEnrolled||{})[cat.id]) || 0;
+                        const monthly = commType === "PEPM"
+                          ? commAmt * enrolled
+                          : (commType === "Flat %" || commType === "Graded")
+                          ? totalMonthly * (commAmt / 100)
+                          : 0;
+                        totalAnnual += monthly * 12;
+                      });
+                      if (totalAnnual > 0) set("annualRevenue", Math.round(totalAnnual).toLocaleString());
+                    }}
+                    style={{ padding: "7px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, flexShrink: 0,
+                      border: "1.5px solid #86efac", background: "#f0fdf4", color: "#166534",
+                      cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    ⚡ Calculate
+                  </button>
                 </div>
               </label>
               <label style={labelStyle}>
@@ -1966,7 +2040,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   onChange={v => set("totalEligible", v)}
                   placeholder="0"
                   style={{ ...inputStyle, marginTop: 3 }} />
-                  placeholder="# eligible employees" style={inputStyle} />
               </label>
 
               {/* Row 4: Benefit Admin System, EDI Feeds Established, Corporate Structure */}
@@ -2500,18 +2573,59 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               const showPicker = !!(collapsed._showBenefitPicker);
               const setShowPicker = v => setCollapsed(p => ({ ...p, _showBenefitPicker: v }));
 
-              // Group BENEFITS_SCHEMA by category
-              const groups = [
-                { label: "Core Health",       ids: ["medical","dental","vision"] },
-                { label: "Life & Disability",  ids: ["basic_life","vol_life","std","ltd"] },
-                { label: "Worksite",           ids: ["worksite"] },
-                { label: "Wellness / Lifestyle",ids: ["telehealth","eap","identity_theft","prepaid_legal","pet_insurance"] },
-                { label: "Statutory",          ids: ["nydbl_pfl"] },
-                { label: "Tax-Advantaged",     ids: ["fsa","hsa_funding"] },
-              ];
+              // Map Benefits DB "benefit" names → BENEFITS_SCHEMA ids
+              const BENEFIT_NAME_TO_SCHEMA_ID = {
+                "Medical":            "medical",
+                "Dental":             "dental",
+                "Vision":             "vision",
+                "Telehealth":         "telehealth",
+                "Base Life/AD&D":     "basic_life",
+                "Vol Life":           "vol_life",
+                "AD&D":               "vol_life",
+                "STD":                "std",
+                "LTD":                "ltd",
+                "IDI":                "ltd",
+                "NYDBL & PFL":        "nydbl_pfl",
+                "Accident":           "worksite",
+                "Cancer":             "worksite",
+                "Critical Illness":   "worksite",
+                "Hospital Indemnity": "worksite",
+                "EAP":                "eap",
+                "Identity Theft":     "identity_theft",
+                "Prepaid Legal":      "prepaid_legal",
+                "Pet Insurance":      "pet_insurance",
+                "FSA":                "fsa",
+                "HSA":                "hsa_funding",
+                "HRA":                "hra",
+                "Commuter":           "fsa",
+              };
 
-              // Benefits that need Rates/PEPM per plan
-              const RATE_BENEFITS = new Set(["medical","dental","vision","worksite"]);
+              // Build catalog from Benefits DB, falling back to BENEFITS_SCHEMA
+              // Group by DB category, deduplicate by schema id
+              const dbRecords = (benefitsDb && benefitsDb.length > 0)
+                ? benefitsDb : BENEFITS_DB_SEED;
+
+              // Build grouped catalog: category → unique schema entries
+              const catalogByCategory = {};
+              dbRecords.forEach(rec => {
+                const schemaId = BENEFIT_NAME_TO_SCHEMA_ID[rec.benefit];
+                if (!schemaId) return;
+                const schema = BENEFITS_SCHEMA.find(s => s.id === schemaId);
+                if (!schema) return;
+                if (!catalogByCategory[rec.category]) catalogByCategory[rec.category] = [];
+                // Deduplicate by schemaId within category
+                const key = schemaId + "__" + rec.benefit;
+                if (!catalogByCategory[rec.category].find(e => e.key === key)) {
+                  catalogByCategory[rec.category].push({
+                    key, schemaId, label: rec.benefit, schema,
+                    variant: rec.variant, planDesign: rec.planDesign,
+                    fundingMethod: rec.fundingMethod,
+                  });
+                }
+              });
+
+              const categoryOrder = ["Core Health","Life & AD&D","Income Protection",
+                "Statutory Income","Worksite","Wellness","Lifestyle","Tax-Advantaged"];
 
               return (
                 <div style={{ marginBottom: 8 }}>
@@ -2538,44 +2652,48 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         Select lines of coverage to add — check all that apply:
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                        {groups.map(grp => {
-                          const schemaBenefits = grp.ids.map(id => BENEFITS_SCHEMA.find(c => c.id === id)).filter(Boolean);
-                          if (schemaBenefits.length === 0) return null;
-                          return (
-                            <div key={grp.label}>
-                              <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".8px",
-                                textTransform: "uppercase", marginBottom: 6, paddingBottom: 4,
-                                borderBottom: "1px solid #cbd5e1" }}>{grp.label}</div>
-                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                {schemaBenefits.map(cat => {
-                                  const isActive = !!(data.benefitActive || {})[cat.id];
-                                  return (
-                                    <label key={cat.id} style={{ display: "flex", alignItems: "center", gap: 9,
-                                      cursor: "pointer", padding: "5px 8px", borderRadius: 7,
-                                      background: isActive ? "#dce8f0" : "#fff",
-                                      border: `1.5px solid ${isActive ? "#507c9c" : "#e2e8f0"}`,
-                                      transition: "all .12s" }}>
-                                      <input type="checkbox" checked={isActive}
-                                        onChange={() => {
-                                          setData(p => {
-                                            const newActive = { ...(p.benefitActive || {}), [cat.id]: !isActive };
-                                            const newDates = { ...(p.benefitEffectiveDates || {}) };
-                                            if (!isActive && !newDates[cat.id] && p.renewalDate) newDates[cat.id] = p.renewalDate;
-                                            return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
-                                          });
-                                        }}
-                                        style={{ accentColor: "#507c9c", width: 15, height: 15, flexShrink: 0 }} />
-                                      <span style={{ fontSize: 13, fontWeight: isActive ? 700 : 500,
-                                        color: isActive ? "#2d4a6b" : "#334155" }}>{cat.label}</span>
-                                      {isActive && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700,
-                                        color: "#507c9c" }}>✓ Added</span>}
-                                    </label>
-                                  );
-                                })}
-                              </div>
+                        {categoryOrder.filter(cat => catalogByCategory[cat]?.length > 0).map(cat => (
+                          <div key={cat}>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".8px",
+                              textTransform: "uppercase", marginBottom: 6, paddingBottom: 4,
+                              borderBottom: "1px solid #cbd5e1" }}>{cat}</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {catalogByCategory[cat].map(entry => {
+                                const isActive = !!(data.benefitActive || {})[entry.schemaId];
+                                return (
+                                  <label key={entry.key} style={{ display: "flex", alignItems: "flex-start", gap: 9,
+                                    cursor: "pointer", padding: "6px 8px", borderRadius: 7,
+                                    background: isActive ? "#dce8f0" : "#fff",
+                                    border: `1.5px solid ${isActive ? "#507c9c" : "#e2e8f0"}`,
+                                    transition: "all .12s" }}>
+                                    <input type="checkbox" checked={isActive}
+                                      onChange={() => {
+                                        setData(p => {
+                                          const newActive = { ...(p.benefitActive || {}), [entry.schemaId]: !isActive };
+                                          const newDates = { ...(p.benefitEffectiveDates || {}) };
+                                          if (!isActive && !newDates[entry.schemaId] && p.renewalDate)
+                                            newDates[entry.schemaId] = p.renewalDate;
+                                          return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
+                                        });
+                                      }}
+                                      style={{ accentColor: "#507c9c", width: 15, height: 15, flexShrink: 0, marginTop: 2 }} />
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ fontSize: 13, fontWeight: isActive ? 700 : 500,
+                                        color: isActive ? "#2d4a6b" : "#334155" }}>
+                                        {entry.label}
+                                        {isActive && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700,
+                                          color: "#507c9c" }}>✓ Added</span>}
+                                      </div>
+                                      {entry.planDesign && (
+                                        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{entry.planDesign}</div>
+                                      )}
+                                    </div>
+                                  </label>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
+                          </div>
+                        ))}
                       </div>
                       <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
                         <button type="button" onClick={() => setShowPicker(false)} style={{
@@ -3048,6 +3166,74 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 )}
                               </div>
                             ))}
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Revenue Estimate ── */}
+                      {(() => {
+                        const comm = (data.benefitCommissions || {})[cat.id] || {};
+                        const plans = (data.benefitPlans || {})[cat.id] || [];
+                        const commType = comm.type || "";
+                        const commAmt = parseFloat(comm.amount) || 0;
+                        if (!commType || !commAmt) return null;
+
+                        const TIERS_REV = ["ee","es","ec","ff"];
+
+                        // Calculate total monthly premium across all plans
+                        const totalMonthlyPremium = plans.reduce((planSum, pl) => {
+                          return planSum + TIERS_REV.reduce((tierSum, key) => {
+                            const rate = parseFloat((pl.rates || {})[key]) || 0;
+                            const enrolled = parseInt((pl.enrolled || {})[key]) || 0;
+                            return tierSum + (rate * enrolled);
+                          }, 0);
+                        }, 0);
+
+                        // Total enrolled across all plans and tiers
+                        const totalEnrolled = plans.reduce((sum, pl) =>
+                          sum + TIERS_REV.reduce((s, k) => s + (parseInt((pl.enrolled || {})[k]) || 0), 0), 0);
+
+                        // Fall back to legacy benefitEnrolled if no per-plan data
+                        const legacyEnrolled = parseInt((data.benefitEnrolled || {})[cat.id]) || 0;
+                        const effectiveEnrolled = totalEnrolled || legacyEnrolled;
+
+                        let monthlyRevenue = 0;
+                        if (commType === "PEPM") {
+                          monthlyRevenue = commAmt * effectiveEnrolled;
+                        } else if (commType === "Flat %" || commType === "Graded") {
+                          monthlyRevenue = totalMonthlyPremium * (commAmt / 100);
+                        }
+
+                        if (monthlyRevenue <= 0) return null;
+                        const annualRevenue = monthlyRevenue * 12;
+
+                        return (
+                          <div style={{ background: "#f0fdf4", borderRadius: 8, border: "1.5px solid #86efac",
+                            padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "#166534", letterSpacing: ".7px", textTransform: "uppercase", marginBottom: 2 }}>
+                                Estimated Revenue — {cat.label}
+                              </div>
+                              <div style={{ fontSize: 11, color: "#166534" }}>
+                                {commType === "PEPM"
+                                  ? `$${commAmt.toFixed(2)} PEPM × ${effectiveEnrolled} enrolled`
+                                  : `${commAmt}% of $${totalMonthlyPremium.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}/mo premium`}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Monthly</div>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: "#166534" }}>
+                                  ${monthlyRevenue.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Annual</div>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: "#166534" }}>
+                                  ${annualRevenue.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         );
                       })()}
@@ -5504,33 +5690,42 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {(data.miscTasks || []).map((t, idx) => {
                   const isDone = t.status === "Complete";
+                  const isStd = !!t._standardTemplateId;
                   return (
                     <div key={idx} style={{
                       background: isDone ? "#f0fdf4" : "#f8fafc", borderRadius: 10, padding: "10px 14px",
-                      border: `1.5px solid ${isDone ? "#86efac" : t.status === "In Progress" ? "#fde68a" : "#e2e8f0"}`,
+                      border: `1.5px solid ${isDone ? "#86efac" : t.status === "In Progress" ? "#fde68a" : isStd ? "#93c5fd" : "#e2e8f0"}`,
                     }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        <input
-                          value={t.title || ""}
-                          onChange={e => setData(p => {
-                            const tasks = [...(p.miscTasks||[])];
-                            tasks[idx] = { ...tasks[idx], title: e.target.value };
-                            return { ...p, miscTasks: tasks };
-                          })}
-                          placeholder="Task name..."
-                          style={{ ...inputStyle, marginTop: 0, flex: 1, fontWeight: 600 }}
-                        />
+                        {isStd ? (
+                          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "#1e40af", flex: 1 }}>{t.title}</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
+                              background: "#dbeafe", color: "#1d4ed8", flexShrink: 0 }}>Standard</span>
+                          </div>
+                        ) : (
+                          <input
+                            value={t.title || ""}
+                            onChange={e => setData(p => {
+                              const tasks = [...(p.miscTasks||[])];
+                              tasks[idx] = { ...tasks[idx], title: e.target.value };
+                              return { ...p, miscTasks: tasks };
+                            })}
+                            placeholder="Task name..."
+                            style={{ ...inputStyle, marginTop: 0, flex: 1, fontWeight: 600 }}
+                          />
+                        )}
                         <StatusSelect value={t.status || "Not Started"} onChange={v => setData(p => {
                           const tasks = [...(p.miscTasks||[])];
                           tasks[idx] = { ...tasks[idx], status: v };
                           return { ...p, miscTasks: tasks };
                         })} />
-                        <button type="button" onClick={() => setData(p => ({
+                        {!isStd && <button type="button" onClick={() => setData(p => ({
                           ...p, miscTasks: (p.miscTasks||[]).filter((_,i) => i !== idx)
                         }))} style={{
                           background: "#fee2e2", border: "none", borderRadius: 6, padding: "4px 8px",
                           cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700,
-                        }}>✕</button>
+                        }}>✕</button>}
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -7731,11 +7926,13 @@ useEffect(() => {
   }, [clients, search, filterTeam, filterMarket, filterCarrier, filterSitus, filterFunding, sortField, sortDir, currentUser, userTeamId]);
 
   function saveClient(data) {
-    setClients(prev => prev.some(c => c.id === data.id)
-      ? prev.map(c => c.id === data.id ? data : c)
-      : [...prev, data]);
+    // Sync standard tasks before saving
+    const synced = syncStandardTasks(data, tasksData);
+    setClients(prev => prev.some(c => c.id === synced.id)
+      ? prev.map(c => c.id === synced.id ? synced : c)
+      : [...prev, synced]);
     // Sync to Supabase
-    upsertClient(data);
+    upsertClient(synced);
     // Modal stays open — user must click Cancel/✕ to close
   }
 
@@ -7837,9 +8034,13 @@ useEffect(() => {
       const nextArr = Array.isArray(next) ? next : [];
       nextArr.forEach(t => upsertTask(t));
       // Re-apply DDR to all clients when task templates change
+      // AND sync standard tasks to matching clients
       setClients(prevClients => {
         const ddr = loadDueDateRules_DEPRECATED();
-        return prevClients.map(c => applyDueDateRulesToClient(c, next, ddr));
+        return prevClients.map(c => {
+          const withDDR = applyDueDateRulesToClient(c, next, ddr);
+          return syncStandardTasks(withDDR, next);
+        });
       });
       return next;
     });
@@ -8521,7 +8722,7 @@ useEffect(() => {
       </div>
 
       {modal && (
-        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} />
+        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} />
       )}
 
       {/* Team Edit/Add Modal */}
@@ -10577,6 +10778,25 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
                 {TASK_CATEGORIES_DB.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
+
+            {/* Standard Task toggle */}
+            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 9,
+              background: editData.isStandard ? "#eff6ff" : "#f8fafc",
+              border: `1.5px solid ${editData.isStandard ? "#93c5fd" : "#e2e8f0"}` }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!editData.isStandard}
+                  onChange={e => setEditData(p => ({ ...p, isStandard: e.target.checked }))}
+                  style={{ accentColor: "#3b82f6", width: 16, height: 16, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: editData.isStandard ? "#1d4ed8" : "#475569" }}>
+                    Standard Task
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>
+                    Auto-assign to all matching clients based on market, funding, and carrier filters below
+                  </div>
+                </div>
+              </label>
+            </div>
 
             <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Applies to Markets</div>
