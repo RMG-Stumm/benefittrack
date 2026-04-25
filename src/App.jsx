@@ -2757,125 +2757,194 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                       </div>
 
-                      {/* Rate Tiers Table */}
-                      <div style={{ background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px" }}>
-                        <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".8px", textTransform: "uppercase", marginBottom: 8 }}>
-                          Rates / PEPM
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-                          {[["EE", "ee"], ["EE + Spouse", "es"], ["EE + Child(ren)", "ec"], ["Family", "ff"]].map(([label, key]) => (
-                            <label key={key} style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
-                              {label}
-                              <div style={{ display: "flex", alignItems: "center", marginTop: 4 }}>
-                                <span style={{ padding: "6px 8px", background: "#f1f5f9",
-                                  border: "1.5px solid #e2e8f0", borderRight: "none",
-                                  borderRadius: "8px 0 0 8px", fontSize: 12, color: "#475569", fontWeight: 600 }}>$</span>
-                                <input
-                                  type="number" min="0" step="0.01"
-                                  value={((data.benefitRates || {})[cat.id] || {})[key] || ""}
-                                  onChange={e => setData(p => ({
-                                    ...p,
-                                    benefitRates: {
-                                      ...(p.benefitRates || {}),
-                                      [cat.id]: { ...((p.benefitRates || {})[cat.id] || {}), [key]: e.target.value },
-                                    },
-                                  }))}
-                                  placeholder="0.00"
-                                  style={{ ...inputStyle, marginTop: 0, borderRadius: "0 8px 8px 0", fontSize: 12, padding: "6px 8px", flex: 1 }}
-                                />
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* # of Plans + plan details */}
+                      {/* Plans — with per-plan rates and enrollment tiers */}
                       {(() => {
                         const plans = (data.benefitPlans || {})[cat.id] || [];
                         const isBCBSIL = currentCarrier === "BCBSIL" || currentCarrier === "BCBS ?";
+                        // Benefits that get rate/PEPM + enrollment tier rows
+                        const needsRates = ["medical","dental","vision","worksite"].includes(cat.id)
+                          || cat.id.startsWith("medical_");
+                        const TIERS = [
+                          { key: "ee", label: "EE" },
+                          { key: "es", label: "EE + Spouse" },
+                          { key: "ec", label: "EE + Child(ren)" },
+                          { key: "ff", label: "Family" },
+                        ];
                         const setPlans = (newPlans) => setData(p => ({
                           ...p,
                           benefitPlans: { ...(p.benefitPlans || {}), [cat.id]: newPlans },
                         }));
                         const updatePlan = (idx, field, val) => {
-                          const updated = plans.map((pl, i) => i === idx ? { ...pl, [field]: val } : pl);
-                          setPlans(updated);
+                          setPlans(plans.map((pl, i) => i === idx ? { ...pl, [field]: val } : pl));
+                        };
+                        const updatePlanRate = (idx, tier, val) => {
+                          setPlans(plans.map((pl, i) => i === idx
+                            ? { ...pl, rates: { ...(pl.rates || {}), [tier]: val } } : pl));
+                        };
+                        const updatePlanEnrolled = (idx, tier, val) => {
+                          setPlans(plans.map((pl, i) => i === idx
+                            ? { ...pl, enrolled: { ...(pl.enrolled || {}), [tier]: val } } : pl));
                         };
                         return (
                           <div style={{ background: "#fafafa", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px" }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: plans.length > 0 ? 10 : 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: plans.length > 0 ? 10 : 4 }}>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase" }}>
-                                # of Plans
+                                Plans ({plans.length})
                               </div>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>{plans.length}</span>
-                                <button type="button"
-                                  onClick={() => setPlans([...plans, { name: "", type: "", groupNumber: "" }])}
-                                  style={{ padding: "2px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                                    border: "1.5px solid #507c9c", background: "#dce8f2", color: "#3e5878",
-                                    cursor: "pointer", fontFamily: "inherit" }}>+ Add Plan</button>
-                              </div>
+                              <button type="button"
+                                onClick={() => setPlans([...plans, {
+                                  name: "", type: "", groupNumber: "", carrierPlanNumber: "",
+                                  rates: { ee: "", es: "", ec: "", ff: "" },
+                                  enrolled: { ee: "", es: "", ec: "", ff: "" },
+                                }])}
+                                style={{ padding: "3px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                                  border: "1.5px solid #507c9c", background: "#dce8f2", color: "#3e5878",
+                                  cursor: "pointer", fontFamily: "inherit" }}>+ Add Plan</button>
                             </div>
+
                             {plans.map((pl, idx) => (
-                              <div key={idx} style={{
-                                display: "grid",
-                                gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
-                                gap: 8, marginTop: 8, alignItems: "end",
-                              }}>
-                                <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
-                                  Plan Name
-                                  <input type="text" value={pl.name || ""}
-                                    onChange={e => updatePlan(idx, "name", e.target.value)}
-                                    placeholder="e.g. Blue Choice PPO"
-                                    style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
-                                </label>
-                                <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
-                                  Carrier Plan #
-                                  <input type="text" value={pl.carrierPlanNumber || ""}
-                                    onChange={e => updatePlan(idx, "carrierPlanNumber", e.target.value)}
-                                    placeholder="e.g. 12345"
-                                    style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
-                                </label>
-                                <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
-                                  Plan Type
-                                  <select value={pl.type || ""}
-                                    onChange={e => updatePlan(idx, "type", e.target.value)}
-                                    style={{ ...inputStyle, marginTop: 3, fontSize: 11 }}>
-                                    <option value="">— Select —</option>
-                                    {(["dental"].includes(cat.id)
-                                      ? ["PPO", "DHMO", "Voluntary PPO", "Voluntary DHMO"]
-                                      : ["vision", "basic_life", "vol_life"].includes(cat.id)
-                                      ? ["Non-contributory", "Contributory", "Voluntary", "Buy-Up"]
-                                      : ["std", "ltd", "worksite", "identity_theft", "prepaid_legal", "pet_insurance", "telehealth"].includes(cat.id)
-                                      ? ["Non-contributory", "Contributory", "Voluntary", "Buy-Up"]
-                                      : ["nydbl_pfl"].includes(cat.id)
-                                      ? ["ER-Paid", "Voluntary"]
-                                      : ["fsa"].includes(cat.id)
-                                      ? ["Health FSA", "LP FSA", "DC FSA"]
-                                      : ["hsa_funding"].includes(cat.id)
-                                      ? ["n/a"]
-                                      : currentCarrier === "UHC" || currentCarrier === "UMR"
-                                      ? ["PPO", "HMO", "HSA", "HRA", "Surest", "Nexus"]
-                                      : currentCarrier === "BCBSIL" || currentCarrier === "BCBS ?"
-                                      ? ["PPO", "HMO", "HSA", "HRA", "Options"]
-                                      : ["PPO", "HMO", "HSA", "HRA"]
-                                    ).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                                  </select>
-                                </label>
-                                {isBCBSIL && (
+                              <div key={idx} style={{ background: "#fff", borderRadius: 8,
+                                border: "1.5px solid #e2e8f0", padding: "10px 12px", marginBottom: 10 }}>
+
+                                {/* Plan header fields */}
+                                <div style={{ display: "grid",
+                                  gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
+                                  gap: 8, marginBottom: needsRates ? 12 : 0, alignItems: "end" }}>
                                   <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
-                                    Group #
-                                    <input type="text" value={pl.groupNumber || ""}
-                                      onChange={e => updatePlan(idx, "groupNumber", e.target.value)}
-                                      placeholder="Group number"
+                                    Plan Name
+                                    <input type="text" value={pl.name || ""}
+                                      onChange={e => updatePlan(idx, "name", e.target.value)}
+                                      placeholder="e.g. Blue Choice PPO"
                                       style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
                                   </label>
+                                  <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                                    Carrier Plan #
+                                    <input type="text" value={pl.carrierPlanNumber || ""}
+                                      onChange={e => updatePlan(idx, "carrierPlanNumber", e.target.value)}
+                                      placeholder="e.g. 12345"
+                                      style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                                  </label>
+                                  <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                                    Plan Type
+                                    <select value={pl.type || ""}
+                                      onChange={e => updatePlan(idx, "type", e.target.value)}
+                                      style={{ ...inputStyle, marginTop: 3, fontSize: 11 }}>
+                                      <option value="">— Select —</option>
+                                      {(["dental"].includes(cat.id)
+                                        ? ["PPO","DHMO","Voluntary PPO","Voluntary DHMO"]
+                                        : ["vision","basic_life","vol_life"].includes(cat.id)
+                                        ? ["Non-contributory","Contributory","Voluntary","Buy-Up"]
+                                        : ["std","ltd","worksite","identity_theft","prepaid_legal","pet_insurance","telehealth"].includes(cat.id)
+                                        ? ["Non-contributory","Contributory","Voluntary","Buy-Up"]
+                                        : ["nydbl_pfl"].includes(cat.id) ? ["ER-Paid","Voluntary"]
+                                        : ["fsa"].includes(cat.id) ? ["Health FSA","LP FSA","DC FSA"]
+                                        : currentCarrier === "UHC" || currentCarrier === "UMR"
+                                        ? ["PPO","HMO","HSA","HRA","Surest","Nexus"]
+                                        : currentCarrier === "BCBSIL" || currentCarrier === "BCBS ?"
+                                        ? ["PPO","HMO","HSA","HRA","Options"]
+                                        : ["PPO","HMO","HSA","HRA"]
+                                      ).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                    </select>
+                                  </label>
+                                  {isBCBSIL && (
+                                    <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                                      Group #
+                                      <input type="text" value={pl.groupNumber || ""}
+                                        onChange={e => updatePlan(idx, "groupNumber", e.target.value)}
+                                        placeholder="Group number"
+                                        style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                                    </label>
+                                  )}
+                                  <button type="button"
+                                    onClick={() => setPlans(plans.filter((_, i) => i !== idx))}
+                                    style={{ padding: "6px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                                      border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                                      cursor: "pointer", fontFamily: "inherit", alignSelf: "end" }}>✕</button>
+                                </div>
+
+                                {/* Per-plan rate + enrollment tiers */}
+                                {needsRates && (
+                                  <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 10 }}>
+                                    {/* Headers aligned to plan header columns above */}
+                                    <div style={{ display: "grid",
+                                      gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
+                                      gap: 8, marginBottom: 5 }}>
+                                      {["Coverage Tier", "# Enrolled", "Rate / PEPM", "Monthly Total", ...(isBCBSIL ? [""] : [])].slice(0, isBCBSIL ? 5 : 4).map((h, i) => (
+                                        <div key={i} style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
+                                          letterSpacing: ".6px", textTransform: "uppercase",
+                                          ...(i === 0 ? {} : { textAlign: "center" }),
+                                          ...(i === (isBCBSIL ? 4 : 3) ? { visibility: "hidden" } : {}) }}>{h}</div>
+                                      ))}
+                                    </div>
+                                    {/* One row per tier */}
+                                    {TIERS.map(({ key, label }) => {
+                                      const rate = Number((pl.rates || {})[key]) || 0;
+                                      const enrolled = Number((pl.enrolled || {})[key]) || 0;
+                                      const monthlyTotal = rate * enrolled;
+                                      return (
+                                        <div key={key} style={{ display: "grid",
+                                          gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
+                                          gap: 8, marginBottom: 5, alignItems: "center" }}>
+                                          <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</div>
+                                          {/* # Enrolled */}
+                                          <input type="number" min="0" step="1"
+                                            value={(pl.enrolled || {})[key] || ""}
+                                            onChange={e => updatePlanEnrolled(idx, key, e.target.value)}
+                                            placeholder="0"
+                                            style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "center" }} />
+                                          {/* Rate / PEPM */}
+                                          <div style={{ display: "flex", alignItems: "center" }}>
+                                            <span style={{ padding: "5px 7px", background: "#f1f5f9",
+                                              border: "1.5px solid #e2e8f0", borderRight: "none",
+                                              borderRadius: "7px 0 0 7px", fontSize: 12, color: "#64748b", fontWeight: 600 }}>$</span>
+                                            <input type="number" min="0" step="0.01"
+                                              value={(pl.rates || {})[key] || ""}
+                                              onChange={e => updatePlanRate(idx, key, e.target.value)}
+                                              placeholder="0.00"
+                                              style={{ ...inputStyle, marginTop: 0, borderRadius: "0 7px 7px 0",
+                                                fontSize: 12, padding: "5px 8px", flex: 1 }} />
+                                          </div>
+                                          {/* Monthly Total */}
+                                          <div style={{ fontSize: 12, fontWeight: 700,
+                                            color: monthlyTotal > 0 ? "#166534" : "#94a3b8",
+                                            textAlign: "center",
+                                            background: monthlyTotal > 0 ? "#f0fdf4" : "#f8fafc",
+                                            border: `1.5px solid ${monthlyTotal > 0 ? "#86efac" : "#e2e8f0"}`,
+                                            borderRadius: 7, padding: "5px 8px",
+                                            gridColumn: isBCBSIL ? "4 / span 2" : "4" }}>
+                                            {monthlyTotal > 0
+                                              ? "$" + monthlyTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                              : "—"}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    {/* Totals row */}
+                                    {(() => {
+                                      const totalEnrolled = TIERS.reduce((sum, { key }) =>
+                                        sum + (Number((pl.enrolled || {})[key]) || 0), 0);
+                                      const totalPremium = TIERS.reduce((sum, { key }) =>
+                                        sum + ((Number((pl.rates || {})[key]) || 0) * (Number((pl.enrolled || {})[key]) || 0)), 0);
+                                      if (totalEnrolled === 0) return null;
+                                      return (
+                                        <div style={{ display: "grid",
+                                          gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
+                                          gap: 8, paddingTop: 6, borderTop: "1.5px solid #e2e8f0", marginTop: 3 }}>
+                                          <div style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Total</div>
+                                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1e40af", textAlign: "center" }}>
+                                            {totalEnrolled} enrolled
+                                          </div>
+                                          <div />
+                                          <div style={{ fontSize: 12, fontWeight: 800, color: "#166534", textAlign: "center",
+                                            background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 7, padding: "5px 8px",
+                                            gridColumn: isBCBSIL ? "4 / span 2" : "4" }}>
+                                            ${totalPremium.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / mo
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
                                 )}
-                                <button type="button"
-                                  onClick={() => setPlans(plans.filter((_, i) => i !== idx))}
-                                  style={{ padding: "6px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                                    border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                                    cursor: "pointer", fontFamily: "inherit", marginBottom: 1 }}>✕</button>
                               </div>
                             ))}
                           </div>
