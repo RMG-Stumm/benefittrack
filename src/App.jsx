@@ -178,9 +178,9 @@ function IntegerInput({ value, onChange, placeholder, style }) {
   return (
     <input
       type="text" inputMode="numeric"
-      value={value ? formatInteger(String(value)) : ""}
+      value={value || ""}
       placeholder={placeholder || "0"}
-      onChange={e => onChange(stripNumeric(e.target.value))}
+      onChange={e => onChange(e.target.value.replace(/\D/g, ""))}
       style={style}
     />
   );
@@ -2899,7 +2899,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 ...p,
                                 benefitCommissions: {
                                   ...(p.benefitCommissions || {}),
-                                  [cat.id]: { ...(p.benefitCommissions?.[cat.id] || {}), type: e.target.value },
+                                  [cat.id]: { ...(p.benefitCommissions?.[cat.id] || {}), type: e.target.value, amount: "" },
                                 },
                               }))}
                               style={{ ...inputStyle, marginTop: 0, flex: "0 0 90px" }}
@@ -2913,42 +2913,48 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               const commType = (data.benefitCommissions || {})[cat.id]?.type || "";
                               const isPEPM = commType === "PEPM";
                               const isPct  = commType === "Flat %" || commType === "Graded";
-                              const symbol = isPEPM ? "$" : isPct ? "%" : null;
-                              const isPrefix = isPEPM;
+                              const amount = (data.benefitCommissions || {})[cat.id]?.amount || "";
+                              const setAmount = val => setData(p => ({
+                                ...p,
+                                benefitCommissions: {
+                                  ...(p.benefitCommissions || {}),
+                                  [cat.id]: { ...(p.benefitCommissions?.[cat.id] || {}), amount: val },
+                                },
+                              }));
+                              if (!commType) return null;
+                              if (isPEPM) return (
+                                <div style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                                  <span style={{ padding: "8px 8px", background: "#f1f5f9",
+                                    border: "1.5px solid #e2e8f0", borderRight: "none",
+                                    borderRadius: "8px 0 0 8px", fontSize: 13, color: "#475569", fontWeight: 600, flexShrink: 0 }}>$</span>
+                                  <input type="text" inputMode="decimal"
+                                    value={amount}
+                                    onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                                    onBlur={e => {
+                                      const n = parseFloat(e.target.value.replace(/[^0-9.]/g,""));
+                                      if (!isNaN(n)) setAmount(String(Math.round(n)));
+                                    }}
+                                    placeholder="0.00"
+                                    style={{ ...inputStyle, marginTop: 0, flex: 1,
+                                      borderRadius: "0 8px 8px 0", borderLeft: "none", textAlign: "right" }} />
+                                </div>
+                              );
+                              // Flat % or Graded
                               return (
                                 <div style={{ display: "flex", alignItems: "center", flex: 1 }}>
-                                  {symbol && isPrefix && (
-                                    <span style={{ padding: "8px 8px", background: "#f1f5f9",
-                                      border: "1.5px solid #e2e8f0", borderRight: "none",
-                                      borderRadius: "8px 0 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>
-                                      {symbol}
-                                    </span>
-                                  )}
-                                  <input
-                                    type="text"
-                                    value={(data.benefitCommissions || {})[cat.id]?.amount || ""}
-                                    onChange={e => setData(p => ({
-                                      ...p,
-                                      benefitCommissions: {
-                                        ...(p.benefitCommissions || {}),
-                                        [cat.id]: { ...(p.benefitCommissions?.[cat.id] || {}), amount: e.target.value },
-                                      },
-                                    }))}
-                                    placeholder={isPEPM ? "0.00" : isPct ? "0.0" : "Amount"}
-                                    style={{
-                                      ...inputStyle, marginTop: 0, flex: 1,
-                                      borderRadius: isPrefix ? "0 8px 8px 0" : isPct ? "8px 0 0 8px" : "8px",
-                                      borderLeft: isPrefix ? "none" : undefined,
-                                      borderRight: (!isPrefix && symbol) ? "none" : undefined,
+                                  <input type="text" inputMode="decimal"
+                                    value={amount}
+                                    onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                                    onBlur={e => {
+                                      const n = parseFloat(e.target.value.replace(/[^0-9.]/g,""));
+                                      if (!isNaN(n)) setAmount(String(Math.round(n)));
                                     }}
-                                  />
-                                  {symbol && !isPrefix && (
-                                    <span style={{ padding: "8px 8px", background: "#f1f5f9",
-                                      border: "1.5px solid #e2e8f0", borderLeft: "none",
-                                      borderRadius: "0 8px 8px 0", fontSize: 13, color: "#475569", fontWeight: 600 }}>
-                                      {symbol}
-                                    </span>
-                                  )}
+                                    placeholder="0.00"
+                                    style={{ ...inputStyle, marginTop: 0, flex: 1,
+                                      borderRadius: "8px 0 0 8px", borderRight: "none", textAlign: "right" }} />
+                                  <span style={{ padding: "8px 8px", background: "#f1f5f9",
+                                    border: "1.5px solid #e2e8f0", borderLeft: "none",
+                                    borderRadius: "0 8px 8px 0", fontSize: 13, color: "#475569", fontWeight: 600, flexShrink: 0 }}>%</span>
                                 </div>
                               );
                             })()}
@@ -3059,10 +3065,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <div key={idx} style={{ background: "#fff", borderRadius: 8,
                                 border: "1.5px solid #e2e8f0", padding: "10px 12px", marginBottom: 10 }}>
 
-                                {/* Plan header fields */}
+                                {/* Unified grid: Coverage Tier=140px, #Enrolled=1fr, Rate/PEPM=1fr, Monthly Total=1fr, ✕=auto */}
+                                {/* Plan header labels */}
                                 <div style={{ display: "grid",
-                                  gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
-                                  gap: 8, marginBottom: needsRates ? 12 : 0, alignItems: "end" }}>
+                                  gridTemplateColumns: isBCBSIL ? "140px 1fr 1fr 1fr 1fr auto" : "140px 1fr 1fr 1fr auto",
+                                  gap: 8, marginBottom: 4, alignItems: "end" }}>
                                   <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
                                     Plan Name
                                     <input type="text" value={pl.name || ""}
@@ -3108,6 +3115,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                         style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
                                     </label>
                                   )}
+                                  {/* Empty spacer for Monthly Total column */}
+                                  <div />
                                   <button type="button"
                                     onClick={() => setPlans(plans.filter((_, i) => i !== idx))}
                                     style={{ padding: "6px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
@@ -3117,26 +3126,27 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
                                 {/* Per-plan rate + enrollment tiers */}
                                 {needsRates && (
-                                  <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 10 }}>
-                                    {/* Headers aligned to plan header columns above */}
+                                  <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 8, marginTop: 4 }}>
+                                    {/* Column headers — same grid as plan header above */}
                                     <div style={{ display: "grid",
-                                      gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
-                                      gap: 8, marginBottom: 5 }}>
-                                      {["Coverage Tier", "# Enrolled", "Rate / PEPM", "Monthly Total", ...(isBCBSIL ? [""] : [])].slice(0, isBCBSIL ? 5 : 4).map((h, i) => (
+                                      gridTemplateColumns: isBCBSIL ? "140px 1fr 1fr 1fr 1fr auto" : "140px 1fr 1fr 1fr auto",
+                                      gap: 8, marginBottom: 6 }}>
+                                      {["Coverage Tier", "# Enrolled", "Rate / PEPM", "Monthly Total",
+                                        ...(isBCBSIL ? [""] : []), ""].map((h, i) => (
                                         <div key={i} style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
                                           letterSpacing: ".6px", textTransform: "uppercase",
-                                          textAlign: i === 0 || i === 1 ? "left" : "center",
-                                          ...(i === (isBCBSIL ? 4 : 3) ? { visibility: "hidden" } : {}) }}>{h}</div>
+                                          textAlign: i <= 1 ? "left" : "center",
+                                          visibility: i === (isBCBSIL ? 5 : 4) ? "hidden" : "visible" }}>{h}</div>
                                       ))}
                                     </div>
-                                    {/* One row per tier */}
+                                    {/* One row per tier — same grid */}
                                     {TIERS.map(({ key, label }) => {
                                       const rate = Number((pl.rates || {})[key]) || 0;
                                       const enrolled = Number((pl.enrolled || {})[key]) || 0;
                                       const monthlyTotal = rate * enrolled;
                                       return (
                                         <div key={key} style={{ display: "grid",
-                                          gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
+                                          gridTemplateColumns: isBCBSIL ? "140px 1fr 1fr 1fr 1fr auto" : "140px 1fr 1fr 1fr auto",
                                           gap: 8, marginBottom: 5, alignItems: "center" }}>
                                           <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</div>
                                           {/* # Enrolled */}
@@ -3151,10 +3161,16 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                               border: "1.5px solid #e2e8f0", borderRight: "none",
                                               borderRadius: "7px 0 0 7px", fontSize: 12, color: "#64748b", fontWeight: 600 }}>$</span>
                                             <input type="text" inputMode="decimal"
-                                              value={(pl.rates || {})[key] || ""}
+                                              value={(() => {
+                                                const raw = (pl.rates || {})[key] || "";
+                                                if (!raw) return "";
+                                                const n = parseFloat(raw);
+                                                if (isNaN(n)) return raw;
+                                                return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                              })()}
                                               onChange={e => updatePlanRate(idx, key, e.target.value.replace(/[^0-9.]/g, ""))}
                                               onBlur={e => {
-                                                const n = parseFloat(e.target.value.replace(/[^0-9.]/g,""));
+                                                const n = parseFloat(e.target.value.replace(/[^0-9.,]/g,"").replace(/,/g,""));
                                                 if (!isNaN(n)) updatePlanRate(idx, key, n.toFixed(2));
                                               }}
                                               placeholder="0.00"
@@ -3173,6 +3189,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                               ? "$" + monthlyTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                               : "—"}
                                           </div>
+                                          {/* Spacer for ✕ column */}
+                                          {!isBCBSIL && <div />}
                                         </div>
                                       );
                                     })}
@@ -3185,10 +3203,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                       if (totalEnrolled === 0) return null;
                                       return (
                                         <div style={{ display: "grid",
-                                          gridTemplateColumns: isBCBSIL ? "1fr 1fr 1fr 1fr auto" : "1fr 1fr 1fr auto",
+                                          gridTemplateColumns: isBCBSIL ? "140px 1fr 1fr 1fr 1fr auto" : "140px 1fr 1fr 1fr auto",
                                           gap: 8, paddingTop: 6, borderTop: "1.5px solid #e2e8f0", marginTop: 3 }}>
                                           <div style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Total</div>
-                                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1e40af", textAlign: "center" }}>
+                                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1e40af" }}>
                                             {totalEnrolled} enrolled
                                           </div>
                                           <div />
