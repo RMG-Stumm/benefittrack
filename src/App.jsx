@@ -1184,6 +1184,55 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   function setBenefitCarrier(benefitId, carrier) {
     setData(p => {
       const updated = { ...p, benefitCarriers: { ...p.benefitCarriers, [benefitId]: carrier } };
+
+      // Auto-populate commission from carrier's commission rules
+      if (carrier && carrier !== "__other__" && carriersData) {
+        const carrierObj = carriersData.find(c => c.name === carrier);
+        const rules = carrierObj?.commissionRules || [];
+        if (rules.length > 0) {
+          // Map benefitId → display name for rule lookup
+          const BENEFIT_ID_TO_NAME = {
+            medical: "Medical", dental: "Dental", vision: "Vision",
+            basic_life: "Basic Life/AD&D", vol_life: "Vol Life",
+            std: "STD", ltd: "LTD", worksite: "Worksite",
+            eap: "EAP", telehealth: "Telehealth", fsa: "FSA",
+            hsa_funding: "HSA", hra: "HRA", nydbl_pfl: "NYDBL & PFL",
+          };
+          const benefitName = BENEFIT_ID_TO_NAME[benefitId] || benefitId;
+          const market = p.marketSize || "";
+          const funding = p.fundingMethod || "";
+
+          // Find best matching rule: most specific match wins
+          const match = rules.find(r =>
+            (r.benefit === benefitName || r.benefit === "All") &&
+            (r.segment === market || r.segment === "All") &&
+            (r.fundingMethod === funding || r.fundingMethod === "All") &&
+            r.benefit === benefitName && r.segment === market && r.fundingMethod === funding
+          ) || rules.find(r =>
+            (r.benefit === benefitName || r.benefit === "All") &&
+            (r.segment === market || r.segment === "All") &&
+            (r.fundingMethod === "All")
+          ) || rules.find(r =>
+            (r.benefit === benefitName) && r.segment === "All"
+          );
+
+          if (match && match.amount) {
+            const existingComm = (p.benefitCommissions || {})[benefitId] || {};
+            // Only auto-fill if not already set
+            if (!existingComm.amount) {
+              const withComm = {
+                ...updated,
+                benefitCommissions: {
+                  ...(updated.benefitCommissions || {}),
+                  [benefitId]: { type: match.type, amount: match.amount },
+                },
+              };
+              return benefitId === "medical" ? applyPreRenewalRules(withComm) : withComm;
+            }
+          }
+        }
+      }
+
       return benefitId === "medical" ? applyPreRenewalRules(updated) : updated;
     });
   }
@@ -7686,6 +7735,18 @@ const DEFAULT_CARRIERS_DATA = [
       { label: "Billing", value: "ACH Debit only — no checks" },
       { label: "Carve-outs", value: "Not permitted" },
       { label: "Quote Turnaround", value: "24 working hours (Sales Gateway Q3 2025)" },
+    ],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Medical", segment: "ACA",        fundingMethod: "Fully Insured", type: "Flat %", amount: "4",  notes: "Standard SG commission" },
+      { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Fully Insured", type: "Flat %", amount: "5",  notes: "Standard MM commission" },
+      { benefit: "Dental",  segment: "All",        fundingMethod: "All",           type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",  segment: "All",        fundingMethod: "All",           type: "Flat %", amount: "10", notes: "" },
+    ],
+    contacts: [
+      { role: "Sales Representative", name: "Bridget McDowell", email: "McdowellB@aetna.com",  phone: "(630) 267-4413", market: "ACA",       employerType: "Any", fundingType: "Any", notes: "Small Group Director of Sales. Contact for escalated inquiries and upper management requests w/2-100 in-force groups and prospects." },
+      { role: "Sales Representative", name: "Kevin Fazio",      email: "FazioK@aetna.com",      phone: "(773) 560-5992", market: "ACA",       employerType: "Any", fundingType: "Any", notes: "2-100 enrolled, up to 300 eligible Sales Associate. Email both Kevin and Erin on RFPs & CC quoting box." },
+      { role: "Sales Representative", name: "Erin Manning",     email: "ManningE1@aetna.com",   phone: "",               market: "ACA",       employerType: "Any", fundingType: "Any", notes: "2-100 Sales Associate. Email both Kevin and Erin on RFPs & CC quoting box." },
     ] },
     { id: "c_bcbsil",  name: "BCBSIL",  type: "National", category: "Medical",
     segments: ["ACA","Mid-Market","Large"], products: ["Medical"],
@@ -7698,7 +7759,25 @@ const DEFAULT_CARRIERS_DATA = [
       { label: "LF Min Total Employees (Mid-Market)", value: "50" },
       { label: "LF Max Enrolled (Mid-Market)", value: "150" },
       { label: "State Availability", value: "Illinois only" },
-    ] },
+    ],
+    commissionRules: [
+      { benefit: "Medical", segment: "ACA",        fundingMethod: "Fully Insured",  type: "Flat %",  amount: "4",  notes: "Standard SG – Flat % (eff. 1/1/26)" },
+      { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Fully Insured",  type: "Flat %",  amount: "5",  notes: "Standard MM – Flat % (eff. 10/1/25)" },
+      { benefit: "Medical", segment: "ACA",        fundingMethod: "Level-Funded",   type: "PEPM",    amount: "40", notes: "Blue Balance Funded ACA PEPM (eff. 1/1/26)" },
+      { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Level-Funded",   type: "PEPM",    amount: "40", notes: "Blue Balance Funded MM PEPM (eff. 10/1/25)" },
+      { benefit: "Dental",  segment: "All",        fundingMethod: "All",            type: "Graded",  amount: "8",  notes: "Graded by Annual Premium Volume & Group Size. OED/AD 2-3 lives: 2% flat all tiers. OED/AD 4-150 lives: $1-$50K → 8%; $50,001-$100K → 4.25%; $100,001-$150K → 4%; $150,001+ → 3.75%" },
+      { benefit: "Vision",  segment: "All",        fundingMethod: "All",            type: "Flat %",  amount: "10", notes: "" },
+    ],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Marc Jackson", email: "Marc_Jackson@glic.com", phone: "(630) 235-2471", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Sales 25-999 eligible lives." },
+      { role: "Sales Representative", name: "Vincenzo Marando", email: "vincenzo_marando@glic.com", phone: "(610) 570-2555", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Sales 2-24 eligible lives." },
+      { role: "Account Manager", name: "Morgan Smith", email: "Morgan_Smith@glic.com", phone: "(312) 279-2220", market: "Large", employerType: "Any", fundingType: "Any", notes: "Client Manager 100+. Renewals & plan option quotes." },
+      { role: "Account Manager", name: "Maria Robledo", email: "maria_m_robledo@glic.com", phone: "(312) 279-2280", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Client Manager Associate 2-99 lives." },
+      { role: "Service Team", name: "Brianna Bryant", email: "b_bryant@glic.com", phone: "(800) 627-4200", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Service Manager. New day-to-day contact as of 5/1/25." },
+      { role: "Service Team", name: "Greater Chicago Service", email: "GreaterChicagoService@glic.com", phone: "(800) 996-4779", market: "Any", employerType: "Any", fundingType: "Any", notes: "Day-to-Day Support 2-99 eligible lives." },
+    ],
+  },
   { id: "c_cigna",   name: "Cigna",   type: "National", category: "Medical",
     segments: ["ACA","Mid-Market","Large"], products: ["Medical","Dental","Vision","Worksite Benefits"],
     funding: ["Fully Insured","Level-Funded"],
@@ -7736,7 +7815,21 @@ const DEFAULT_CARRIERS_DATA = [
       { label: "LF (51+) Participation",           value: "50% participation / 50% contribution minimum" },
       { label: "LF (51+) Rating",                  value: "Composite rated" },
       { label: "LF (51+) Commissions",             value: "Service Fee PEPM agreement" },
-    ] },
+    ],
+    commissionRules: [
+      { benefit: "Medical", segment: "ACA",        fundingMethod: "Fully Insured", type: "Flat %", amount: "5",  notes: "FI Medical – Flat %" },
+      { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Fully Insured", type: "Flat %", amount: "5",  notes: "FI Medical – Flat %" },
+      { benefit: "Dental",  segment: "All",        fundingMethod: "All",           type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",  segment: "All",        fundingMethod: "All",           type: "Flat %", amount: "10", notes: "" },
+    ],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Katie (Hackett) Little", email: "Katherine.Little@cigna.com", phone: "(312) 802-2717", market: "Any", employerType: "Any", fundingType: "Any", notes: "New Business Manager 25-500 eligible. LF 25+, FI 51+." },
+      { role: "Account Manager", name: "Brittany Barrett", email: "Brittany.Barrett@cigna.com", phone: "(312) 507-1330", market: "Any", employerType: "Any", fundingType: "Any", notes: "Senior Client Manager." },
+      { role: "Service Team", name: "Karina Thompson", email: "Karina.Martinez@cignahealthcare.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Platinum Service Lead. Use for day-to-day service issues with group # in subject." },
+      { role: "General Contact", name: "Eileen Clancy", email: "Eileen.Clancy@Cigna.com", phone: "(312) 648-3758", market: "Any", employerType: "Any", fundingType: "Any", notes: "Director of Client Management." },
+    ],
+  },
   { id: "c_anthem",  name: "Anthem",  type: "National", category: "Medical",
     segments: ["Mid-Market","Large"], products: ["Medical"],
     funding: ["Fully Insured","Level-Funded","Self-Funded"],
@@ -7746,39 +7839,155 @@ const DEFAULT_CARRIERS_DATA = [
   { id: "c_guardian",  name: "Guardian",          type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], contacts: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_principal", name: "Principal",          type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Marji Hamann", email: "Hamann.Marji@principal.com", phone: "(630) 430-8850", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Rep. RFPs." },
+      { role: "Account Manager", name: "Michael Osterhout", email: "osterhout.michael@principal.com", phone: "(630) 705-0665", market: "Any", employerType: "Any", fundingType: "Any", notes: "Client Relationship Consultant. cc on all RFPs." },
+      { role: "Account Manager", name: "Joe Hunt", email: "hunt.joe@principal.com", phone: "(630) 874-8520", market: "Any", employerType: "Any", fundingType: "Any", notes: "Director of Account Management." },
+      { role: "Billing Contact", name: "Exclusive Partner", email: "exclusivepartner@principal.com", phone: "(866) 341-6588", market: "Any", employerType: "Any", fundingType: "Any", notes: "Stumm is a Principal Exclusive Partner. Billing, Member Info, Forms, Claims." },
+    ],
+    commissionRules: [
+      { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_mutualomaha", name: "Mutual of Omaha",  type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Dental"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Austin Johnson", email: "Austin.johnson@mutualofomaha.com", phone: "(408) 205-3901", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Rep. RFPs. Cell." },
+      { role: "Sales Representative", name: "Tessa Rhodes", email: "tessa.rhodes@mutualofomaha.com", phone: "", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Under 10 lives." },
+      { role: "Account Manager", name: "Christy Purdy", email: "Christy.Purdy@mutualofomaha.com", phone: "(630) 472-2074", market: "Any", employerType: "Any", fundingType: "Any", notes: "Renewal Executive." },
+    ],
+    commissionRules: [
+      { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_unum",      name: "UNUM",               type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Dental","Vision"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Tom Knight", email: "tknight@unum.com", phone: "(312) 416-8268", market: "Large", employerType: "Any", fundingType: "Any", notes: "Sales Rep 100+. Cell: 207-357-4592." },
+      { role: "Sales Representative", name: "Nick Beaulieu", email: "Nbeaulieu2@unum.com", phone: "(630) 991-7151", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Sales Rep 2-99 lives." },
+      { role: "Service Team", name: "RFP Team", email: "quotechicago@unum.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Copy on all RFPs with Tom & Nick." },
+      { role: "Account Manager", name: "Stephanie Johnson", email: "sjohnson4@unum.com", phone: "(423) 294-9889", market: "Large", employerType: "Any", fundingType: "Any", notes: "Client Manager 100+." },
+      { role: "Service Team", name: "Ask Unum", email: "askunum@unum.com", phone: "(800) 275-8686", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Client Services 2-99." },
+    ],
+    commissionRules: [
+      { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_sunlife",   name: "Sun Life",            type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Dental"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "James Park", email: "james.park@sunlife.com", phone: "(331) 703-8930", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Rep 2-50 and 50+." },
+      { role: "Account Manager", name: "Yvonne Marmolejo-Richey", email: "yvonne.marmolejo-riche@sunlife.com", phone: "(781) 690-1983", market: "Any", employerType: "Any", fundingType: "Any", notes: "Renewal Portfolio Manager 150 and below." },
+      { role: "Account Manager", name: "Kelly Keeler", email: "kelly.keeler@sunlife.com", phone: "", market: "Large", employerType: "Any", fundingType: "Any", notes: "Client Advocate 150-999." },
+      { role: "Service Team", name: "Client Services", email: "clientservices@sunlife.com", phone: "(800) 247-6875", market: "Any", employerType: "Any", fundingType: "Any", notes: "1-149 lives. Disability claims, bills, contracts." },
+      { role: "Billing Contact", name: "Commissions Team", email: "EBG_Commissions@sunlife.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Schedule A commissions." },
+    ],
+    commissionRules: [
+      { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_metlife",   name: "MetLife (EM)",         type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Steve Stall", email: "sstall@euclidmanagers.com", phone: "(630) 238-2917", market: "Any", employerType: "Any", fundingType: "Any", notes: "VP Euclid. cc on all RFPs/Renewal items." },
+      { role: "Account Manager", name: "Sarah Barrera", email: "sbarrera@euclidmanagers.com", phone: "(630) 238-2941", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Manager." },
+      { role: "Account Manager", name: "Marcy Graefen", email: "marcy@euclidmanagers.com", phone: "(630) 238-2915", market: "Any", employerType: "Any", fundingType: "Any", notes: "VP. Renewals MetLife cc Steve Stall." },
+      { role: "Account Manager", name: "Ashley Fenske", email: "Ashley@EuclidManagers.com", phone: "(630) 238-2942", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Manager. RFPs LifeLock & HealthiestYou cc Steve Stall." },
+    ],
+    commissionRules: [
+      { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_dearborn",  name: "Dearborn/Symetra",     type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Shawn Teasley", email: "Shawn_Teasley@bcbsil.com", phone: "(630) 824-5314", market: "Any", employerType: "Any", fundingType: "Any", notes: "Ancillary Sales Exec under 500 lives. All L&D quotes go to Shawn. Email: shawn.teasley@symetra.com" },
+      { role: "Account Manager", name: "Robin Kulka", email: "Robin_Kulka@bcbsil.com", phone: "(630) 824-5166", market: "Any", employerType: "Any", fundingType: "Any", notes: "Ancillary Account Executive - Service & Renewals." },
+      { role: "Service Team", name: "Ancillary Customer Service", email: "ancillaryquestionsIL@bcbsil.com", phone: "(800) 367-6401", market: "Any", employerType: "Any", fundingType: "Any", notes: "Customer Service, Membership Processing, Billing, Claims and Benefits." },
+      { role: "Claims Contact", name: "Disability Claims", email: "DisabilityClaimsIL@bcbsil.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Claim submission email." },
+    ],
+    commissionRules: [
+      { benefit: "Basic Life/AD&D",segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",       segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",            segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ] },
   { id: "c_delta",     name: "Delta Dental",         type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Dental"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Steve Soyke", email: "SSoyke@deltadentalil.com", phone: "(630) 718-4951", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Small Business Sales Executive (2-150)." },
+      { role: "Sales Representative", name: "Brent Goldsberry", email: "BGoldsberry@deltadentalil.com", phone: "(630) 718-4791", market: "Large", employerType: "Any", fundingType: "Any", notes: "Senior Sales Executive (150+)." },
+      { role: "Account Manager", name: "Andrew Caniglia", email: "ACaniglia@deltadentalil.com", phone: "(630) 718-4767", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Small Business Account Manager 2-150." },
+      { role: "Account Manager", name: "Chrysa Kasper", email: "CKasper@deltadentalil.com", phone: "(630) 718-4760", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Account Manager. See Excel file of SI clients in Delta folder." },
+      { role: "Account Manager", name: "Kathy Nelson", email: "knelson@deltadentalil.com", phone: "(630) 718-4774", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Account Manager." },
+    ],
+    commissionRules: [
+      { benefit: "Dental", segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+    ] },
   { id: "c_vsp",       name: "VSP",                  type: "National", category: "Ancillary",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Vision"],
-    funding: ["Fully Insured"], states: [], notes: "", requirements: [] },
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Kal Sanghera", email: "kals@vsp.com", phone: "(916) 851-4820", market: "Any", employerType: "Any", fundingType: "Any", notes: "Business Development Manager." },
+      { role: "Account Manager", name: "Jessica Franz", email: "jessica.franz@vsp.com", phone: "(916) 858-7716", market: "Any", employerType: "Any", fundingType: "Any", notes: "Client Manager." },
+      { role: "Account Manager", name: "Jamie Elliott", email: "Jamie.Elliott@vsp.com", phone: "(916) 851-4437", market: "Any", employerType: "Any", fundingType: "Any", notes: "Key Client Manager." },
+    ],
+    commissionRules: [
+      { benefit: "Vision", segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+    ] },
   // ── FSA/HSA/HRA Admins ───────────────────────────────────────────────────
   { id: "c_wex",       name: "WEX Health",           type: "National", category: "FSA/HSA/HRA Administrator",
     segments: ["ACA","Mid-Market","Large"],
@@ -7791,7 +8000,135 @@ const DEFAULT_CARRIERS_DATA = [
   { id: "c_payflex",   name: "PayFlex",              type: "National", category: "FSA/HSA/HRA Administrator",
     segments: ["ACA","Mid-Market","Large"],
     products: ["Health FSA","LP FSA","DC FSA","HSA Funding"],
-    funding: [], states: [], notes: "", requirements: [] },
+    funding: [], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "", commissionRules: [],
+    contacts: [] },
+  // ── New carriers from Carrier_Contacts.xlsx ──────────────────────────────
+  { id: "c_hartford", name: "The Hartford", type: "National", category: "Ancillary",
+    segments: ["ACA","Mid-Market","Large"],
+    products: ["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Basic Life/AD&D", segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",        segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",             segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",             segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ],
+    contacts: [
+      { role: "Sales Representative", name: "Kevin Madden", email: "Kevin.Madden@thehartford.com", phone: "(312) 384-7552", market: "ACA", employerType: "Any", fundingType: "Any", notes: "RFPs Under 50. Cell: 508-292-3507" },
+      { role: "Sales Representative", name: "Oscar Ponce", email: "Oscar.Ponce@thehartford.com", phone: "(312) 384-7962", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Replaced Kevin Madden. RFPs and general group questions. Cell: 847-361-0492" },
+      { role: "Sales Representative", name: "Emily Green", email: "Emily.Green@thehartford.com", phone: "(312) 384-7536", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "RFPs 50+. Cell: 248-568-3704" },
+    ] },
+  { id: "c_lincoln", name: "Lincoln Financial", type: "National", category: "Ancillary",
+    segments: ["ACA","Mid-Market","Large"],
+    products: ["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Basic Life/AD&D", segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "Vol Life",        segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "STD",             segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+      { benefit: "LTD",             segment: "All", fundingMethod: "All", type: "Flat %", amount: "15", notes: "" },
+    ],
+    contacts: [
+      { role: "Account Executive",  name: "Dan Jurik",     email: "daniel.jurik@lfg.com",  phone: "(773) 257-3260", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Executive / Workplace Solutions" },
+      { role: "Sales Representative", name: "Holly Chladek", email: "holly.chladek@lfg.com", phone: "(414) 254-7718", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Coordinator" },
+    ] },
+  { id: "c_concordia", name: "United Concordia", type: "National", category: "Ancillary",
+    segments: ["ACA","Mid-Market","Large"], products: ["Dental"],
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Dental", segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+    ],
+    contacts: [
+      { role: "Sales Representative", name: "Oliver Hansen",  email: "oliver.hansen@ucci.com", phone: "(216) 978-3324", market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Sales Mgr, 2-50" },
+      { role: "Sales Representative", name: "Jenna Woska",    email: "jenna.woska@ucci.com",   phone: "(412) 544-8565", market: "Mid-Market",  employerType: "Any", fundingType: "Any", notes: "Sr. Sales Director, 51+. Cell: 717-329-9377" },
+      { role: "Service Team",         name: "SBU Team",       email: "uccisbu@ucci.com",        phone: "(800) 972-4191", market: "Any",         employerType: "Any", fundingType: "Any", notes: "2-99 lives. Prompt #4. Groups 100+ get dedicated AM." },
+      { role: "Service Team",         name: "Wendy Cline",    email: "ucproducer@ucci.com",     phone: "(800) 972-4191", market: "Any",         employerType: "Any", fundingType: "Any", notes: "Producer Services Rep. Prompt #3." },
+    ] },
+  { id: "c_eyemed", name: "EyeMed", type: "National", category: "Ancillary",
+    segments: ["ACA","Mid-Market","Large"], products: ["Vision"],
+    funding: ["Fully Insured"], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Vision", segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "Include writing agent name (Brian Stumm) on BOR" },
+    ],
+    contacts: [
+      { role: "Sales Representative", name: "Alyssa Esparza",  email: "aesparza2@eyemed.com",          phone: "(513) 939-6429", market: "Any", employerType: "Any", fundingType: "Any", notes: "Senior Sales Executive. Include writing agent's name (Brian Stumm) on BOR." },
+      { role: "Account Manager",      name: "Kimberly Dwyer",  email: "EyeMedVisionCentral@eyemed.com", phone: "(513) 765-3666", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Manager" },
+      { role: "Service Team",         name: "EyeMed Vision Central", email: "EyeMedVisionCentral@eyemed.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "BOR letters, questions on current groups/renewals/plan changes" },
+    ] },
+  { id: "c_ebc", name: "EBC", type: "National", category: "FSA/HSA/HRA Administrator",
+    segments: ["ACA","Mid-Market","Large"],
+    products: ["Health FSA","LP FSA","DC FSA","HSA Funding","HRA"],
+    funding: [], states: [], notes: "Broker Paid COBRA services discounted to $50 min PEPM (normally $60); set up fee waived.", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [],
+    contacts: [
+      { role: "Sales Representative", name: "Andrea Visione",    email: "andrea.visione@ebcflex.com",  phone: "(608) 829-8375", market: "Any", employerType: "Any", fundingType: "Any", notes: "Regional Sales Director. See Broker Client Listing in EBC folder for client-specific service consultant." },
+      { role: "Sales Representative", name: "Jenni Christianson",email: "Jenni.Christianson@ebcflex.com", phone: "(608) 729-8387", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Operation Specialist" },
+      { role: "Sales Representative", name: "Melissa Salis",     email: "melissa.salis@ebcflex.com",   phone: "(608) 829-8378", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Operation Specialist" },
+      { role: "Service Team",         name: "Kelly Hoppman",     email: "Kelly.Hoppman@ebcflex.com",   phone: "(608) 829-8394", market: "Any", employerType: "Any", fundingType: "Any", notes: "Client Services Coordinator" },
+      { role: "General Contact",      name: "Brian Connelly",    email: "Brian.Connelly@ebcflex.com",  phone: "(608) 829-8307", market: "Any", employerType: "Any", fundingType: "Any", notes: "Vice President, Business Development" },
+    ] },
+  { id: "c_further", name: "Further", type: "National", category: "FSA/HSA/HRA Administrator",
+    segments: ["ACA","Mid-Market","Large"],
+    products: ["Health FSA","LP FSA","DC FSA","HSA Funding","HRA"],
+    funding: [], states: [], notes: "FSA $500 annual fee and $150 POP plan fee waived for all Stumm clients.", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [],
+    contacts: [
+      { role: "Sales Representative", name: "Wes Pierce",            email: "Wes.Pierce@hellofurther.com", phone: "(847) 454-4718", market: "Any", employerType: "Any", fundingType: "Any", notes: "Primary contact for Stumm for both broker & group level inquiries." },
+      { role: "Service Team",         name: "Account Holder Service", email: "",                             phone: "(800) 859-2144", market: "Any", employerType: "Any", fundingType: "Any", notes: "Primary service line" },
+      { role: "Service Team",         name: "Client Advocates (backup)", email: "",                          phone: "(888) 460-4013", market: "Any", employerType: "Any", fundingType: "Any", notes: "Backup service line" },
+    ] },
+  { id: "c_asure", name: "Asure", type: "National", category: "FSA/HSA/HRA Administrator",
+    segments: ["ACA","Mid-Market","Large"],
+    products: ["Health FSA","LP FSA","DC FSA","HSA Funding","HRA"],
+    funding: [], states: [], notes: "", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [],
+    contacts: [
+      { role: "Account Manager", name: "Mark Varona",    email: "mark.varona@asuresoftware.com",   phone: "(813) 867-7256", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Manager II" },
+      { role: "Service Team",    name: "Client Services", email: "clientsupport@asuresoftware.com", phone: "(888) 862-6272", market: "Any", employerType: "Any", fundingType: "Any", notes: "Option 3" },
+    ] },
+  { id: "c_aim", name: "AIM", type: "National", category: "FSA/HSA/HRA Administrator",
+    segments: ["ACA","Mid-Market","Large"],
+    products: ["Health FSA","LP FSA","DC FSA","HRA"],
+    funding: [], states: [], notes: "$200 Plan Doc Prep, $50 plan amendment, $7 PEPM admin fee.", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [],
+    contacts: [
+      { role: "Benefits Administrator", name: "Kelly Lohman",  email: "kelly@aimadministrator.com",   phone: "(502) 426-1235", market: "Any", employerType: "Any", fundingType: "Any", notes: "Ext. 116. $200 Plan Doc Prep, $50 amendment, $7 PEPM admin fee." },
+      { role: "General Contact",        name: "Michelle Cull", email: "michele@aimadministrator.com", phone: "(502) 426-1235", market: "Any", employerType: "Any", fundingType: "Any", notes: "Assistant. Ext. 116." },
+    ] },
+  { id: "c_petbenefit", name: "Pet Benefit Solutions", type: "National", category: "Ancillary",
+    segments: ["ACA","Mid-Market","Large"], products: ["Pet Insurance"],
+    funding: ["Fully Insured"], states: [], notes: "Need company name, address, website, # eligible, effective date when submitting.", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Pet Insurance", segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "10% Pet Assure & Pet Plus per active member. Pet Best: 10% year 1, 5% subsequent years." },
+    ],
+    contacts: [
+      { role: "Sales Representative", name: "Amy Crane",               email: "amy@petbenefits.com",    phone: "",               market: "Any", employerType: "Any", fundingType: "Any", notes: "Need company name, address, website, # eligible, effective date" },
+      { role: "Billing Contact",      name: "Clair Thompson-Martinez", email: "clairt@petbenefits.com", phone: "(732) 806-7083", market: "Any", employerType: "Any", fundingType: "Any", notes: "Accounts Payable Coordinator. 10% commissions Pet Assure & Pet Plus per active member." },
+      { role: "Account Manager",      name: "Angela Campolattaro",     email: "angelac@petbenefits.com",phone: "(732) 719-2941", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Manager" },
+    ] },
+  { id: "c_centro", name: "Centro Benefits", type: "Regional/Local", category: "Ancillary",
+    segments: ["ACA","Mid-Market"], products: ["Dental","Vision","Basic Life/AD&D","STD","LTD"],
+    funding: ["Fully Insured"], states: ["IL"], notes: "cc John Gallagher on submissions; Benefits/marketing analyst assigned once RFP received.", requirements: [],
+    planLimits: [], benefitDetails: "",
+    commissionRules: [
+      { benefit: "Dental",  segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",  segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
+    ],
+    contacts: [
+      { role: "Sales Representative", name: "John Gallagher", email: "john.gallagher@centrobenefits.com", phone: "(847) 609-3900", market: "Any", employerType: "Any", fundingType: "Any", notes: "Regional Sales Executive. cc on submissions." },
+      { role: "General Contact",      name: "Tricia McCann",  email: "tmccann@centrobenefits.com",        phone: "(314) 369-8279", market: "Any", employerType: "Any", fundingType: "Any", notes: "Vice President" },
+      { role: "Service Team",         name: "Quoting Department", email: "quote@centrobenefits.com",      phone: "",               market: "Any", employerType: "Any", fundingType: "Any", notes: "cc John Gallagher on submissions" },
+    ] },
 ];
 
 function loadCarriersData_DEPRECATED() {
@@ -7903,7 +8240,28 @@ useEffect(() => {
         fetchTeams(),
       ]);
       if (clients)  setClientsRaw(clients.map(applyDataFixes));
-      if (carriers) setCarriersDataRaw(carriers);
+      if (carriers) {
+        // Merge DEFAULT_CARRIERS_DATA commission rules, planLimits, and contacts
+        // into Supabase carriers that are missing them — so new fields always appear
+        // without needing a manual data migration
+        const merged = carriers.map(c => {
+          const defaults = DEFAULT_CARRIERS_DATA.find(d => d.id === c.id || d.name === c.name);
+          if (!defaults) return c;
+          return {
+            ...c,
+            commissionRules: (c.commissionRules && c.commissionRules.length > 0)
+              ? c.commissionRules
+              : (defaults.commissionRules || []),
+            planLimits: (c.planLimits && c.planLimits.length > 0)
+              ? c.planLimits
+              : (defaults.planLimits || []),
+            contacts: (c.contacts && c.contacts.length > 0)
+              ? c.contacts
+              : (defaults.contacts || []),
+          };
+        });
+        setCarriersDataRaw(merged);
+      }
       if (tasks)    setTasksDataRaw(tasks);
       if (ddr)      setDueDateRulesRaw(ddr);
       if (meetings) setMeetingsRaw(meetings);
@@ -9300,9 +9658,10 @@ function CarriersView({ carriers, onSave, currentUser }) {
     const blank = {
       id: newId, name: "", type: "National", category: activeCategory,
       segments: [], products: [], funding: [], states: [], notes: "", requirements: [],
-      contacts: [],        // [{ role, name, email, phone, market, employerType, fundingType }]
-      benefitDetails: "",  // coverage offered / plan descriptions
-      planLimits: [],      // [{ benefit, maxPlans, condition }]
+      contacts: [],
+      benefitDetails: "",
+      planLimits: [],
+      commissionRules: [],  // [{ benefit, segment, fundingMethod, type, amount, notes }]
     };
     setEditingId(newId);
     setEditData(blank);
@@ -9443,6 +9802,24 @@ function CarriersView({ carriers, onSave, currentUser }) {
                         📋 {carrier.benefitDetails}
                       </div>
                     )}
+                    {(carrier.commissionRules || []).length > 0 && (
+                      <div style={{ marginTop: 5 }}>
+                        {(carrier.commissionRules || []).map((r, i) => (
+                          <div key={i} style={{ marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99,
+                              background: r.type === "Graded" ? "#fef3c7" : "#dcfce7",
+                              color: r.type === "Graded" ? "#92400e" : "#166534",
+                              fontWeight: 600,
+                              border: `1px solid ${r.type === "Graded" ? "#fde68a" : "#86efac"}` }}>
+                              {r.benefit}{r.segment !== "All" ? ` (${r.segment})` : ""}{r.fundingMethod !== "All" ? ` / ${r.fundingMethod}` : ""}: {r.type === "PEPM" ? `$${r.amount} PEPM` : r.type === "Graded" ? `Graded (max ${r.amount}%)` : `${r.amount}%`}
+                            </span>
+                            {r.notes && (
+                              <span style={{ fontSize: 10, color: "#64748b", marginLeft: 6, fontStyle: "italic" }}>{r.notes}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {(carrier.planLimits || []).length > 0 && (
                       <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {(carrier.planLimits || []).map((pl, i) => (
@@ -9537,6 +9914,23 @@ function CarriersView({ carriers, onSave, currentUser }) {
             </label>
 
             <label style={{ ...labelStyle, marginTop: 12 }}>
+              Category
+              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                {CARRIER_CATEGORIES.map(cat => (
+                  <button key={cat} type="button"
+                    onClick={() => setEditData(p => ({ ...p, category: cat }))}
+                    style={{
+                      padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      fontFamily: "inherit", cursor: "pointer", transition: "all .12s",
+                      border: `2px solid ${editData.category === cat ? "#2d4a6b" : "#e2e8f0"}`,
+                      background: editData.category === cat ? "#dce8f0" : "#fff",
+                      color: editData.category === cat ? "#2d4a6b" : "#64748b",
+                    }}>{cat}</button>
+                ))}
+              </div>
+            </label>
+
+            <label style={{ ...labelStyle, marginTop: 12 }}>
               Type
               <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                 {CARRIER_TYPES.map(t => (
@@ -9616,6 +10010,74 @@ function CarriersView({ carriers, onSave, currentUser }) {
                 placeholder="Special conditions, eligibility rules, caveats..."
                 rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
             </label>
+
+            {/* ── Commission Rules ── */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Commission Rules</div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>Default commission by benefit, segment, and funding method</div>
+                </div>
+                <button type="button" onClick={() => setEditData(p => ({
+                  ...p,
+                  commissionRules: [...(p.commissionRules || []), { benefit: "Medical", segment: "All", fundingMethod: "All", type: "Flat %", amount: "", notes: "" }],
+                }))} style={{ fontSize: 11, fontWeight: 700, color: "#166534", background: "#dcfce7",
+                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add Rule
+                </button>
+              </div>
+              {(editData.commissionRules || []).length === 0 && (
+                <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", textAlign: "center", padding: "6px 0" }}>
+                  No commission rules defined
+                </div>
+              )}
+              {(editData.commissionRules || []).map((rule, ri) => (
+                <div key={ri} style={{ display: "grid", gridTemplateColumns: "1fr 90px 110px 70px 80px 1fr auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                  {/* Benefit */}
+                  <select value={rule.benefit || "Medical"}
+                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],benefit:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
+                    {["Medical","Dental","Vision","Basic Life/AD&D","Vol Life","STD","LTD","IDI","Worksite","EAP","Telehealth","FSA","HSA","HRA","All"].map(b=><option key={b}>{b}</option>)}
+                  </select>
+                  {/* Segment */}
+                  <select value={rule.segment || "All"}
+                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],segment:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
+                    {["All","ACA","Mid-Market","Large"].map(s=><option key={s}>{s}</option>)}
+                  </select>
+                  {/* Funding Method */}
+                  <select value={rule.fundingMethod || "All"}
+                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],fundingMethod:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
+                    {["All","Fully Insured","Level-Funded","Self-Funded"].map(f=><option key={f}>{f}</option>)}
+                  </select>
+                  {/* Type */}
+                  <select value={rule.type || "Flat %"}
+                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],type:e.target.value,amount:""}; setEditData(p=>({...p,commissionRules:r})); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
+                    {["Flat %","PEPM","Graded"].map(t=><option key={t}>{t}</option>)}
+                  </select>
+                  {/* Amount — for Graded, shows the starting/max rate */}
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    {rule.type === "PEPM" && <span style={{ fontSize: 11, color: "#64748b", marginRight: 2, flexShrink: 0 }}>$</span>}
+                    <input type="text" inputMode="numeric" value={rule.amount || ""}
+                      onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],amount:e.target.value.replace(/[^0-9.]/g,"")}; setEditData(p=>({...p,commissionRules:r})); }}
+                      placeholder={rule.type === "Graded" ? "Max %" : "0"}
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 6px", textAlign: "right", fontWeight: 700 }} />
+                    {rule.type !== "PEPM" && <span style={{ fontSize: 11, color: "#64748b", marginLeft: 2, flexShrink: 0 }}>%</span>}
+                  </div>
+                  {/* Notes */}
+                  <input type="text" value={rule.notes || ""}
+                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],notes:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
+                    placeholder="Notes (e.g. eff. 1/1/26, graded scale...)"
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                  {/* Remove */}
+                  <button type="button" onClick={() => setEditData(p => ({ ...p, commissionRules: p.commissionRules.filter((_,i)=>i!==ri) }))}
+                    style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
+                      background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                </div>
+              ))}
+            </div>
 
             {/* ── Plan Limits ── */}
             <div style={{ marginTop: 14 }}>
