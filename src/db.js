@@ -34,34 +34,39 @@ export async function deleteClient(id) {
 export async function fetchCarriers() {
   const { data, error } = await supabase.from('carriers').select('*')
   if (error) { console.error('fetchCarriers error:', error); return null }
-  return data.map(row => ({
-    id: row.id,
-    name: row.name,
-    type: row.type,
-    category: row.category,
-    segments: row.segments || [],
-    products: row.products || [],
-    funding: row.funding || [],
-    states: row.states || [],
-    notes: row.notes || '',
-    requirements: row.requirements || [],
-    pinned: row.pinned || false,
-  }))
+  return data.map(row => {
+    // If the row has a full JSONB data column, use it (new format)
+    if (row.data && typeof row.data === 'object') {
+      return { ...row.data, id: row.id }
+    }
+    // Fall back to reading individual columns (old format)
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      category: row.category,
+      segments: row.segments || [],
+      products: row.products || [],
+      funding: row.funding || [],
+      states: row.states || [],
+      notes: row.notes || '',
+      requirements: row.requirements || [],
+      pinned: row.pinned || false,
+      contacts: row.contacts || [],
+      benefitDetails: row.benefit_details || '',
+    }
+  })
 }
 
 export async function upsertCarrier(carrier) {
   const { error } = await supabase.from('carriers').upsert({
     id: carrier.id,
-    name: carrier.name,
-    type: carrier.type,
-    category: carrier.category,
-    segments: carrier.segments || [],
-    products: carrier.products || [],
-    funding: carrier.funding || [],
-    states: carrier.states || [],
-    notes: carrier.notes || '',
-    requirements: carrier.requirements || [],
-    pinned: carrier.pinned || false,
+    name: carrier.name || '',
+    type: carrier.type || '',
+    category: carrier.category || '',
+    // Store full carrier object so contacts, benefitDetails, and any
+    // future fields are preserved — same pattern as clients
+    data: carrier,
   })
   if (error) console.error('upsertCarrier error:', error)
 }

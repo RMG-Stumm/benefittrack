@@ -64,6 +64,102 @@ const TASK_ROLES = [
 
 // Resolve a role string ("Account Coordinator" etc.) to the actual person
 // on the given team. Falls back gracefully if role isn't filled on that team.
+// Auto-format a phone number as (XXX) XXX-XXXX while typing
+function formatPhone(raw) {
+  const digits = (raw || "").replace(/\D/g, "").slice(0, 10);
+  if (digits.length === 0) return "";
+  if (digits.length <= 3) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0,3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
+}
+
+// Format a raw numeric string as currency: $1,234.56
+function formatCurrency(raw) {
+  const clean = (raw || "").toString().replace(/[^0-9.]/g, "");
+  if (!clean || clean === ".") return clean;
+  const parts = clean.split(".");
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return parts.length > 1 ? parts[0] + "." + parts[1].slice(0, 2) : parts[0];
+}
+
+// Format a raw numeric string as a plain integer with commas: 1,234
+function formatInteger(raw) {
+  const clean = (raw || "").toString().replace(/[^0-9]/g, "");
+  if (!clean) return "";
+  return clean.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+// Strip formatting back to raw number string for storage
+function stripNumeric(formatted) {
+  return (formatted || "").toString().replace(/[^0-9.]/g, "");
+}
+
+// Reusable currency input — displays formatted, stores raw
+function CurrencyInput({ value, onChange, placeholder, style, prefix = "$" }) {
+  const [display, setDisplay] = React.useState(value ? formatCurrency(String(value)) : "");
+  React.useEffect(() => {
+    // Sync if parent changes the value externally
+    if (value === "" || value === null || value === undefined) setDisplay("");
+  }, [value]);
+  return (
+    <div style={{ display: "flex", alignItems: "center" }}>
+      <span style={{ padding: "6px 8px", background: "#f1f5f9", border: "1.5px solid #e2e8f0",
+        borderRight: "none", borderRadius: "8px 0 0 8px", fontSize: 12, color: "#475569", fontWeight: 600, flexShrink: 0 }}>{prefix}</span>
+      <input
+        type="text" inputMode="decimal"
+        value={display}
+        placeholder={placeholder || "0.00"}
+        onChange={e => {
+          const raw = e.target.value.replace(/[^0-9.]/g, "");
+          setDisplay(formatCurrency(raw));
+          onChange(raw);
+        }}
+        onBlur={e => {
+          const raw = stripNumeric(e.target.value);
+          if (raw) {
+            const num = parseFloat(raw);
+            if (!isNaN(num)) {
+              setDisplay(num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+              onChange(String(num));
+            }
+          }
+        }}
+        style={{ ...style, borderRadius: "0 8px 8px 0" }}
+      />
+    </div>
+  );
+}
+
+// Reusable integer input with comma formatting
+function IntegerInput({ value, onChange, placeholder, style }) {
+  return (
+    <input
+      type="text" inputMode="numeric"
+      value={value ? formatInteger(String(value)) : ""}
+      placeholder={placeholder || "0"}
+      onChange={e => onChange(stripNumeric(e.target.value))}
+      style={style}
+    />
+  );
+}
+
+// Reusable percent input: strips %, stores raw number
+function PercentInput({ value, onChange, placeholder, style, disabled }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center" }}>
+      <input
+        type="text" inputMode="decimal"
+        value={value || ""}
+        placeholder={placeholder || "0.00"}
+        disabled={disabled}
+        onChange={e => onChange(e.target.value.replace(/[^0-9.]/g, ""))}
+        style={{ ...style, textAlign: "right" }}
+      />
+      <span style={{ marginLeft: 3, fontWeight: 700, color: "#475569", flexShrink: 0 }}>%</span>
+    </div>
+  );
+}
+
 function resolveAssignee(role, teamId) {
   if (!role) return "";
   // If it looks like a real name rather than a role, pass it through unchanged
@@ -1696,7 +1792,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </label>
               <label style={labelStyle}>
                 Main Phone #
-                <input value={data.mainPhone || ""} onChange={e => set("mainPhone", e.target.value)} placeholder="(312) 555-0000" style={inputStyle} />
+                <input value={data.mainPhone || ""} onChange={e => set("mainPhone", formatPhone(e.target.value))} placeholder="(312) 555-0000" style={inputStyle} />
               </label>
 
               {/* ── CONTACTS — side by side ── */}
@@ -1724,7 +1820,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     </label>
                     <label style={labelStyle}>
                       Phone #
-                      <input value={data.contactPhone || ""} onChange={e => set("contactPhone", e.target.value)} placeholder="(312) 555-0100" style={inputStyle} />
+                      <input value={data.contactPhone || ""} onChange={e => set("contactPhone", formatPhone(e.target.value))} placeholder="(312) 555-0100" style={inputStyle} />
                     </label>
                   </div>
                 </div>
@@ -1747,7 +1843,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     </label>
                     <label style={labelStyle}>
                       Phone #
-                      <input value={data.addlContactPhone || ""} onChange={e => set("addlContactPhone", e.target.value)} placeholder="(312) 555-0101" style={inputStyle} />
+                      <input value={data.addlContactPhone || ""} onChange={e => set("addlContactPhone", formatPhone(e.target.value))} placeholder="(312) 555-0101" style={inputStyle} />
                     </label>
                   </div>
                 </div>
@@ -1865,8 +1961,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </label>
               <label style={labelStyle}>
                 Total Eligible
-                <input type="number" min="0" value={data.totalEligible || ""}
-                  onChange={e => set("totalEligible", e.target.value)}
+                <IntegerInput
+                  value={data.totalEligible || ""}
+                  onChange={v => set("totalEligible", v)}
+                  placeholder="0"
+                  style={{ ...inputStyle, marginTop: 3 }} />
                   placeholder="# eligible employees" style={inputStyle} />
               </label>
 
@@ -2151,8 +2250,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     </label>
                     <label style={{ ...labelStyle, marginTop: 0 }}>
                       # Eligible in Class
-                      <input type="number" min="0" value={cls.eligible || ""}
-                        onChange={e => updateClass(idx, "eligible", e.target.value)}
+                      <IntegerInput value={cls.eligible || ""}
+                        onChange={v => updateClass(idx, "eligible", v)}
                         placeholder="0"
                         style={{ ...inputStyle, marginTop: 3 }} />
                     </label>
@@ -2737,11 +2836,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </div>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           # Enrolled
-                          <input
-                            type="number" min="0"
+                          <IntegerInput
                             value={(data.benefitEnrolled || {})[cat.id] || ""}
-                            onChange={e => {
-                              const v = e.target.value;
+                            onChange={v => {
                               setData(p => {
                                 const updated = {
                                   ...p,
@@ -2887,22 +2984,26 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                           gap: 8, marginBottom: 5, alignItems: "center" }}>
                                           <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</div>
                                           {/* # Enrolled */}
-                                          <input type="number" min="0" step="1"
+                                          <IntegerInput
                                             value={(pl.enrolled || {})[key] || ""}
-                                            onChange={e => updatePlanEnrolled(idx, key, e.target.value)}
+                                            onChange={v => updatePlanEnrolled(idx, key, v)}
                                             placeholder="0"
-                                            style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "center" }} />
+                                            style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "center", width: "100%" }} />
                                           {/* Rate / PEPM */}
                                           <div style={{ display: "flex", alignItems: "center" }}>
                                             <span style={{ padding: "5px 7px", background: "#f1f5f9",
                                               border: "1.5px solid #e2e8f0", borderRight: "none",
                                               borderRadius: "7px 0 0 7px", fontSize: 12, color: "#64748b", fontWeight: 600 }}>$</span>
-                                            <input type="number" min="0" step="0.01"
+                                            <input type="text" inputMode="decimal"
                                               value={(pl.rates || {})[key] || ""}
-                                              onChange={e => updatePlanRate(idx, key, e.target.value)}
+                                              onChange={e => updatePlanRate(idx, key, e.target.value.replace(/[^0-9.]/g, ""))}
+                                              onBlur={e => {
+                                                const n = parseFloat(e.target.value.replace(/[^0-9.]/g,""));
+                                                if (!isNaN(n)) updatePlanRate(idx, key, n.toFixed(2));
+                                              }}
                                               placeholder="0.00"
                                               style={{ ...inputStyle, marginTop: 0, borderRadius: "0 7px 7px 0",
-                                                fontSize: 12, padding: "5px 8px", flex: 1 }} />
+                                                fontSize: 12, padding: "5px 8px", flex: 1, textAlign: "right" }} />
                                           </div>
                                           {/* Monthly Total */}
                                           <div style={{ fontSize: 12, fontWeight: 700,
@@ -3592,14 +3693,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
                         opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc" }} />
                     {/* Renewal % */}
-                    <div style={{ display: "flex", alignItems: "center" }}>
-                      <input type="number" value={rv.pct || ""}
-                        onChange={e => set("renewalReceived", { ...rv, pct: e.target.value })}
-                        placeholder="0" disabled={!rv.received}
-                        style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
-                          opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc" }} />
-                      <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
-                    </div>
+                    <PercentInput value={rv.pct || ""} onChange={v => set("renewalReceived", { ...rv, pct: v })}
+                      placeholder="0.00" disabled={!rv.received}
+                      style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
+                        opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc", width: "100%" }} />
                     {/* Rate Relief Requested */}
                     {showRateRelief && (
                       <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
@@ -3624,15 +3721,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     )}
                     {/* Negotiated Renewal % */}
                     {showRateRelief && (
-                      <div style={{ display: "flex", alignItems: "center" }}>
-                        <input type="number" value={data.negotiatedRenewalPct || ""}
-                          onChange={e => set("negotiatedRenewalPct", e.target.value)}
-                          placeholder="0"
-                          style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
-                            background: data.negotiatedRenewalPct ? "#f0fdf4" : "#fff",
-                            borderColor: data.negotiatedRenewalPct ? "#86efac" : undefined }} />
-                        <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
-                      </div>
+                      <PercentInput value={data.negotiatedRenewalPct || ""}
+                        onChange={v => set("negotiatedRenewalPct", v)}
+                        placeholder="0.00"
+                        style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, width: "100%",
+                          background: data.negotiatedRenewalPct ? "#f0fdf4" : "#fff",
+                          borderColor: data.negotiatedRenewalPct ? "#86efac" : undefined }} />
                     )}
                   </div>
 
@@ -3741,15 +3835,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
                               opacity: stored.received ? 1 : 0.35, background: stored.received ? "#fff" : "#f8fafc" }} />
                           {/* Renewal % */}
-                          <div style={{ display: "flex", alignItems: "center" }}>
-                            <input type="number" value={stored.pct || ""}
-                              onChange={e => setAnc("pct", e.target.value)}
-                              placeholder="0"
-                              disabled={!stored.received}
-                              style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
-                                opacity: stored.received ? 1 : 0.35, background: stored.received ? "#fff" : "#f8fafc" }} />
-                            <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
-                          </div>
+                          <PercentInput value={stored.pct || ""} onChange={v => setAnc("pct", v)}
+                            placeholder="0.00" disabled={!stored.received}
+                            style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, width: "100%",
+                              opacity: stored.received ? 1 : 0.35, background: stored.received ? "#fff" : "#f8fafc" }} />
                           {/* Rate Relief Requested */}
                           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
                             <input type="checkbox" checked={!!stored.rrRequested}
@@ -3769,15 +3858,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </span>
                           </label>
                           {/* Negotiated Renewal % */}
-                          <div style={{ display: "flex", alignItems: "center" }}>
-                            <input type="number" value={stored.negotiatedPct || ""}
-                              onChange={e => setAnc("negotiatedPct", e.target.value)}
-                              placeholder="0"
-                              style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, textAlign: "right",
-                                background: stored.negotiatedPct ? "#f0fdf4" : "#fff",
-                                borderColor: stored.negotiatedPct ? "#86efac" : undefined }} />
-                            <span style={{ marginLeft: 2, fontSize: 11, color: "#64748b", flexShrink: 0 }}>%</span>
-                          </div>
+                          <PercentInput value={stored.negotiatedPct || ""} onChange={v => setAnc("negotiatedPct", v)}
+                            placeholder="0.00"
+                            style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, width: "100%",
+                              background: stored.negotiatedPct ? "#f0fdf4" : "#fff",
+                              borderColor: stored.negotiatedPct ? "#86efac" : undefined }} />
                         </div>
                       );
                     })}
@@ -9101,13 +9186,15 @@ function CarriersView({ carriers, onSave, currentUser }) {
                       </div>
                     )}
                     {(carrier.contacts || []).length > 0 && (
-                      <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {(carrier.contacts || []).slice(0, 4).map((ct, i) => (
-                          <span key={i} style={{ fontSize: 10, padding: "2px 9px", borderRadius: 99,
-                            background: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}>
-                            👤 {ct.role}: {ct.name}{ct.email ? ` · ${ct.email}` : ""}{ct.phone ? ` · ${ct.phone}` : ""}
-                            {ct.market && ct.market !== "Any" ? ` (${ct.market})` : ""}
-                          </span>
+                          <div key={i} style={{ fontSize: 10, padding: "5px 10px", borderRadius: 8,
+                            background: "#e0f2fe", color: "#0369a1", border: "1px solid #bae6fd" }}>
+                            <div style={{ fontWeight: 700 }}>👤 {ct.role}: {ct.name}</div>
+                            {ct.email && <div style={{ opacity: 0.85, marginTop: 1 }}>✉️ {ct.email}</div>}
+                            {ct.phone && <div style={{ opacity: 0.85, marginTop: 1 }}>📞 {ct.phone}</div>}
+                            {ct.market && ct.market !== "Any" && <div style={{ opacity: 0.7, marginTop: 1, fontStyle: "italic" }}>{ct.market}</div>}
+                          </div>
                         ))}
                         {(carrier.contacts || []).length > 4 && (
                           <span style={{ fontSize: 10, color: "#94a3b8", padding: "2px 6px" }}>+{(carrier.contacts||[]).length - 4} more</span>
@@ -9281,27 +9368,37 @@ function CarriersView({ carriers, onSave, currentUser }) {
               )}
               {(editData.contacts || []).map((contact, ci) => (
                 <div key={ci} style={{ background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px", marginBottom: 8 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6, marginBottom: 6 }}>
+                  {/* Row 1: Role + ✕ */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 6 }}>
                     <select value={contact.role || "Sales Representative"}
                       onChange={e => { const c = [...(editData.contacts||[])]; c[ci] = { ...c[ci], role: e.target.value }; setEditData(p => ({ ...p, contacts: c })); }}
                       style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
                       {CARRIER_CONTACT_ROLES.map(r => <option key={r}>{r}</option>)}
                     </select>
-                    <input value={contact.name || ""} placeholder="Full Name"
-                      onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],name:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
                     <button type="button" onClick={() => setEditData(p => ({ ...p, contacts: p.contacts.filter((_, i) => i !== ci) }))}
                       style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
                         background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
                   </div>
+                  {/* Row 2: Full Name (full width) */}
+                  <input value={contact.name || ""} placeholder="Full Name"
+                    onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],name:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                    style={{ ...inputStyle, marginTop: 0, marginBottom: 6, fontSize: 11, padding: "4px 8px", width: "100%", boxSizing: "border-box" }} />
+                  {/* Row 3: Email + Phone (side by side, phone below name) */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
-                    <input value={contact.email || ""} placeholder="email@carrier.com" type="email"
-                      onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],email:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                    <input value={contact.phone || ""} placeholder="Phone number"
-                      onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],phone:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 3 }}>Email</div>
+                      <input value={contact.email || ""} placeholder="email@carrier.com" type="email"
+                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],email:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 3 }}>Phone</div>
+                      <input value={contact.phone || ""} placeholder="(312) 555-0000"
+                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],phone:formatPhone(e.target.value)}; setEditData(p=>({...p,contacts:c})); }}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+                    </div>
                   </div>
+                  {/* Row 4: Market / Employer / Funding */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                     <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Market Segment
                       <select value={contact.market || "Any"}
