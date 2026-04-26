@@ -7770,12 +7770,23 @@ const DEFAULT_CARRIERS_DATA = [
     ],
     planLimits: [], benefitDetails: "",
     contacts: [
-      { role: "Sales Representative", name: "Marc Jackson", email: "Marc_Jackson@glic.com", phone: "(630) 235-2471", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Sales 25-999 eligible lives." },
-      { role: "Sales Representative", name: "Vincenzo Marando", email: "vincenzo_marando@glic.com", phone: "(610) 570-2555", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Sales 2-24 eligible lives." },
-      { role: "Account Manager", name: "Morgan Smith", email: "Morgan_Smith@glic.com", phone: "(312) 279-2220", market: "Large", employerType: "Any", fundingType: "Any", notes: "Client Manager 100+. Renewals & plan option quotes." },
-      { role: "Account Manager", name: "Maria Robledo", email: "maria_m_robledo@glic.com", phone: "(312) 279-2280", market: "ACA", employerType: "Any", fundingType: "Any", notes: "Client Manager Associate 2-99 lives." },
-      { role: "Service Team", name: "Brianna Bryant", email: "b_bryant@glic.com", phone: "(800) 627-4200", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Service Manager. New day-to-day contact as of 5/1/25." },
-      { role: "Service Team", name: "Greater Chicago Service", email: "GreaterChicagoService@glic.com", phone: "(800) 996-4779", market: "Any", employerType: "Any", fundingType: "Any", notes: "Day-to-Day Support 2-99 eligible lives." },
+      { role: "Sales Representative",  name: "Raquel Konopacki",  email: "raquel_konopacki@bcbsil.com",    phone: "(630) 824-6830", market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Sr. Sales Exec 2-150. Led by Barb Kaufman." },
+      { role: "Sales Representative",  name: "Emily Lindberg",     email: "emily_lindberg@bcbsil.com",      phone: "",               market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Marketing Service Rep, supports Raquel." },
+      { role: "Sales Representative",  name: "Heather Cole",       email: "heather_cole@bcbsil.com",        phone: "(630) 824-6832", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Sr. Sales Rep 151+ enrolled." },
+      { role: "Sales Representative",  name: "Alivia Doyle",       email: "alivia_doyle@bcbsil.com",        phone: "(630) 824-5307", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Marketing Service Rep, supports Heather." },
+      { role: "Account Manager",       name: "Peggy Shipman",      email: "Peggy_Shipman@bcbsil.com",       phone: "(630) 824-5192", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "AE MM (51-150). Assigned Aug 2021." },
+      { role: "Account Manager",       name: "Brano Gallik",       email: "brano_gallik@bcbsil.com",        phone: "(630) 824-6655", market: "Large",      employerType: "Any", fundingType: "Any", notes: "AE Large Group (150+)." },
+      { role: "Account Manager",       name: "Daniel Allegretti",  email: "daniel_allegretti@bcbsil.com",   phone: "",               market: "Large",      employerType: "Any", fundingType: "Any", notes: "AE Large Group (Health Care Providers)." },
+      { role: "Account Manager",       name: "Stephanie Kepuraitis",email: "kepuraitiss@bcbsil.com",         phone: "(630) 824-5515", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Major Account Executive, Large Group." },
+      { role: "Service Team",          name: "ILSGAM",             email: "ilsgam@bcbsil.com",               phone: "",               market: "Any",        employerType: "Any", fundingType: "Any", notes: "Customer Service." },
+      { role: "General Contact",       name: "Brian Moore",        email: "MOOREBF@BCBSIL.COM",              phone: "(630) 824-5555", market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Small Group Manager. Boss: John Collins (collinsj@bcbsil.com)." },
+      { role: "General Contact",       name: "Mike Abbene",        email: "Michael_abbene@bcbsil.com",       phone: "(630) 824-6338", market: "Any",        employerType: "Any", fundingType: "Any", notes: "VP, Sales & Client Management." },
+      { role: "General Contact",       name: "Jim Schuerman",      email: "schuermanj1@bcbsil.com",          phone: "(630) 824-5188", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Director of Sales & MM Account Management." },
+      { role: "General Contact",       name: "George Papadatos",   email: "george_papadatos@bcbsil.com",     phone: "(630) 824-5121", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Director IL Group Market Sales (100+)." },
+      { role: "General Contact",       name: "Nancy Chaidez",      email: "CHAIDEZN@BCBSIL.COM",             phone: "(630) 824-5406", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Sr. Manager, Account Management IL Group Markets." },
+      { role: "General Contact",       name: "Kurt Reitzner",      email: "kurt_reitzner@bcbsil.com",        phone: "(630) 824-5130", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Senior Manager of MM AMs." },
+      { role: "General Contact",       name: "Barb Kauffman",      email: "kaufmannb@bcbsil.com",            phone: "(630) 824-5510", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Sales Manager of MM Sales Reps." },
+      { role: "General Contact",       name: "Erin Doyle",         email: "doylee@bcbsil.com",               phone: "",               market: "Large",      employerType: "Any", fundingType: "Any", notes: "VP, Illinois Local Account Management." },
     ],
   },
   { id: "c_cigna",   name: "Cigna",   type: "National", category: "Medical",
@@ -7792,7 +7803,24 @@ const DEFAULT_CARRIERS_DATA = [
       { label: "One Health HMO (LF)", value: "25+ eligible / 20+ enrolled (eff. 7/1/2026+)" },
       { label: "Quote Turnaround", value: "1-2 weeks" },
       { label: "ACA FI Quote", value: "N/A" },
-    ] },
+    ],
+    commissionRules: [
+      { benefit: "Medical", segment: "ACA",        fundingMethod: "Fully Insured", type: "Flat %", amount: "5", notes: "FI Medical" },
+      { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Fully Insured", type: "Flat %", amount: "5", notes: "FI Medical" },
+      { benefit: "Dental",  segment: "All",        fundingMethod: "All",           type: "Flat %", amount: "10", notes: "" },
+      { benefit: "Vision",  segment: "All",        fundingMethod: "All",           type: "Flat %", amount: "10", notes: "" },
+    ],
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative", name: "Katie (Hackett) Little", email: "Katherine.Little@cigna.com", phone: "(312) 802-2717", market: "Any", employerType: "Any", fundingType: "Any", notes: "New Business Manager 25-500 eligible. LF 25+, FI available 51+." },
+      { role: "Account Manager",      name: "Brittany Barrett",        email: "Brittany.Barrett@cigna.com",            phone: "(312) 507-1330", market: "Any", employerType: "Any", fundingType: "Any", notes: "Senior Client Manager." },
+      { role: "Service Team",         name: "Carin Worby",             email: "Carin.Worby@cigna.com",                 phone: "(860) 902-0418", market: "Any", employerType: "Any", fundingType: "Any", notes: "Platinum Service Lead." },
+      { role: "Service Team",         name: "Karina Thompson",         email: "Karina.Martinez@cignahealthcare.com",   phone: "",               market: "Any", employerType: "Any", fundingType: "Any", notes: "Platinum Service Lead. Use instead of Carin going forward." },
+      { role: "Sales Representative", name: "Josh Suber",              email: "josh_Surber@NewYorkLife.com",           phone: "(815) 953-6012", market: "Any", employerType: "Any", fundingType: "Any", notes: "Ancillary Sales Rep. Katie filters RFPs to him; contact directly for specific ancillary questions." },
+      { role: "General Contact",      name: "Katie Stewart",           email: "Kathleen.stewart@cigna.com",            phone: "",               market: "Any", employerType: "Any", fundingType: "Any", notes: "Regional VP. Immediate New Business Issues." },
+      { role: "General Contact",      name: "Eileen Clancy",           email: "Eileen.Clancy@Cigna.com",               phone: "(312) 648-3758", market: "Any", employerType: "Any", fundingType: "Any", notes: "Director of Client Management." },
+    ],
+  },
   { id: "c_uhc",     name: "UHC",     type: "National", category: "Medical",
     segments: ["ACA","Mid-Market","Large"], products: ["Medical"],
     funding: ["Fully Insured","Level-Funded","Self-Funded"],
@@ -7824,10 +7852,13 @@ const DEFAULT_CARRIERS_DATA = [
     ],
     planLimits: [], benefitDetails: "",
     contacts: [
-      { role: "Sales Representative", name: "Katie (Hackett) Little", email: "Katherine.Little@cigna.com", phone: "(312) 802-2717", market: "Any", employerType: "Any", fundingType: "Any", notes: "New Business Manager 25-500 eligible. LF 25+, FI 51+." },
-      { role: "Account Manager", name: "Brittany Barrett", email: "Brittany.Barrett@cigna.com", phone: "(312) 507-1330", market: "Any", employerType: "Any", fundingType: "Any", notes: "Senior Client Manager." },
-      { role: "Service Team", name: "Karina Thompson", email: "Karina.Martinez@cignahealthcare.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Platinum Service Lead. Use for day-to-day service issues with group # in subject." },
-      { role: "General Contact", name: "Eileen Clancy", email: "Eileen.Clancy@Cigna.com", phone: "(312) 648-3758", market: "Any", employerType: "Any", fundingType: "Any", notes: "Director of Client Management." },
+      { role: "Sales Representative", name: "Steve Stall / Robin Przybylski", email: "sstall@embenefits.com", phone: "(630) 238-2917", market: "ACA", employerType: "Any", fundingType: "Any", notes: "2-50 via Euclid. John Pietrowski sales rep working with Euclid." },
+      { role: "Sales Representative", name: "Greg Ott", email: "gregory_ott@uhc.com", phone: "(312) 453-1706", market: "Large", employerType: "Any", fundingType: "Any", notes: "126+ lives." },
+      { role: "Sales Representative", name: "Brett Helms", email: "brett_helms@uhc.com", phone: "(312) 348-3826", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Specialty / Non-Med 51-5000. Cell: 608-312-9415." },
+      { role: "Account Manager", name: "Dawn Kemp", email: "dkemp@embenefits.com", phone: "(630) 238-2932", market: "Any", employerType: "Any", fundingType: "Any", notes: "VP & UHC Team lead. Manages all renewals." },
+      { role: "Account Manager", name: "Sarah Zuhlke", email: "szuhlke@embenefits.com", phone: "(630) 238-2937", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Manager for new case UHC submissions." },
+      { role: "Service Team", name: "Amber Loredo", email: "aloredo@embenefits.com", phone: "(630) 571-6173", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Coordinator for UHC billing, claims, customer service." },
+      { role: "Service Team", name: "Ashley Alexander", email: "ashley_alexander@uhc.com", phone: "(763) 348-5065", market: "Any", employerType: "Any", fundingType: "Any", notes: "All Service." },
     ],
   },
   { id: "c_anthem",  name: "Anthem",  type: "National", category: "Medical",
@@ -7840,7 +7871,25 @@ const DEFAULT_CARRIERS_DATA = [
     segments: ["ACA","Mid-Market","Large"],
     products: ["Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"],
     funding: ["Fully Insured"], states: [], notes: "", requirements: [],
-    planLimits: [], contacts: [], benefitDetails: "",
+    planLimits: [], benefitDetails: "",
+    contacts: [
+      { role: "Sales Representative",  name: "Marc Jackson",       email: "Marc_Jackson@glic.com",           phone: "(630) 235-2471", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Sales 25-999 eligible lives. Replaced Andrew Smith Feb 2022." },
+      { role: "Sales Representative",  name: "Vincenzo Marando",   email: "vincenzo_marando@glic.com",       phone: "(610) 570-2555", market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Sales 2-24 eligible lives. Replaced Mark Phipps." },
+      { role: "Sales Representative",  name: "Audrey Devries",     email: "audrey_devries@glic.com",         phone: "(312) 279-2206", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Sales Support Analyst 25-999. New business enrollment material; case profile assistance." },
+      { role: "Account Manager",       name: "Morgan Smith",       email: "Morgan_Smith@glic.com",           phone: "(312) 279-2220", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Client Manager 100+ eligible lives. Renewals & plan option quotes." },
+      { role: "Account Manager",       name: "Maria Robledo",      email: "maria_m_robledo@glic.com",        phone: "(312) 279-2280", market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Client Manager Associate 2-99 lives. Renewals & plan option quotes." },
+      { role: "Account Manager",       name: "Sarah Labellarte",   email: "sarah_labellarte@glic.com",       phone: "(312) 279-2256", market: "Mid-Market", employerType: "Any", fundingType: "Any", notes: "Client Manager Associate 25-99 eligible. Note: no longer at Guardian as of 2/1/2025. Contact Maria Robledo." },
+      { role: "Account Manager",       name: "Debbie Kincaid",     email: "Deborah_Kincaid@glic.com",        phone: "(610) 807-7392", market: "ACA",        employerType: "Any", fundingType: "Any", notes: "Renewal 2-24 eligible lives. Rate relief, add lines, amend plan w/ premium change." },
+      { role: "Service Team",          name: "Brianna Bryant",     email: "b_bryant@glic.com",               phone: "(800) 627-4200", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Account Service Manager. New day-to-day service contact as of 5/1/25." },
+      { role: "Service Team",          name: "Erin Pierce",        email: "e_pierce@glic.com",               phone: "(855) 423-6534", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Day-to-Day Support 2-1,000 eligible lives." },
+      { role: "Service Team",          name: "Taylor Johnson",     email: "ASM@glic.com",                    phone: "(216) 654-1926", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Day-to-Day Support 500+ eligible lives. Also: 800-531-9047." },
+      { role: "Service Team",          name: "Beth Hopfensperger", email: "beth_hopfensperger@glic.com",     phone: "(920) 100-1310", market: "Large",      employerType: "Any", fundingType: "Any", notes: "Day-to-Day Support 100+ eligible lives." },
+      { role: "Service Team",          name: "Greater Chicago Service", email: "GreaterChicagoService@glic.com", phone: "(800) 996-4779", market: "ACA",   employerType: "Any", fundingType: "Any", notes: "Dedicated Customer Response Team 2-99 eligible lives." },
+      { role: "Service Team",          name: "General Guardian CRU", email: "cru@glic.com",                  phone: "(800) 627-4200", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Billing, claims, Guardian Anytime, commission info, amendments not involving premium changes." },
+      { role: "General Contact",       name: "Ryan Dubiel",        email: "ryan_dubiel@glic.com",            phone: "(312) 279-2235", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Regional Sales Director." },
+      { role: "General Contact",       name: "Matt McAnaney",      email: "mmcanane@glic.com",               phone: "(312) 279-5133", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Sr. Regional Sales Director. Cell: 315-481-7094." },
+      { role: "General Contact",       name: "Karen Berenson",     email: "karen_berenson@glic.com",         phone: "(312) 279-5125", market: "Any",        employerType: "Any", fundingType: "Any", notes: "Regional Service Manager. Cell: 312-246-0783." },
+    ],
     commissionRules: [
       { benefit: "Dental",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
       { benefit: "Vision",         segment: "All", fundingMethod: "All", type: "Flat %", amount: "10", notes: "" },
@@ -7858,6 +7907,10 @@ const DEFAULT_CARRIERS_DATA = [
       { role: "Sales Representative", name: "Marji Hamann", email: "Hamann.Marji@principal.com", phone: "(630) 430-8850", market: "Any", employerType: "Any", fundingType: "Any", notes: "Sales Rep. RFPs." },
       { role: "Account Manager", name: "Michael Osterhout", email: "osterhout.michael@principal.com", phone: "(630) 705-0665", market: "Any", employerType: "Any", fundingType: "Any", notes: "Client Relationship Consultant. cc on all RFPs." },
       { role: "Account Manager", name: "Joe Hunt", email: "hunt.joe@principal.com", phone: "(630) 874-8520", market: "Any", employerType: "Any", fundingType: "Any", notes: "Director of Account Management." },
+      { role: "Sales Representative", name: "Mary Scherer", email: "Scherer.Mary@principal.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Copy on all RFPs." },
+      { role: "Sales Representative", name: "Joe Michalski", email: "michalski.joseph@principal.com", phone: "(630) 874-0096 x244", market: "Any", employerType: "Any", fundingType: "Any", notes: "cc on all RFPs. Note: no longer works on Marji's team." },
+      { role: "Account Manager", name: "Ben Salman", email: "salman.ben@principal.com", phone: "(630) 874-9292", market: "Any", employerType: "Any", fundingType: "Any", notes: "Account Executive - Group Benefits." },
+      { role: "Account Manager", name: "Rebecca Tomillo", email: "tomillo.rebecca@principal.com", phone: "", market: "Any", employerType: "Any", fundingType: "Any", notes: "Client Relationship Consultant." },
       { role: "Billing Contact", name: "Exclusive Partner", email: "exclusivepartner@principal.com", phone: "(866) 341-6588", market: "Any", employerType: "Any", fundingType: "Any", notes: "Stumm is a Principal Exclusive Partner. Billing, Member Info, Forms, Claims." },
     ],
     commissionRules: [
@@ -8249,15 +8302,11 @@ useEffect(() => {
           if (!defaults) return c;
           return {
             ...c,
-            commissionRules: (c.commissionRules && c.commissionRules.length > 0)
-              ? c.commissionRules
-              : (defaults.commissionRules || []),
-            planLimits: (c.planLimits && c.planLimits.length > 0)
-              ? c.planLimits
-              : (defaults.planLimits || []),
-            contacts: (c.contacts && c.contacts.length > 0)
-              ? c.contacts
-              : (defaults.contacts || []),
+            // Always apply contacts and commissionRules from defaults —
+            // overrides stale Supabase data until user explicitly edits them
+            contacts:        (defaults.contacts       || []).length > 0 ? defaults.contacts       : (c.contacts       || []),
+            commissionRules: (defaults.commissionRules|| []).length > 0 ? defaults.commissionRules: (c.commissionRules|| []),
+            planLimits:      (c.planLimits && c.planLimits.length > 0)   ? c.planLimits            : (defaults.planLimits|| []),
           };
         });
         setCarriersDataRaw(merged);
