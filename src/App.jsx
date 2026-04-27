@@ -398,6 +398,20 @@ function nextBizDay(dateStr) {
   return d.toISOString().split("T")[0];
 }
 
+// Add N business days to a date string, skipping weekends and federal holidays
+function addBizDays(dateStr, n) {
+  if (!dateStr) return dateStr;
+  const d = new Date(dateStr + "T12:00:00");
+  const holidays = { ...Object.fromEntries([...federalHolidays(d.getFullYear())].map(h => [h, true])),
+                     ...Object.fromEntries([...federalHolidays(d.getFullYear() + 1)].map(h => [h, true])) };
+  let added = 0;
+  while (added < n) {
+    d.setDate(d.getDate() + 1);
+    if (d.getDay() !== 0 && d.getDay() !== 6 && !holidays[d.toISOString().split("T")[0]]) added++;
+  }
+  return d.toISOString().split("T")[0];
+}
+
 // Move date to the PREVIOUS business day (for "due before" dates)
 function prevBizDay(dateStr) {
   if (!dateStr) return dateStr;
@@ -437,6 +451,7 @@ function getAnchorDate(anchorId, client) {
     case "decision_receipt": return client.decisionsReceivedDate || "";
     case "oe_start":         return (client.openEnrollment || {}).oeStartDate || "";
     case "oe_end":           return (client.openEnrollment || {}).oeEndDate || "";
+    case "transaction_request": return ""; // resolved per-transaction at creation time
     case "plan_year_end": {
       if (!client.renewalDate) return "";
       const d = new Date(client.renewalDate + "T12:00:00");
@@ -3081,7 +3096,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             })()}
                             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: plans.length > 0 ? 10 : 4 }}>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase", flexShrink: 0 }}>
-                                # of Plans
+                                # of Plans Offered
                               </div>
                               <input
                                 type="text" inputMode="numeric"
@@ -5951,7 +5966,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   const newTxn = {
                     id: Date.now(), label: text ? text.slice(0, 120) : "Enrollment Change",
                     memberName: "", changeType: "", receivedDate: today,
-                    status: "Not Started", assignee: "", dueDate: "", completedDate: "",
+                    status: "Not Started", assignee: getCoordinator(data.team),
+                    dueDate: addBizDays(today, 3), completedDate: "",
                     notes: text || "", followUps: [],
                   };
                   setData(p => ({ ...p, transactions: [...(p.transactions||[]), newTxn] }));
@@ -5967,8 +5983,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   ...p,
                   transactions: [...(p.transactions||[]), {
                     id: Date.now(), label: "", memberName: "", changeType: "",
-                    receivedDate: today, status: "Not Started", assignee: "",
-                    dueDate: "", completedDate: "", notes: "", followUps: [],
+                    receivedDate: today, status: "Not Started",
+                    assignee: getCoordinator(p.team),
+                    dueDate: addBizDays(today, 3), completedDate: "", notes: "", followUps: [],
                   }],
                 }));
               }} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -5989,13 +6006,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     <label style={{ ...labelStyle, marginTop: 0 }}>
                       Member Name
                       <input value={txn.memberName||""} placeholder="Employee / Dependent"
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,memberName:e.target.value}:t) }))}
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,memberName:e.target.value,label:[e.target.value,t.changeType].filter(Boolean).join(' – ')}:t) }))}
                         style={{ ...inputStyle, marginTop: 3 }} />
                     </label>
                     <label style={{ ...labelStyle, marginTop: 0 }}>
                       Change Type
                       <select value={txn.changeType||""}
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,changeType:e.target.value}:t) }))}
+                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,changeType:e.target.value,label:[t.memberName,e.target.value].filter(Boolean).join(' – ')}:t) }))}
                         style={{ ...inputStyle, marginTop: 3 }}>
                         <option value="">— Select —</option>
                         {["New Enrollment","Termination","Qualifying Event","Dependent Add","Dependent Remove","Address Change","Plan Change","Beneficiary Change","COBRA","Other"].map(o=><option key={o}>{o}</option>)}
@@ -7589,6 +7606,7 @@ const DDR_ANCHORS = [
   { id: "oe_start",          label: "OE Start Date" },
   { id: "oe_end",            label: "OE End Date" },
   { id: "plan_year_end",     label: "Plan Year End" },
+  { id: "transaction_request", label: "Transaction Request Date" },
 ];
 
 const DDR_STORAGE_KEY = "benefittrack_ddr_v1";
@@ -7602,6 +7620,7 @@ const DEFAULT_DUE_DATE_RULES = [
   { id: "medicare",     label: "Medicare Part D: Oct 15 before plan year",   anchor: "renewal",       direction: "before", days: null, builtin: true },
   { id: "pcori",        label: "PCORI: July 31 after plan year",             anchor: "plan_year_end", direction: "after", days: null, builtin: true },
   { id: "form5500",     label: "5500: End of 7th month after plan year",     anchor: "plan_year_end", direction: "after", days: null, builtin: true },
+  { id: "txn_plus_3",    label: "3 business days after transaction request",   anchor: "transaction_request", direction: "after", days: 3,    builtin: true },
 ];
 
 function loadDueDateRules_DEPRECATED() {
@@ -10361,6 +10380,15 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Miscellaneous" || categoryFilter === "Miscellaneous") {
     (c.miscTasks || []).forEach((t, i) => push(t.title || "Unnamed", "Miscellaneous", t, "miscTasks", null, i));
   }
+  // Transactions
+  if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Transactions") {
+    (c.transactions || []).forEach((t, i) => {
+      const title = t.memberName && t.changeType
+        ? `${t.memberName} – ${t.changeType}`
+        : t.memberName || t.changeType || t.label || "Unnamed Transaction";
+      push(title, "Transactions", t, "transactions", null, i);
+    });
+  }
   // Ongoing
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Ongoing") {
     const medCarrierC  = (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || "";
@@ -10709,7 +10737,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
           <span style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", letterSpacing: "1px",
             textTransform: "uppercase", whiteSpace: "nowrap", minWidth: 48 }}>Task</span>
           {[
-            { val: ovCat,      set: setOvCat,      opts: ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing"], placeholder: "All Categories" },
+            { val: ovCat,      set: setOvCat,      opts: ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing","Transactions"], placeholder: "All Categories" },
             { val: ovAssignee, set: setOvAssignee, opts: uniqueAssignees, placeholder: "All Assignees" },
             { val: ovStatus,   set: setOvStatus,   opts: ["Not Started","In Progress"], placeholder: "All Statuses" },
           ].map(({ val, set, opts, placeholder }) => (
@@ -10846,6 +10874,10 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                                   updated.renewalTasksAuto = { ...(updated.renewalTasksAuto || {}), [t.taskId]: { ...(updated.renewalTasksAuto?.[t.taskId] || {}), ...fields } };
                                 } else if (t.group === "ongoingTasks") {
                                   updated.ongoingTasks = { ...(updated.ongoingTasks || {}), [t.taskId]: { ...(updated.ongoingTasks?.[t.taskId] || {}), ...fields } };
+                                } else if (t.group === "transactions") {
+                                  const arr = [...(updated.transactions || [])];
+                                  arr[t.arrayIndex] = { ...arr[t.arrayIndex], ...fields };
+                                  updated.transactions = arr;
                                 }
                                 onUpdateTask(updated);
                               }
