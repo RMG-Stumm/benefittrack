@@ -1,6 +1,6 @@
 import React from "react";
 import { useState, useMemo, useEffect } from "react";
-import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB } from './db.js';
+import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB, insertAuditLog, fetchAuditLogs } from './db.js';
 import { supabase } from './supabase.js';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
@@ -139,32 +139,45 @@ function stripNumeric(formatted) {
 
 // Reusable currency input — displays formatted, stores raw
 function CurrencyInput({ value, onChange, placeholder, style, prefix = "$" }) {
-  const [display, setDisplay] = React.useState(value ? formatCurrency(String(value)) : "");
+  const [focused, setFocused] = React.useState(false);
+  const [raw, setRaw] = React.useState(value != null && value !== "" ? String(value) : "");
+
+  // Sync raw when parent changes value externally (not during focus)
   React.useEffect(() => {
-    // Sync if parent changes the value externally
-    if (value === "" || value === null || value === undefined) setDisplay("");
-  }, [value]);
+    if (!focused) {
+      setRaw(value != null && value !== "" ? String(value) : "");
+    }
+  }, [value, focused]);
+
+  const displayValue = focused
+    ? raw
+    : raw && !isNaN(parseFloat(raw))
+      ? parseFloat(raw).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : raw;
+
   return (
     <div style={{ display: "flex", alignItems: "center" }}>
       <span style={{ padding: "6px 8px", background: "#f1f5f9", border: "1.5px solid #e2e8f0",
         borderRight: "none", borderRadius: "8px 0 0 8px", fontSize: 12, color: "#475569", fontWeight: 600, flexShrink: 0 }}>{prefix}</span>
       <input
         type="text" inputMode="decimal"
-        value={display}
+        value={displayValue}
         placeholder={placeholder || "0.00"}
+        onFocus={() => setFocused(true)}
         onChange={e => {
-          const raw = e.target.value.replace(/[^0-9.]/g, "");
-          setDisplay(formatCurrency(raw));
-          onChange(raw);
+          const cleaned = e.target.value.replace(/[^0-9.]/g, "");
+          setRaw(cleaned);
+          onChange(cleaned);
         }}
-        onBlur={e => {
-          const raw = stripNumeric(e.target.value);
-          if (raw) {
-            const num = parseFloat(raw);
-            if (!isNaN(num)) {
-              setDisplay(num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-              onChange(String(num));
-            }
+        onBlur={() => {
+          setFocused(false);
+          const n = parseFloat(raw);
+          if (!isNaN(n)) {
+            const fixed = n.toFixed(2);
+            setRaw(fixed);
+            onChange(fixed);
+          } else if (raw === "") {
+            onChange("");
           }
         }}
         style={{ ...style, borderRadius: "0 8px 8px 0" }}
@@ -451,7 +464,6 @@ function getAnchorDate(anchorId, client) {
     case "decision_receipt": return client.decisionsReceivedDate || "";
     case "oe_start":         return (client.openEnrollment || {}).oeStartDate || "";
     case "oe_end":           return (client.openEnrollment || {}).oeEndDate || "";
-    case "transaction_request": return ""; // resolved per-transaction at creation time
     case "plan_year_end": {
       if (!client.renewalDate) return "";
       const d = new Date(client.renewalDate + "T12:00:00");
@@ -1013,7 +1025,53 @@ function SaveButton({ onSave }) {
 
 // ── Client Form Modal ─────────────────────────────────────────────────────────
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData }) {
+
+// Reusable follow-up block — renders inside any task card
+function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove }) {
+  return (
+    <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #e2e8f0" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px" }}>
+          Follow-ups {followUps.length > 0 ? `(${followUps.length})` : ""}
+        </span>
+        <button type="button" onClick={onAdd}
+          style={{ fontSize: 10, fontWeight: 700, color: "#3b82f6", background: "#dbeafe",
+            border: "none", borderRadius: 5, padding: "2px 7px", cursor: "pointer", fontFamily: "inherit" }}>
+          + Follow-up
+        </button>
+      </div>
+      {followUps.map((fu, fi) => (
+        <div key={fu.id || fi} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+          <input type="date" value={fu.date || ""}
+            onChange={e => onChangeDate(fi, e.target.value)}
+            style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "3px 6px",
+              fontSize: 11, color: "#0f172a", background: "#fff", fontFamily: "inherit",
+              width: 140, flexShrink: 0 }} />
+          <input type="text" value={fu.note || ""}
+            onChange={e => onChangeNote(fi, e.target.value)}
+            placeholder="Follow-up note..."
+            style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "3px 6px",
+              fontSize: 11, color: "#0f172a", background: "#fff", fontFamily: "inherit", flex: 1 }} />
+          <button type="button" onClick={() => onRemove(fi)}
+            style={{ padding: "3px 6px", borderRadius: 5, fontSize: 10, border: "1.5px solid #fca5a5",
+              background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser }) {
+  // Helper: fire-and-forget audit log entry
+  function logChange(p, category, taskLabel, field, oldValue, newValue) {
+    if (oldValue === newValue) return;
+    insertAuditLog({
+      clientId: p.id, clientName: p.name,
+      userName: currentUser?.name || "Unknown", userRole: currentUser?.role || "",
+      category, taskLabel, field,
+      oldValue: oldValue ?? "", newValue: newValue ?? "",
+    });
+  }
   const [data, setData] = useState(() => {
     const base = JSON.parse(JSON.stringify(client));
     return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
@@ -1253,19 +1311,31 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   }
 
   // setTask updates a single field within a task object
-  function setTask(group, id, field, val) {
+  function setTask(group, id, field, val, taskLabel, category) {
     setData(p => {
       const existing = p[group]?.[id];
       const base = (!existing || typeof existing === "string")
         ? { status: existing || "Not Started", assignee: "", dueDate: "" }
         : { ...existing };
-      return {
-        ...p,
-        [group]: {
-          ...p[group],
-          [id]: { ...base, [field]: val },
-        },
-      };
+      // Capture plannedDueDate on first set
+      const plannedDueDate = field === "dueDate" && !base.plannedDueDate && val
+        ? val : base.plannedDueDate;
+      const updated = { ...base, [field]: val, ...(plannedDueDate ? { plannedDueDate } : {}) };
+      // Audit log for tracked fields
+      if (["status","dueDate","assignee","completedDate"].includes(field) && base[field] !== val) {
+        insertAuditLog({
+          clientId:   p.id,
+          clientName: p.name,
+          userName:   currentUser?.name || "Unknown",
+          userRole:   currentUser?.role || "",
+          category:   category || group,
+          taskLabel:  taskLabel || id,
+          field,
+          oldValue:   base[field] ?? "",
+          newValue:   val ?? "",
+        });
+      }
+      return { ...p, [group]: { ...p[group], [id]: updated } };
     });
   }
 
@@ -1316,14 +1386,30 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
     return { status: t.status || "Not Started", assignee: t.assignee || defaultAssignee, dueDate: t.dueDate || "", completedDate: t.completedDate || "" };
   }
 
-  function setOETask(taskId, field, val) {
+  function setOETask(taskId, field, val, taskLabel) {
     setData(p => {
       const prev = p.openEnrollment || {};
       const existing = prev.tasks?.[taskId];
       const base = (!existing || typeof existing === "string")
         ? { status: existing || "Not Started", assignee: "", dueDate: "", completedDate: "" }
         : { ...existing };
-      return { ...p, openEnrollment: { ...prev, tasks: { ...(prev.tasks || {}), [taskId]: { ...base, [field]: val } } } };
+      const plannedDueDate = field === "dueDate" && !base.plannedDueDate && val
+        ? val : base.plannedDueDate;
+      const updated = { ...base, [field]: val, ...(plannedDueDate ? { plannedDueDate } : {}) };
+      if (["status","dueDate","assignee","completedDate"].includes(field) && base[field] !== val) {
+        insertAuditLog({
+          clientId:   p.id,
+          clientName: p.name,
+          userName:   currentUser?.name || "Unknown",
+          userRole:   currentUser?.role || "",
+          category:   "Open Enrollment",
+          taskLabel:  taskLabel || taskId,
+          field,
+          oldValue:   base[field] ?? "",
+          newValue:   val ?? "",
+        });
+      }
+      return { ...p, openEnrollment: { ...prev, tasks: { ...(prev.tasks || {}), [taskId]: updated } } };
     });
   }
 
@@ -3220,27 +3306,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                             placeholder="0"
                                             style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "center", width: "100%" }} />
                                           {/* Rate / PEPM */}
-                                          <div style={{ display: "flex", alignItems: "center" }}>
-                                            <span style={{ padding: "5px 7px", background: "#f1f5f9",
-                                              border: "1.5px solid #e2e8f0", borderRight: "none",
-                                              borderRadius: "7px 0 0 7px", fontSize: 12, color: "#64748b", fontWeight: 600 }}>$</span>
-                                            <input type="text" inputMode="decimal"
-                                              value={(() => {
-                                                const raw = (pl.rates || {})[key] || "";
-                                                if (!raw) return "";
-                                                const n = parseFloat(raw);
-                                                if (isNaN(n)) return raw;
-                                                return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                              })()}
-                                              onChange={e => updatePlanRate(idx, key, e.target.value.replace(/[^0-9.]/g, ""))}
-                                              onBlur={e => {
-                                                const n = parseFloat(e.target.value.replace(/[^0-9.,]/g,"").replace(/,/g,""));
-                                                if (!isNaN(n)) updatePlanRate(idx, key, n.toFixed(2));
-                                              }}
-                                              placeholder="0.00"
-                                              style={{ ...inputStyle, marginTop: 0, borderRadius: "0 7px 7px 0",
-                                                fontSize: 12, padding: "5px 8px", flex: 1, textAlign: "right" }} />
-                                          </div>
+                                          <CurrencyInput
+                                            value={(pl.rates || {})[key] || ""}
+                                            onChange={v => updatePlanRate(idx, key, v)}
+                                            placeholder="0.00"
+                                            style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", flex: 1, textAlign: "right" }} />
                                           {/* Monthly Total */}
                                           <div style={{ fontSize: 12, fontWeight: 700,
                                             color: monthlyTotal > 0 ? "#166534" : "#94a3b8",
@@ -4236,6 +4306,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                         </div>
+                        {/* Follow-ups */}
+                        <FollowUpBlock
+                          followUps={(task.followUps||[])}
+                          onAdd={() => setTask("preRenewal", t.id, "followUps", [...(task.followUps||[]), {id:Date.now(), date:new Date().toISOString().split("T")[0], note:""}])}
+                          onChangeDate={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],date:v}; setTask("preRenewal", t.id, "followUps", fus); }}
+                          onChangeNote={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],note:v}; setTask("preRenewal", t.id, "followUps", fus); }}
+                          onRemove={(fi) => setTask("preRenewal", t.id, "followUps", (task.followUps||[]).filter((_,i)=>i!==fi))}
+                        />
                         {/* Exhibit type selector — only for the exhibits task */}
                         {t.hasExhibitType && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
@@ -4604,6 +4682,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700 }}>✕</button>
                     </div>
                     {!isNA && (
+                      <>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Assignee
                           <select value={t.assignee||""} onChange={e => setData(p => {
@@ -4633,12 +4712,37 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                       </div>
+                      {/* Follow-ups */}
+                      <FollowUpBlock
+                        followUps={(t.followUps||[])}
+                        onAdd={() => setData(p => {
+                          const ex=[...(p.preRenewal?.__extra||[])];
+                          ex[idx]={...ex[idx],followUps:[...(ex[idx].followUps||[]),{id:Date.now(),date:new Date().toISOString().split("T")[0],note:""}]};
+                          return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
+                        })}
+                        onChangeDate={(fi, v) => setData(p => {
+                          const ex=[...(p.preRenewal?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
+                          fus[fi]={...fus[fi],date:v}; ex[idx]={...ex[idx],followUps:fus};
+                          return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
+                        })}
+                        onChangeNote={(fi, v) => setData(p => {
+                          const ex=[...(p.preRenewal?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
+                          fus[fi]={...fus[fi],note:v}; ex[idx]={...ex[idx],followUps:fus};
+                          return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
+                        })}
+                        onRemove={(fi) => setData(p => {
+                          const ex=[...(p.preRenewal?.__extra||[])];
+                          ex[idx]={...ex[idx],followUps:(ex[idx].followUps||[]).filter((_,i)=>i!==fi)};
+                          return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
+                        })}
+                      />
+                      </>
                     )}
                   </div>
                 );
               })}
               <button type="button" onClick={() => setData(p => ({
-                ...p, preRenewal: { ...p.preRenewal, __extra: [...(p.preRenewal?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"" }] }
+                ...p, preRenewal: { ...p.preRenewal, __extra: [...(p.preRenewal?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] }
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #507c9c", background: "#dce8f2", color: "#3e5878",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
@@ -4758,6 +4862,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </div>
                           )}
                         </div>
+                        {/* Follow-ups */}
+                        <FollowUpBlock
+                          followUps={(rm.followUps||[])}
+                          onAdd={() => setRM("followUps", [...(rm.followUps||[]), {id:Date.now(), date:new Date().toISOString().split("T")[0], note:""}])}
+                          onChangeDate={(fi, v) => { const fus=[...(rm.followUps||[])]; fus[fi]={...fus[fi],date:v}; setRM("followUps", fus); }}
+                          onChangeNote={(fi, v) => { const fus=[...(rm.followUps||[])]; fus[fi]={...fus[fi],note:v}; setRM("followUps", fus); }}
+                          onRemove={(fi) => setRM("followUps", (rm.followUps||[]).filter((_,i)=>i!==fi))}
+                        />
                       </div>
                     )}
                   </div>
@@ -4845,6 +4957,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </div>
                           </div>
                           {!isNA && (
+                            <>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Assignee
@@ -4881,6 +4994,15 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                   style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                             </div>
+                            {/* Follow-ups */}
+                            <FollowUpBlock
+                              followUps={(stored.followUps||[])}
+                              onAdd={() => setAutoTask(at.key, "followUps", [...(stored.followUps||[]), {id:Date.now(), date:new Date().toISOString().split("T")[0], note:""}])}
+                              onChangeDate={(fi, v) => { const fus=[...(stored.followUps||[])]; fus[fi]={...fus[fi],date:v}; setAutoTask(at.key, "followUps", fus); }}
+                              onChangeNote={(fi, v) => { const fus=[...(stored.followUps||[])]; fus[fi]={...fus[fi],note:v}; setAutoTask(at.key, "followUps", fus); }}
+                              onRemove={(fi) => setAutoTask(at.key, "followUps", (stored.followUps||[]).filter((_,i)=>i!==fi))}
+                            />
+                             </>
                           )}
                         </div>
                       );
@@ -4922,6 +5044,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       </div>
                     </div>
                     {!isNA && (
+                      <>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Assignee
@@ -4956,12 +5079,37 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                       </div>
+                      {/* Follow-ups */}
+                      <FollowUpBlock
+                        followUps={(t.followUps||[])}
+                        onAdd={() => setData(p => {
+                          const arr = [...(p.renewalTasks||[])];
+                          arr[idx] = {...arr[idx], followUps: [...(arr[idx].followUps||[]), {id: Date.now(), date: new Date().toISOString().split("T")[0], note: ""}]};
+                          return {...p, renewalTasks: arr};
+                        })}
+                        onChangeDate={(fi, v) => setData(p => {
+                          const arr = [...(p.renewalTasks||[])]; const fus = [...(arr[idx].followUps||[])];
+                          fus[fi] = {...fus[fi], date: v}; arr[idx] = {...arr[idx], followUps: fus};
+                          return {...p, renewalTasks: arr};
+                        })}
+                        onChangeNote={(fi, v) => setData(p => {
+                          const arr = [...(p.renewalTasks||[])]; const fus = [...(arr[idx].followUps||[])];
+                          fus[fi] = {...fus[fi], note: v}; arr[idx] = {...arr[idx], followUps: fus};
+                          return {...p, renewalTasks: arr};
+                        })}
+                        onRemove={(fi) => setData(p => {
+                          const arr = [...(p.renewalTasks||[])];
+                          arr[idx] = {...arr[idx], followUps: (arr[idx].followUps||[]).filter((_,i)=>i!==fi)};
+                          return {...p, renewalTasks: arr};
+                        })}
+                      />
+                      </>
                     )}
                   </div>
                 );
               })}
               <button type="button" onClick={() => setData(p => ({
-                ...p, renewalTasks: [...(p.renewalTasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"" }]
+                ...p, renewalTasks: [...(p.renewalTasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }]
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
@@ -5153,6 +5301,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
                           </div>
+                          {/* Follow-ups */}
+                          <FollowUpBlock
+                            followUps={(task.followUps||[])}
+                            onAdd={() => setOETask(t.id, "followUps", [...(task.followUps||[]), {id:Date.now(), date:new Date().toISOString().split("T")[0], note:""}])}
+                            onChangeDate={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],date:v}; setOETask(t.id, "followUps", fus); }}
+                            onChangeNote={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],note:v}; setOETask(t.id, "followUps", fus); }}
+                            onRemove={(fi) => setOETask(t.id, "followUps", (task.followUps||[]).filter((_,i)=>i!==fi))}
+                          />
                         </div>
                       );
                     })}
@@ -5180,6 +5336,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             }))} style={{ background:"#fee2e2",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:12,color:"#991b1b",fontWeight:700 }}>✕</button>
                           </div>
                           {!isNA && (
+                            <>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Assignee
                                 <select value={t.assignee||""} onChange={e => setData(p => {
@@ -5209,6 +5366,31 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                             </div>
+                            {/* Follow-ups */}
+                            <FollowUpBlock
+                              followUps={(t.followUps||[])}
+                              onAdd={() => setData(p => {
+                                const ex=[...(p.openEnrollment?.tasks?.__extra||[])];
+                                ex[idx]={...ex[idx],followUps:[...(ex[idx].followUps||[]),{id:Date.now(),date:new Date().toISOString().split("T")[0],note:""}]};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                              })}
+                              onChangeDate={(fi, v) => setData(p => {
+                                const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
+                                fus[fi]={...fus[fi],date:v}; ex[idx]={...ex[idx],followUps:fus};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                              })}
+                              onChangeNote={(fi, v) => setData(p => {
+                                const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
+                                fus[fi]={...fus[fi],note:v}; ex[idx]={...ex[idx],followUps:fus};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                              })}
+                              onRemove={(fi) => setData(p => {
+                                const ex=[...(p.openEnrollment?.tasks?.__extra||[])];
+                                ex[idx]={...ex[idx],followUps:(ex[idx].followUps||[]).filter((_,i)=>i!==fi)};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                              })}
+                            />
+                            </>
                           )}
                         </div>
                       );
@@ -5217,7 +5399,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </div>
               )}
               <button type="button" onClick={() => setData(p => ({
-                ...p, openEnrollment: { ...p.openEnrollment, tasks: { ...p.openEnrollment.tasks, __extra: [...(p.openEnrollment?.tasks?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"" }] } }
+                ...p, openEnrollment: { ...p.openEnrollment, tasks: { ...p.openEnrollment.tasks, __extra: [...(p.openEnrollment?.tasks?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } }
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 8 }}>
@@ -5245,13 +5427,26 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
                 const pof = data.postOEFixed || {};
                 const coord = getCoordinator(data.team);
-                const setPOF = (taskId, field, val) => setData(p => ({
-                  ...p,
-                  postOEFixed: {
-                    ...(p.postOEFixed || {}),
-                    [taskId]: { ...(p.postOEFixed?.[taskId] || {}), [field]: val },
-                  },
-                }));
+                const setPOF = (taskId, field, val, taskLabel) => setData(p => {
+                  const base = p.postOEFixed?.[taskId] || {};
+                  const plannedDueDate = field === "dueDate" && !base.plannedDueDate && val
+                    ? val : base.plannedDueDate;
+                  if (["status","dueDate","assignee","completedDate"].includes(field) && base[field] !== val) {
+                    insertAuditLog({
+                      clientId: p.id, clientName: p.name,
+                      userName: currentUser?.name || "Unknown", userRole: currentUser?.role || "",
+                      category: "Post-OE", taskLabel: taskLabel || taskId,
+                      field, oldValue: base[field] ?? "", newValue: val ?? "",
+                    });
+                  }
+                  return {
+                    ...p,
+                    postOEFixed: {
+                      ...(p.postOEFixed || {}),
+                      [taskId]: { ...base, [field]: val, ...(plannedDueDate ? { plannedDueDate } : {}) },
+                    },
+                  };
+                });
 
                 return fixedTasks.map(task => {
                   const defaultAssignee = (task.id === "oe_changes_processed") ? coord : "";
@@ -5326,6 +5521,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               ))}
                             </div>
                           )}
+                          {/* Follow-ups */}
+                          <FollowUpBlock
+                            followUps={(stored.followUps||[])}
+                            onAdd={() => setPOF(task.id, "followUps", [...(stored.followUps||[]), {id:Date.now(), date:new Date().toISOString().split("T")[0], note:""}])}
+                            onChangeDate={(fi, v) => { const fus=[...(stored.followUps||[])]; fus[fi]={...fus[fi],date:v}; setPOF(task.id, "followUps", fus); }}
+                            onChangeNote={(fi, v) => { const fus=[...(stored.followUps||[])]; fus[fi]={...fus[fi],note:v}; setPOF(task.id, "followUps", fus); }}
+                            onRemove={(fi) => setPOF(task.id, "followUps", (stored.followUps||[]).filter((_,i)=>i!==fi))}
+                          />
                         </div>
                       )}
                     </div>
@@ -5362,6 +5565,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       </div>
                     </div>
                     {!isNA && (
+                      <>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Assignee
@@ -5392,12 +5596,37 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                       </div>
+                      {/* Follow-ups */}
+                      <FollowUpBlock
+                        followUps={(t.followUps||[])}
+                        onAdd={() => setData(p => {
+                          const arr = [...(p.postOETasks||[])];
+                          arr[idx] = {...arr[idx], followUps: [...(arr[idx].followUps||[]), {id: Date.now(), date: new Date().toISOString().split("T")[0], note: ""}]};
+                          return {...p, postOETasks: arr};
+                        })}
+                        onChangeDate={(fi, v) => setData(p => {
+                          const arr = [...(p.postOETasks||[])]; const fus = [...(arr[idx].followUps||[])];
+                          fus[fi] = {...fus[fi], date: v}; arr[idx] = {...arr[idx], followUps: fus};
+                          return {...p, postOETasks: arr};
+                        })}
+                        onChangeNote={(fi, v) => setData(p => {
+                          const arr = [...(p.postOETasks||[])]; const fus = [...(arr[idx].followUps||[])];
+                          fus[fi] = {...fus[fi], note: v}; arr[idx] = {...arr[idx], followUps: fus};
+                          return {...p, postOETasks: arr};
+                        })}
+                        onRemove={(fi) => setData(p => {
+                          const arr = [...(p.postOETasks||[])];
+                          arr[idx] = {...arr[idx], followUps: (arr[idx].followUps||[]).filter((_,i)=>i!==fi)};
+                          return {...p, postOETasks: arr};
+                        })}
+                      />
+                      </>
                     )}
                   </div>
                 );
               })}
               <button type="button" onClick={() => setData(p => ({
-                ...p, postOETasks: [...(p.postOETasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"" }]
+                ...p, postOETasks: [...(p.postOETasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }]
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
@@ -5450,6 +5679,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </div>
                       </div>
                       {!isNA && (
+                        <>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Assignee
@@ -5484,6 +5714,15 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                         </div>
+                        {/* Follow-ups */}
+                        <FollowUpBlock
+                          followUps={(task.followUps||[])}
+                          onAdd={() => setTask("compliance", t.id, "followUps", [...(task.followUps||[]), {id:Date.now(), date:new Date().toISOString().split("T")[0], note:""}])}
+                          onChangeDate={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],date:v}; setTask("compliance", t.id, "followUps", fus); }}
+                          onChangeNote={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],note:v}; setTask("compliance", t.id, "followUps", fus); }}
+                          onRemove={(fi) => setTask("compliance", t.id, "followUps", (task.followUps||[]).filter((_,i)=>i!==fi))}
+                        />
+                        </>
                       )}
                     </div>
                   );
@@ -5513,6 +5752,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       }))} style={{ background:"#fee2e2",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:12,color:"#991b1b",fontWeight:700 }}>✕</button>
                     </div>
                     {!isNA && (
+                      <>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Assignee
                           <select value={t.assignee||""} onChange={e => setData(p => {
@@ -5542,12 +5782,37 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                       </div>
+                      {/* Follow-ups */}
+                      <FollowUpBlock
+                        followUps={(t.followUps||[])}
+                        onAdd={() => setData(p => {
+                          const ex=[...(p.compliance?.__extra||[])];
+                          ex[idx]={...ex[idx],followUps:[...(ex[idx].followUps||[]),{id:Date.now(),date:new Date().toISOString().split("T")[0],note:""}]};
+                          return {...p,compliance:{...p.compliance,__extra:ex}};
+                        })}
+                        onChangeDate={(fi, v) => setData(p => {
+                          const ex=[...(p.compliance?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
+                          fus[fi]={...fus[fi],date:v}; ex[idx]={...ex[idx],followUps:fus};
+                          return {...p,compliance:{...p.compliance,__extra:ex}};
+                        })}
+                        onChangeNote={(fi, v) => setData(p => {
+                          const ex=[...(p.compliance?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
+                          fus[fi]={...fus[fi],note:v}; ex[idx]={...ex[idx],followUps:fus};
+                          return {...p,compliance:{...p.compliance,__extra:ex}};
+                        })}
+                        onRemove={(fi) => setData(p => {
+                          const ex=[...(p.compliance?.__extra||[])];
+                          ex[idx]={...ex[idx],followUps:(ex[idx].followUps||[]).filter((_,i)=>i!==fi)};
+                          return {...p,compliance:{...p.compliance,__extra:ex}};
+                        })}
+                      />
+                      </>
                     )}
                   </div>
                 );
               })}
               <button type="button" onClick={() => setData(p => ({
-                ...p, compliance: { ...p.compliance, __extra: [...(p.compliance?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"" }] }
+                ...p, compliance: { ...p.compliance, __extra: [...(p.compliance?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] }
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 8 }}>
@@ -6069,6 +6334,32 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                       cursor: "pointer", fontFamily: "inherit" }}>Remove</button>
                   </div>
+                  <>
+                  {/* Follow-ups */}
+                  <FollowUpBlock
+                    followUps={(txn.followUps||[])}
+                    onAdd={() => setData(p => {
+                      const arr=[...p.transactions];
+                      arr[ti]={...arr[ti],followUps:[...(arr[ti].followUps||[]),{id:Date.now(),date:new Date().toISOString().split("T")[0],note:""}]};
+                      return {...p,transactions:arr};
+                    })}
+                    onChangeDate={(fi, v) => setData(p => {
+                      const arr=[...p.transactions]; const fus=[...(arr[ti].followUps||[])];
+                      fus[fi]={...fus[fi],date:v}; arr[ti]={...arr[ti],followUps:fus};
+                      return {...p,transactions:arr};
+                    })}
+                    onChangeNote={(fi, v) => setData(p => {
+                      const arr=[...p.transactions]; const fus=[...(arr[ti].followUps||[])];
+                      fus[fi]={...fus[fi],note:v}; arr[ti]={...arr[ti],followUps:fus};
+                      return {...p,transactions:arr};
+                    })}
+                    onRemove={(fi) => setData(p => {
+                      const arr=[...p.transactions];
+                      arr[ti]={...arr[ti],followUps:(arr[ti].followUps||[]).filter((_,i)=>i!==fi)};
+                      return {...p,transactions:arr};
+                    })}
+                  />
+                  </>
                 </div>
               ))}
             </div>
@@ -8608,7 +8899,7 @@ useEffect(() => {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {/* Nav tabs */}
           <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 9, padding: 3, gap: 2 }}>
-            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"],["benefitsDb","💊 Benefits"]].map(([v, label]) => (
+            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"],["benefitsDb","💊 Benefits"],...(["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? [["reports","📊 Reports"]] : [])].map(([v, label]) => (
               <button key={v} onClick={() => changeView(v)} style={{
                 background: view === v ? "#fff" : "transparent",
                 border: "none", borderRadius: 7, padding: "6px 14px",
@@ -9201,10 +9492,20 @@ useEffect(() => {
           />
         )}
 
+        {view === "reports" && ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
+          <ReportsView clients={clients} currentUser={currentUser} teams={teams} />
+        )}
+        {view === "reports" && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
+          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 15 }}>
+            Reports are available to Team Leads and above.
+          </div>
+        )}
+
+
       </div>
 
       {modal && (
-        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} />
+        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />
       )}
 
       {/* Team Edit/Add Modal */}
@@ -9241,6 +9542,324 @@ useEffect(() => {
 }
 
 // ── Team Edit Modal ──────────────────────────────────────────────────────────
+
+// ── Reports View ──────────────────────────────────────────────────────────────
+function ReportsView({ clients, currentUser, teams }) {
+  const [tab, setTab] = React.useState("performance");
+  const [auditLogs, setAuditLogs] = React.useState([]);
+  const [auditLoading, setAuditLoading] = React.useState(false);
+  const [filterUser, setFilterUser] = React.useState("");
+  const [filterField, setFilterField] = React.useState("");
+  const [filterFrom, setFilterFrom] = React.useState("");
+  const [filterTo, setFilterTo] = React.useState("");
+  const [drillMember, setDrillMember] = React.useState(null);
+
+  // Load audit logs when tab is selected
+  React.useEffect(() => {
+    if (tab !== "audit") return;
+    setAuditLoading(true);
+    fetchAuditLogs({
+      userName: filterUser || undefined,
+      field: filterField || undefined,
+      from: filterFrom || undefined,
+      to: filterTo ? filterTo + "T23:59:59Z" : undefined,
+    }).then(rows => { setAuditLogs(rows || []); setAuditLoading(false); });
+  }, [tab, filterUser, filterField, filterFrom, filterTo]);
+
+  // ── Build performance data from client task records ──────────────────────
+  const perfData = React.useMemo(() => {
+    const memberMap = {};
+    function record(assignee, dueDate, completedDate, plannedDueDate, taskLabel, category, clientName) {
+      if (!assignee) return;
+      if (!memberMap[assignee]) memberMap[assignee] = { name: assignee, total: 0, onTime: 0, late: 0, lateTasks: [], totalDays: 0 };
+      const m = memberMap[assignee];
+      if (!completedDate || !dueDate) return; // only count completed tasks
+      m.total++;
+      const due = new Date(dueDate);
+      const done = new Date(completedDate);
+      const days = Math.round((done - due) / 86400000);
+      m.totalDays += days;
+      if (days <= 0) { m.onTime++; }
+      else {
+        m.late++;
+        m.lateTasks.push({ taskLabel, category, clientName, dueDate, plannedDueDate, completedDate, daysLate: days });
+      }
+    }
+    function walkTasks(group, clientName) {
+      Object.entries(group || {}).forEach(([, t]) => {
+        if (typeof t !== "object" || !t.assignee) return;
+        record(t.assignee, t.dueDate, t.completedDate, t.plannedDueDate, t.label || "", "", clientName);
+      });
+    }
+    clients.forEach(c => {
+      const name = c.name;
+      // Fixed task groups
+      ["preRenewal","compliance","postOEFixed"].forEach(g => {
+        Object.entries(c[g] || {}).forEach(([id, t]) => {
+          if (typeof t !== "object") return;
+          record(t.assignee, t.dueDate, t.completedDate, t.plannedDueDate, id, g, name);
+        });
+      });
+      // OE tasks
+      Object.entries(c.openEnrollment?.tasks || {}).forEach(([id, t]) => {
+        if (typeof t !== "object") return;
+        record(t.assignee, t.dueDate, t.completedDate, t.plannedDueDate, id, "Open Enrollment", name);
+      });
+      // Array tasks
+      ["renewalTasks","postOETasks","miscTasks","transactions"].forEach(g => {
+        (c[g] || []).forEach(t => {
+          record(t.assignee, t.dueDate, t.completedDate, t.plannedDueDate, t.label || t.title || "", g, name);
+        });
+      });
+      // Extra tasks
+      [c.preRenewal?.__extra, c.compliance?.__extra, c.openEnrollment?.tasks?.__extra].forEach(arr => {
+        (arr || []).forEach(t => record(t.assignee, t.dueDate, t.completedDate, t.plannedDueDate, t.title || "", "Extra", name));
+      });
+    });
+    return Object.values(memberMap).sort((a, b) => b.total - a.total);
+  }, [clients]);
+
+  const allMembers = [...new Set(perfData.map(m => m.name))];
+
+  const tabStyle = active => ({
+    padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+    border: "none", fontFamily: "inherit",
+    background: active ? "#3e5878" : "#f1f5f9",
+    color: active ? "#fff" : "#64748b",
+  });
+
+  const card = { background: "#fff", borderRadius: 12, border: "1.5px solid #e2e8f0", padding: "16px 20px", marginBottom: 12 };
+  const th = { padding: "8px 12px", fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px", textAlign: "left", borderBottom: "2px solid #e2e8f0" };
+  const td = { padding: "8px 12px", fontSize: 13, color: "#0f172a", borderBottom: "1px solid #f1f5f9" };
+  const tdMuted = { ...td, color: "#64748b" };
+
+  return (
+    <div style={{ padding: "24px 32px", maxWidth: 1100, margin: "0 auto" }}>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", margin: 0 }}>📊 Reports</h2>
+        <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 0" }}>Task performance, team metrics, and change history</p>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        {[["performance","👥 Team Performance"],["audit","📋 Audit Log"],["benchmarks","⏱ Task Benchmarks"]].map(([id, label]) => (
+          <button key={id} onClick={() => { setTab(id); setDrillMember(null); }} style={tabStyle(tab === id)}>{label}</button>
+        ))}
+      </div>
+
+      {/* ── Team Performance Tab ── */}
+      {tab === "performance" && !drillMember && (
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16, marginBottom: 24 }}>
+            {perfData.length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>No completed tasks with assignees and due dates found yet.</p>}
+            {perfData.map(m => {
+              const pct = m.total > 0 ? Math.round((m.onTime / m.total) * 100) : 0;
+              const avgDays = m.total > 0 ? (m.totalDays / m.total).toFixed(1) : "—";
+              const color = pct >= 90 ? "#16a34a" : pct >= 70 ? "#ca8a04" : "#dc2626";
+              return (
+                <div key={m.name} style={{ ...card, cursor: "pointer" }} onClick={() => setDrillMember(m)}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>{m.name}</span>
+                    <span style={{ fontSize: 22, fontWeight: 900, color }}>{pct}%</span>
+                  </div>
+                  <div style={{ background: "#f1f5f9", borderRadius: 6, height: 8, marginBottom: 10, overflow: "hidden" }}>
+                    <div style={{ width: pct + "%", height: "100%", background: color, borderRadius: 6, transition: "width .4s" }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#64748b" }}>
+                    <span>✅ {m.onTime} on time</span>
+                    <span style={{ color: m.late > 0 ? "#dc2626" : "#94a3b8" }}>⚠️ {m.late} late</span>
+                    <span>Avg {avgDays > 0 ? "+" : ""}{avgDays}d</span>
+                  </div>
+                  {m.late > 0 && <div style={{ marginTop: 8, fontSize: 11, color: "#3b82f6", fontWeight: 700 }}>Click to see late tasks →</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Drill-down: Late Tasks for a Member ── */}
+      {tab === "performance" && drillMember && (
+        <div>
+          <button onClick={() => setDrillMember(null)} style={{ ...tabStyle(false), marginBottom: 16, fontSize: 12 }}>← Back to all members</button>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>{drillMember.name} — Late Tasks</h3>
+          <p style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>{drillMember.late} task{drillMember.late !== 1 ? "s" : ""} completed past due date</p>
+          {drillMember.lateTasks.length === 0
+            ? <p style={{ color: "#94a3b8", fontSize: 13 }}>No late tasks — great work!</p>
+            : (
+              <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Client","Task","Category","Planned Due","Adjusted Due","Completed","Days Late"].map(h => (
+                        <th key={h} style={th}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {drillMember.lateTasks.sort((a,b) => b.daysLate - a.daysLate).map((t, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <td style={td}>{t.clientName}</td>
+                        <td style={td}>{t.taskLabel}</td>
+                        <td style={tdMuted}>{t.category}</td>
+                        <td style={tdMuted}>{t.plannedDueDate || "—"}</td>
+                        <td style={{ ...tdMuted, color: t.plannedDueDate && t.dueDate !== t.plannedDueDate ? "#ca8a04" : "#64748b" }}>
+                          {t.dueDate}{t.plannedDueDate && t.dueDate !== t.plannedDueDate ? " ✎" : ""}
+                        </td>
+                        <td style={tdMuted}>{t.completedDate}</td>
+                        <td style={{ ...td, color: "#dc2626", fontWeight: 700 }}>+{t.daysLate}d</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        </div>
+      )}
+
+      {/* ── Audit Log Tab ── */}
+      {tab === "audit" && (
+        <div>
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20, alignItems: "flex-end" }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
+              Team Member
+              <select value={filterUser} onChange={e => setFilterUser(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", minWidth: 160 }}>
+                <option value="">All Members</option>
+                {allMembers.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
+              Field Changed
+              <select value={filterField} onChange={e => setFilterField(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", minWidth: 140 }}>
+                <option value="">All Fields</option>
+                {["status","dueDate","assignee","completedDate"].map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
+              From
+              <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
+            </label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
+              To
+              <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
+            </label>
+            <button onClick={() => { setFilterUser(""); setFilterField(""); setFilterFrom(""); setFilterTo(""); }}
+              style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #e2e8f0", background: "#f8fafc", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", color: "#64748b" }}>
+              Clear
+            </button>
+          </div>
+
+          {auditLoading && <p style={{ color: "#94a3b8", fontSize: 13 }}>Loading...</p>}
+          {!auditLoading && auditLogs.length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>No audit log entries found. Changes to task status, due dates, and assignees will appear here going forward.</p>}
+          {!auditLoading && auditLogs.length > 0 && (
+            <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Date & Time","Changed By","Client","Category","Task","Field","Old Value","New Value"].map(h => (
+                      <th key={h} style={th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs.map((log, i) => (
+                    <tr key={log.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                      <td style={tdMuted}>{new Date(log.created_at).toLocaleString()}</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{log.user_name}</td>
+                      <td style={td}>{log.client_name}</td>
+                      <td style={tdMuted}>{log.category}</td>
+                      <td style={td}>{log.task_label}</td>
+                      <td style={{ ...tdMuted, fontStyle: "italic" }}>{log.field}</td>
+                      <td style={{ ...tdMuted, textDecoration: "line-through" }}>{log.old_value || "—"}</td>
+                      <td style={{ ...td, color: "#16a34a", fontWeight: 600 }}>{log.new_value || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Task Benchmarks Tab ── */}
+      {tab === "benchmarks" && (
+        <div>
+          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Average days early (negative) or late (positive) by task category, across all completed tasks.</p>
+          {(() => {
+            const catMap = {};
+            clients.forEach(c => {
+              function tally(group, category) {
+                Object.entries(group || {}).forEach(([, t]) => {
+                  if (typeof t !== "object" || !t.dueDate || !t.completedDate) return;
+                  const days = Math.round((new Date(t.completedDate) - new Date(t.dueDate)) / 86400000);
+                  if (!catMap[category]) catMap[category] = { total: 0, days: 0, late: 0, onTime: 0 };
+                  catMap[category].total++;
+                  catMap[category].days += days;
+                  days > 0 ? catMap[category].late++ : catMap[category].onTime++;
+                });
+              }
+              tally(c.preRenewal, "Pre-Renewal");
+              tally(c.compliance, "Compliance");
+              tally(c.postOEFixed, "Post-OE");
+              tally(c.openEnrollment?.tasks, "Open Enrollment");
+              (c.renewalTasks||[]).filter(t=>t.dueDate&&t.completedDate).forEach(t => {
+                const days = Math.round((new Date(t.completedDate)-new Date(t.dueDate))/86400000);
+                if (!catMap["Renewal"]) catMap["Renewal"]={total:0,days:0,late:0,onTime:0};
+                catMap["Renewal"].total++; catMap["Renewal"].days+=days;
+                days>0?catMap["Renewal"].late++:catMap["Renewal"].onTime++;
+              });
+              (c.miscTasks||[]).filter(t=>t.dueDate&&t.completedDate).forEach(t => {
+                const days = Math.round((new Date(t.completedDate)-new Date(t.dueDate))/86400000);
+                if (!catMap["Miscellaneous"]) catMap["Miscellaneous"]={total:0,days:0,late:0,onTime:0};
+                catMap["Miscellaneous"].total++; catMap["Miscellaneous"].days+=days;
+                days>0?catMap["Miscellaneous"].late++:catMap["Miscellaneous"].onTime++;
+              });
+              (c.transactions||[]).filter(t=>t.dueDate&&t.completedDate).forEach(t => {
+                const days = Math.round((new Date(t.completedDate)-new Date(t.dueDate))/86400000);
+                if (!catMap["Transactions"]) catMap["Transactions"]={total:0,days:0,late:0,onTime:0};
+                catMap["Transactions"].total++; catMap["Transactions"].days+=days;
+                days>0?catMap["Transactions"].late++:catMap["Transactions"].onTime++;
+              });
+            });
+            const rows = Object.entries(catMap).sort((a,b)=>b[1].days/b[1].total - a[1].days/a[1].total);
+            if (rows.length === 0) return <p style={{ color: "#94a3b8", fontSize: 13 }}>No completed tasks with due dates yet.</p>;
+            return (
+              <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>{["Category","Completed Tasks","On Time","Late","Avg Days +/-"].map(h=><th key={h} style={th}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(([cat, s], i) => {
+                      const avg = (s.days / s.total).toFixed(1);
+                      const color = avg > 0 ? "#dc2626" : avg < 0 ? "#16a34a" : "#64748b";
+                      return (
+                        <tr key={cat} style={{ background: i%2===0?"#fff":"#fafafa" }}>
+                          <td style={{ ...td, fontWeight: 700 }}>{cat}</td>
+                          <td style={tdMuted}>{s.total}</td>
+                          <td style={{ ...td, color: "#16a34a" }}>{s.onTime}</td>
+                          <td style={{ ...td, color: s.late > 0 ? "#dc2626" : "#94a3b8" }}>{s.late}</td>
+                          <td style={{ ...td, color, fontWeight: 700 }}>{avg > 0 ? "+" : ""}{avg}d</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
   const [data, setData] = useState({ ...team });
@@ -10737,7 +11356,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
           <span style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8", letterSpacing: "1px",
             textTransform: "uppercase", whiteSpace: "nowrap", minWidth: 48 }}>Task</span>
           {[
-            { val: ovCat,      set: setOvCat,      opts: ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing","Transactions"], placeholder: "All Categories" },
+            { val: ovCat,      set: setOvCat,      opts: ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing"], placeholder: "All Categories" },
             { val: ovAssignee, set: setOvAssignee, opts: uniqueAssignees, placeholder: "All Assignees" },
             { val: ovStatus,   set: setOvStatus,   opts: ["Not Started","In Progress"], placeholder: "All Statuses" },
           ].map(({ val, set, opts, placeholder }) => (

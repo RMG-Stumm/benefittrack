@@ -211,3 +211,31 @@ export async function deleteTeam(id) {
   const { error } = await supabase.from('teams').delete().eq('id', id)
   if (error) console.error('deleteTeam error:', error)
 }
+// ── AUDIT LOGS ────────────────────────────────────────────────────────────────
+
+export async function insertAuditLog(entry) {
+  const { error } = await supabase.from('audit_logs').insert({
+    client_id:   entry.clientId,
+    client_name: entry.clientName,
+    user_name:   entry.userName,
+    user_role:   entry.userRole,
+    category:    entry.category,
+    task_label:  entry.taskLabel,
+    field:       entry.field,
+    old_value:   entry.oldValue != null ? String(entry.oldValue) : '',
+    new_value:   entry.newValue != null ? String(entry.newValue) : '',
+  })
+  if (error) console.error('insertAuditLog error:', error)
+}
+
+export async function fetchAuditLogs({ clientId, userName, field, from, to } = {}) {
+  let q = supabase.from('audit_logs').select('*').order('created_at', { ascending: false })
+  if (clientId)  q = q.eq('client_id', clientId)
+  if (userName)  q = q.eq('user_name', userName)
+  if (field)     q = q.eq('field', field)
+  if (from)      q = q.gte('created_at', from)
+  if (to)        q = q.lte('created_at', to)
+  const { data, error } = await q
+  if (error) { console.error('fetchAuditLogs error:', error); return [] }
+  return data
+}
