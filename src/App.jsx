@@ -98,17 +98,18 @@ function syncStandardTasks(client, tasksDb) {
 
   // Strip standard task instances from ALL groups first — removes deleted templates
   // and stale instances left behind by category changes
-  // Also remove any standard tasks from postOETasks that duplicate postOEFixed entries
-  const POST_OE_FIXED_IDS_SET = new Set([
-    "elections_received", "oe_changes_processed", "carrier_bill_audited",
-    "lineup_updated", "oe_wrapup_email", "new_carrier_census",
+  // Also remove any tasks from postOETasks that duplicate postOEFixed entries (by title)
+  const POST_OE_FIXED_LABELS = new Set([
+    "Elections Received?", "OE Changes Processed?", "Carrier Bill Audited?",
+    "Lineup Updated?", "OE Wrap-Up Email Sent?", "New Carrier Submission Census Created?",
   ]);
   const GROUPS = ["miscTasks", "postOETasks", "renewalTasks"];
   let updated = { ...client };
   GROUPS.forEach(group => {
     updated[group] = (client[group] || []).filter(t => {
       if (!t._standardTemplateId) return true; // keep manual tasks
-      if (group === "postOETasks" && POST_OE_FIXED_IDS_SET.has(t._standardTemplateId)) return false; // remove postOEFixed dupes
+      // Remove from postOETasks if title matches a postOEFixed entry
+      if (group === "postOETasks" && POST_OE_FIXED_LABELS.has(t.title)) return false;
       return activeStdIds.has(t._standardTemplateId) &&  // keep if template still exists
              templateGroup[t._standardTemplateId] === group; // AND still belongs to this group
     });
