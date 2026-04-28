@@ -94,6 +94,7 @@ export async function fetchTasks() {
     recurrence: row.recurrence || null,
     eligibilityRule: row.eligibility_rule || null,
     order: row.order_index || 0,
+    isStandard: row.is_standard || false,
   }))
 }
 
@@ -111,6 +112,7 @@ export async function upsertTask(task) {
     recurrence: task.recurrence || null,
     eligibility_rule: task.eligibilityRule || null,
     order_index: task.order || 0,
+    is_standard: task.isStandard || false,
   })
   if (error) console.error('upsertTask error:', error)
 }

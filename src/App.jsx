@@ -84,16 +84,41 @@ function syncStandardTasks(client, tasksDb) {
     return true;
   }
 
-  const existing = client.miscTasks || [];
-  // Keep non-standard tasks unchanged
-  const manualTasks = existing.filter(t => !t._standardTemplateId);
-  // Build the new set of standard tasks for this client
-  const newStandard = standardTemplates
-    .filter(tmpl => clientMatchesTemplate(client, tmpl))
-    .map(tmpl => {
-      const found = existing.find(t => t._standardTemplateId === tmpl.id);
+  // All standard template IDs that are still active
+  const activeStdIds = new Set(standardTemplates.map(t => t.id));
+
+  // Map: templateId → which group it now belongs to
+  function groupForCategory(cat) {
+    if (cat === "Post-OE")  return "postOETasks";
+    if (cat === "Renewal")  return "renewalTasks";
+    return "miscTasks";
+  }
+  const templateGroup = {};
+  standardTemplates.forEach(t => { templateGroup[t.id] = groupForCategory(t.category); });
+
+  // Strip standard task instances from ALL groups first — removes deleted templates
+  // and stale instances left behind by category changes
+  const GROUPS = ["miscTasks", "postOETasks", "renewalTasks"];
+  let updated = { ...client };
+  GROUPS.forEach(group => {
+    updated[group] = (client[group] || []).filter(t =>
+      !t._standardTemplateId ||                          // keep manual tasks
+      (activeStdIds.has(t._standardTemplateId) &&        // keep if template still exists
+       templateGroup[t._standardTemplateId] === group)   // AND still belongs to this group
+    );
+  });
+
+  // Now add/update matching standard tasks into the correct group
+  const matchingTemplates = standardTemplates.filter(tmpl => clientMatchesTemplate(client, tmpl));
+
+  function syncGroup(existing, groupTemplates, allGroups) {
+    // Also look in other groups for an existing instance (category may have changed)
+    const newStandard = groupTemplates.map(tmpl => {
+      const found =
+        existing.find(t => t._standardTemplateId === tmpl.id) ||
+        allGroups.flatMap(g => client[g] || []).find(t => t._standardTemplateId === tmpl.id);
       return found
-        ? { ...found, title: tmpl.label } // update label if changed, keep status/dates
+        ? { ...found, title: tmpl.label }
         : {
             id: "std_" + tmpl.id + "_" + client.id,
             _standardTemplateId: tmpl.id,
@@ -103,8 +128,19 @@ function syncStandardTasks(client, tasksDb) {
             dueDate: "", completedDate: "", notes: "", followUps: [],
           };
     });
+    const manualTasks = (existing || []).filter(t => !t._standardTemplateId);
+    return [...newStandard, ...manualTasks];
+  }
 
-  return { ...client, miscTasks: [...newStandard, ...manualTasks] };
+  const miscTemplates   = matchingTemplates.filter(t => groupForCategory(t.category) === "miscTasks");
+  const postOETemplates = matchingTemplates.filter(t => groupForCategory(t.category) === "postOETasks");
+  const renewalTemplates= matchingTemplates.filter(t => groupForCategory(t.category) === "renewalTasks");
+
+  updated.miscTasks    = syncGroup(updated.miscTasks,    miscTemplates,    GROUPS);
+  updated.postOETasks  = syncGroup(updated.postOETasks,  postOETemplates,  GROUPS);
+  updated.renewalTasks = syncGroup(updated.renewalTasks, renewalTemplates, GROUPS);
+
+  return updated;
 }
 
 
@@ -1110,6 +1146,30 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
     const base = JSON.parse(JSON.stringify(client));
     return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
   });
+
+  // When the client prop gains new standard tasks from an external sync,
+  // merge them into local data without overwriting any user edits
+  React.useEffect(() => {
+    setData(prev => {
+      let changed = false;
+      let next = { ...prev };
+
+      // Merge each task group that standard tasks can land in
+      const groups = ["miscTasks", "postOETasks", "renewalTasks"];
+      groups.forEach(group => {
+        const incomingStd = (client[group] || []).filter(t => t._standardTemplateId);
+        if (!incomingStd.length) return;
+        const existingIds = new Set((prev[group] || []).map(t => t._standardTemplateId).filter(Boolean));
+        const newTasks = incomingStd.filter(t => !existingIds.has(t._standardTemplateId));
+        if (newTasks.length) {
+          next[group] = [...newTasks, ...(prev[group] || [])];
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+  }, [client.miscTasks, client.postOETasks, client.renewalTasks]);
   const [pendingCarrier, setPendingCarrier] = useState({}); // { "med_N": "typed text", "anc_N": "typed text" }
   const [otherCarrierText, setOtherCarrierText] = useState({}); // { cat.id: "typed text" } — local to avoid re-render focus loss
   const [archivePanel, setArchivePanel] = useState(false);   // show/hide archive panel
@@ -4264,18 +4324,26 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               {(() => {
                 const ANCILLARY_BENEFIT_IDS = [
                   "dental", "vision", "std", "ltd", "basic_life", "vol_life",
-                  "worksite", "nydbl_pfl", "eap", "telehealth", "identity_theft",
+                  "nydbl_pfl", "eap", "telehealth", "identity_theft",
                   "prepaid_legal", "pet_insurance",
                 ];
                 const ancCarriers = data.benefitCarriers || {};
                 const ancActive = data.benefitActive || {};
-                const activeBenefits = ANCILLARY_BENEFIT_IDS
-                  .filter(id => ancActive[id])
-                  .map(id => {
-                    const cat = BENEFITS_SCHEMA.find(c => c.id === id);
-                    const carrier = ancCarriers[id] || "";
-                    return { id, label: cat ? cat.label : id, carrier };
-                  });
+
+                // Build list: standard ancillary benefits + worksite children individually
+                const activeBenefits = [];
+                ANCILLARY_BENEFIT_IDS.filter(id => ancActive[id]).forEach(id => {
+                  const cat = BENEFITS_SCHEMA.find(c => c.id === id);
+                  activeBenefits.push({ id, label: cat ? cat.label : id, carrier: ancCarriers[id] || "" });
+                });
+                // Add each active worksite child
+                const worksiteCat = BENEFITS_SCHEMA.find(c => c.id === "worksite");
+                (worksiteCat?.children || []).forEach(child => {
+                  if (ancActive[child.id]) {
+                    activeBenefits.push({ id: child.id, label: child.label, carrier: ancCarriers[child.id] || "" });
+                  }
+                });
+
                 if (activeBenefits.length === 0) return null;
 
                 return (
@@ -8801,6 +8869,23 @@ useEffect(() => {
   const userTeamId = currentUser?.team || null;
 
 
+  // Called after a standard task template is saved — re-syncs all clients immediately
+  function syncAllClientsToTasks(latestTasks) {
+    setClients(prevClients => {
+      const ddr = loadDueDateRules_DEPRECATED();
+      const updated = prevClients.map(c => {
+        const withDDR = applyDueDateRulesToClient(c, latestTasks, ddr);
+        return syncStandardTasks(withDDR, latestTasks);
+      });
+      updated.forEach((c, i) => {
+        if (JSON.stringify(c) !== JSON.stringify(prevClients[i])) {
+          upsertClient(c);
+        }
+      });
+      return updated;
+    });
+  }
+
   function saveClient(data) {
     // Sync standard tasks before saving
     const synced = syncStandardTasks(data, tasksData);
@@ -8963,14 +9048,11 @@ useEffect(() => {
       // Sync each task to Supabase
       const nextArr = Array.isArray(next) ? next : [];
       nextArr.forEach(t => upsertTask(t));
-      // Re-apply DDR to all clients when task templates change
-      // AND sync standard tasks to matching clients
+      // Re-apply DDR to all clients when task templates change (due dates only)
+      // Standard task syncing is handled explicitly by syncAllClientsToTasks
       setClients(prevClients => {
         const ddr = loadDueDateRules_DEPRECATED();
-        return prevClients.map(c => {
-          const withDDR = applyDueDateRulesToClient(c, next, ddr);
-          return syncStandardTasks(withDDR, next);
-        });
+        return prevClients.map(c => applyDueDateRulesToClient(c, next, ddr));
       });
       return next;
     });
@@ -9933,6 +10015,8 @@ useEffect(() => {
             dueDateRules={dueDateRules}
             onSaveDueDateRules={setDueDateRules}
             currentUser={currentUser}
+            clients={clients}
+            onSyncClients={syncAllClientsToTasks}
           />
         )}
 
@@ -9948,8 +10032,10 @@ useEffect(() => {
 
       </div>
 
-      {modal && (
-        <ClientModal client={modal} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />
+      {modal && (() => {
+        const liveClient = clients.find(c => c.id === modal.id) || modal;
+        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />;
+      })()}
       )}
 
       {/* Team Edit/Add Modal */}
@@ -12100,7 +12186,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   );
 }
 
-function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUser }) {
+function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUser, clients, onSyncClients }) {
   const canEdit   = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const canDelete = canEdit;
   const [activeCategory, setActiveCategory] = useState("Compliance");
@@ -12133,9 +12219,14 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
 
   function saveEdit() {
     if (!editData.label.trim()) return;
+    const isNew = !tasks.find(t => t.id === editData.id);
     onSave(prev => {
       const exists = prev.find(t => t.id === editData.id);
-      return exists ? prev.map(t => t.id === editData.id ? editData : t) : [...prev, editData];
+      const next = exists ? prev.map(t => t.id === editData.id ? editData : t) : [...prev, editData];
+      if (editData.isStandard && onSyncClients) {
+        setTimeout(() => onSyncClients(next), 0);
+      }
+      return next;
     });
     setEditingId(null);
     setEditData(null);
