@@ -281,6 +281,7 @@ const BENEFITS_SCHEMA = [
       { id: "ltd_contributory", label: "Contributory" },
     ],
   },
+  { id: "idi", label: "IDI", children: [] },
   {
     id: "worksite", label: "Worksite Benefits",
     children: [
@@ -814,20 +815,53 @@ const CARRIER_SUGGESTIONS = {
   other:    ["Guardian","MetLife","Principal","Sun Life","Unum"],
 };
 
-function carriersForBenefit(benefitId) {
-  // Medical only shows medical carriers — no life/ancillary carriers
-  if (benefitId === "medical" || benefitId.startsWith("medical_")) {
-    return CARRIER_SUGGESTIONS.medical;
+// Map a benefit ID to the product label used in carrier DB records
+function benefitIdToProductLabel(benefitId) {
+  if (benefitId === "medical" || benefitId.startsWith("medical_")) return "__medical__";
+  if (benefitId.startsWith("dental"))     return "Dental";
+  if (benefitId.startsWith("vision"))     return "Vision";
+  if (benefitId.startsWith("basic_life")) return "Basic Life/AD&D";
+  if (benefitId.startsWith("vol_life"))   return "Voluntary Life/AD&D";
+  if (benefitId.startsWith("std"))        return "STD";
+  if (benefitId.startsWith("ltd"))        return "LTD";
+  if (benefitId.startsWith("worksite"))   return "Worksite";
+  if (benefitId.startsWith("fsa") || benefitId === "hsa_funding" || benefitId === "hra") return "__fsa__";
+  return null;
+}
+
+function carriersForBenefit(benefitId, carriersData) {
+  const productLabel = benefitIdToProductLabel(benefitId);
+
+  let dbCarriers = [];
+  if (carriersData && carriersData.length) {
+    if (productLabel === "__medical__") {
+      dbCarriers = carriersData.filter(c => c.category === "Medical").map(c => c.name);
+    } else if (productLabel === "__fsa__") {
+      dbCarriers = carriersData.filter(c => c.category === "FSA/HSA/HRA Administrator").map(c => c.name);
+    } else if (productLabel === "Worksite") {
+      // Worksite: carriers that explicitly list Worksite, or all Ancillary as fallback
+      const specific = carriersData.filter(c => c.category === "Ancillary" &&
+        (c.products || []).some(p => p.toLowerCase().includes("worksite"))).map(c => c.name);
+      dbCarriers = specific.length ? specific : carriersData.filter(c => c.category === "Ancillary").map(c => c.name);
+    } else if (productLabel) {
+      const specific = carriersData
+        .filter(c => c.category === "Ancillary" && (c.products || []).some(p => p.toLowerCase() === productLabel.toLowerCase()))
+        .map(c => c.name);
+      dbCarriers = specific.length ? specific : carriersData.filter(c => c.category === "Ancillary").map(c => c.name);
+    } else {
+      dbCarriers = carriersData.filter(c => c.category === "Ancillary").map(c => c.name);
+    }
   }
-  let suggested;
-  if (benefitId.startsWith("dental"))  suggested = CARRIER_SUGGESTIONS.dental;
-  else if (benefitId.startsWith("vision"))  suggested = CARRIER_SUGGESTIONS.vision;
-  else if (benefitId.startsWith("basic_life") || benefitId.startsWith("vol_life") ||
-           benefitId.startsWith("std") || benefitId.startsWith("ltd")) suggested = CARRIER_SUGGESTIONS.life;
-  else suggested = CARRIER_SUGGESTIONS.other;
-  // Return suggested first, then remaining carriers not already in suggested
-  const rest = ALL_CARRIERS.filter(c => !suggested.includes(c));
-  return [...suggested, ...rest];
+
+  if (!dbCarriers.length) {
+    if (productLabel === "__medical__") return CARRIER_SUGGESTIONS.medical;
+    if (productLabel === "Dental")      return CARRIER_SUGGESTIONS.dental;
+    if (productLabel === "Vision")      return CARRIER_SUGGESTIONS.vision;
+    if (["Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD"].includes(productLabel)) return CARRIER_SUGGESTIONS.life;
+    return CARRIER_SUGGESTIONS.other;
+  }
+
+  return [...new Set(dbCarriers)].sort((a, b) => a.localeCompare(b));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -2411,7 +2445,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           <CollapseHeader id="employeeClasses" title="Employee Classes" collapsed={collapsed} onToggle={toggleSection} />
           {!collapsed.employeeClasses && (() => {
             // Only show benefit types that are active on this client
-            const activeBenefits = BENEFITS_SCHEMA.filter(cat => !!(data.benefitActive || {})[cat.id]);
+            const activeBenefits = [];
+            BENEFITS_SCHEMA.forEach(cat => {
+              if (cat.id === "worksite") {
+                // Worksite children are stored individually — add each active child
+                cat.children.forEach(child => {
+                  if (!!(data.benefitActive || {})[child.id])
+                    activeBenefits.push({ ...child, children: [], _parentLabel: "Worksite" });
+                });
+              } else if (!!(data.benefitActive || {})[cat.id]) {
+                activeBenefits.push(cat);
+              }
+            });
+            // IDI lives outside BENEFITS_SCHEMA top-level — add if active
+            if (!!(data.benefitActive || {})["idi"] && !activeBenefits.find(e => e.id === "idi"))
+              activeBenefits.push({ id: "idi", label: "IDI", children: [] });
 
             function updateClass(idx, field, val) {
               setData(p => {
@@ -2736,12 +2784,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 "AD&D":               "vol_life",
                 "STD":                "std",
                 "LTD":                "ltd",
-                "IDI":                "ltd",
+                "IDI":                "idi",
                 "NYDBL & PFL":        "nydbl_pfl",
-                "Accident":           "worksite",
-                "Cancer":             "worksite",
-                "Critical Illness":   "worksite",
-                "Hospital Indemnity": "worksite",
+                "Accident":           "worksite_accident",
+                "Cancer":             "worksite_cancer",
+                "Critical Illness":   "worksite_ci",
+                "Hospital Indemnity": "worksite_hospital",
                 "EAP":                "eap",
                 "Identity Theft":     "identity_theft",
                 "Prepaid Legal":      "prepaid_legal",
@@ -2758,18 +2806,28 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 ? benefitsDb : BENEFITS_DB_SEED;
 
               // Build grouped catalog: category → unique schema entries
+              // Helper: find schema by id including children of parent entries
+              function findSchema(id) {
+                const top = BENEFITS_SCHEMA.find(s => s.id === id);
+                if (top) return top;
+                for (const s of BENEFITS_SCHEMA) {
+                  const child = (s.children || []).find(c => c.id === id);
+                  if (child) return { ...child, children: [] }; // treat child as own entry
+                }
+                return null;
+              }
+
               const catalogByCategory = {};
               dbRecords.forEach(rec => {
                 const schemaId = BENEFIT_NAME_TO_SCHEMA_ID[rec.benefit];
                 if (!schemaId) return;
-                const schema = BENEFITS_SCHEMA.find(s => s.id === schemaId);
+                const schema = findSchema(schemaId);
                 if (!schema) return;
                 if (!catalogByCategory[rec.category]) catalogByCategory[rec.category] = [];
-                // Deduplicate by schemaId within category
-                const key = schemaId + "__" + rec.benefit;
-                if (!catalogByCategory[rec.category].find(e => e.key === key)) {
+                // Deduplicate strictly by schemaId — one checkbox per unique benefit regardless of variants
+                if (!catalogByCategory[rec.category].find(e => e.schemaId === schemaId)) {
                   catalogByCategory[rec.category].push({
-                    key, schemaId, label: rec.benefit, schema,
+                    key: schemaId, schemaId, label: rec.benefit, schema,
                     variant: rec.variant, planDesign: rec.planDesign,
                     fundingMethod: rec.fundingMethod,
                   });
@@ -2860,7 +2918,29 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             })()}
             {/* ── Active benefits only ── */}
             {(() => {
-              return BENEFITS_SCHEMA.filter(cat => !!(data.benefitActive || {})[cat.id]).map(cat => {
+              // Build flat list of renderable entries: top-level schema entries + worksite children + IDI
+              const allRenderableEntries = [];
+              BENEFITS_SCHEMA.forEach(cat => {
+                if (cat.id === "worksite") {
+                  // Render each active worksite child individually instead of the parent
+                  cat.children.forEach(child => {
+                    if (!!(data.benefitActive || {})[child.id]) {
+                      allRenderableEntries.push({ ...child, children: [], _parentLabel: "Worksite Benefits" });
+                    }
+                  });
+                } else {
+                  if (!!(data.benefitActive || {})[cat.id]) allRenderableEntries.push(cat);
+                }
+              });
+              // IDI — rendered as standalone if active
+              if (!!(data.benefitActive || {})["idi"]) {
+                const idiSchema = BENEFITS_SCHEMA.find(s => s.id === "idi");
+                if (idiSchema && !allRenderableEntries.find(e => e.id === "idi")) {
+                  allRenderableEntries.push(idiSchema);
+                }
+              }
+
+              return allRenderableEntries.map(cat => {
               if (hasClasses && collapsed._hideNoClass) {
                 const anyAssigned = (data.employeeClasses || []).some(
                   cls => !!(cls.classBenefits || {})[cat.id]?.included
@@ -2869,7 +2949,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               }
               const leaves = cat.children.length > 0 ? cat.children : [{ id: cat.id, label: cat.label }];
               const isOffered = true;
-              const carrierOptions = carriersForBenefit(cat.id);
+              const carrierOptions = carriersForBenefit(cat.id, carriersData);
               const currentCarrier = (data.benefitCarriers || {})[cat.id] || "";
               const effectiveDate = (data.benefitEffectiveDates || {})[cat.id] || "";
 
@@ -2957,6 +3037,35 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
                     {/* Carrier + Effective Date row */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        {/* Worksite: show per-child carrier selectors instead of one shared carrier */}
+                        {cat.id === "worksite" ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: ".3px" }}>Carrier by Benefit</div>
+                            {cat.children.map(child => {
+                              const childCarrier = (data.benefitCarriers || {})[child.id] || "";
+                              const childOptions = carriersForBenefit(child.id, carriersData);
+                              return (
+                                <div key={child.id} style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 6, alignItems: "center" }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>{child.label}</div>
+                                  <select
+                                    value={childCarrier}
+                                    onChange={e => setBenefitCarrier(child.id, e.target.value)}
+                                    style={{
+                                      ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px",
+                                      borderColor: childCarrier ? "#3b82f6" : undefined,
+                                      background: childCarrier ? "#eff6ff" : "#fff",
+                                      color: childCarrier ? "#1d4ed8" : "#94a3b8",
+                                      fontWeight: childCarrier ? 600 : 400,
+                                    }}>
+                                    <option value="">— Select carrier —</option>
+                                    {childOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                    <option value="__other__">Other…</option>
+                                  </select>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Carrier / Vendor
                           <select
@@ -3003,6 +3112,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             />
                           )}
                         </label>
+                        )} {/* end worksite ternary */}
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Effective Date
                           <input
@@ -4182,13 +4292,34 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     {activeBenefits.map(b => {
                       const key = "anc_line_" + b.id;
                       const stored = (data.ancillaryRenewalReceived || {})[key] || {};
-                      const setAnc = (field, val) => setData(p => ({
-                        ...p,
-                        ancillaryRenewalReceived: {
-                          ...(p.ancillaryRenewalReceived || {}),
-                          [key]: { ...((p.ancillaryRenewalReceived || {})[key] || {}), [field]: val },
-                        },
-                      }));
+
+                      // Fields that should propagate to other rows with the same carrier
+                      const PROPAGATE_FIELDS = ["received", "date", "rrRequested", "rrReceived"];
+
+                      const setAnc = (field, val) => setData(p => {
+                        const current = p.ancillaryRenewalReceived || {};
+                        const updated = {
+                          ...current,
+                          [key]: { ...(current[key] || {}), [field]: val },
+                        };
+                        // Propagate to other rows with the same non-empty carrier
+                        if (b.carrier && b.carrier !== "__other__" && PROPAGATE_FIELDS.includes(field)) {
+                          activeBenefits.forEach(other => {
+                            if (other.id === b.id) return;
+                            if (other.carrier !== b.carrier) return;
+                            const otherKey = "anc_line_" + other.id;
+                            // Only fill if the target field is currently blank/false
+                            const otherStored = current[otherKey] || {};
+                            const isEmpty = field === "received" || field === "rrRequested" || field === "rrReceived"
+                              ? !otherStored[field]           // checkbox: only fill if unchecked
+                              : !otherStored[field];          // date: only fill if empty
+                            if (isEmpty) {
+                              updated[otherKey] = { ...otherStored, [field]: val };
+                            }
+                          });
+                        }
+                        return { ...p, ancillaryRenewalReceived: updated };
+                      });
                       const rowBg = stored.received ? "#fffde7" : "#fff";
                       return (
                         <div key={key} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.2fr 80px 120px 80px 120px 120px 90px", gap: 6, marginBottom: 5, alignItems: "center", background: rowBg, borderRadius: 6, padding: "4px 0" }}>
@@ -11394,8 +11525,12 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 
   // Local notes state so keystrokes don't trigger a save+re-render on every character
   const [localNotes, setLocalNotes] = React.useState(t.notes || "");
-  // Sync if the task notes change externally (e.g. a different save path)
+  const [localDueDate, setLocalDueDate] = React.useState(t.dueDate || "");
+  const [localCompletedDate, setLocalCompletedDate] = React.useState(t.completedDate || "");
+  // Sync if the task fields change externally
   React.useEffect(() => { setLocalNotes(t.notes || ""); }, [t.notes]);
+  React.useEffect(() => { setLocalDueDate(t.dueDate || ""); }, [t.dueDate]);
+  React.useEffect(() => { setLocalCompletedDate(t.completedDate || ""); }, [t.completedDate]);
 
   function updateTaskFields(fields) {
     if (!onUpdateTask) return;
@@ -11482,14 +11617,17 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
           </label>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Due Date
-            <input type="date" value={t.dueDate || ""} onChange={e => updateTaskFields({ dueDate: e.target.value })}
+            <input type="date" value={localDueDate}
+              onChange={e => setLocalDueDate(e.target.value)}
+              onBlur={e => { if (e.target.value !== (t.dueDate || "")) updateTaskFields({ dueDate: e.target.value }); }}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px",
                 borderColor: pastDue ? "#fca5a5" : undefined }} />
           </label>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Completed Date
-            <input type="date" value={t.completedDate || ""}
-              onChange={e => updateTaskFields({ completedDate: e.target.value, ...(e.target.value ? { status: "Complete" } : {}) })}
+            <input type="date" value={localCompletedDate}
+              onChange={e => setLocalCompletedDate(e.target.value)}
+              onBlur={e => { if (e.target.value !== (t.completedDate || "")) updateTaskFields({ completedDate: e.target.value, ...(e.target.value ? { status: "Complete" } : {}) }); }}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
           </label>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
