@@ -98,14 +98,20 @@ function syncStandardTasks(client, tasksDb) {
 
   // Strip standard task instances from ALL groups first — removes deleted templates
   // and stale instances left behind by category changes
+  // Also remove any standard tasks from postOETasks that duplicate postOEFixed entries
+  const POST_OE_FIXED_IDS_SET = new Set([
+    "elections_received", "oe_changes_processed", "carrier_bill_audited",
+    "lineup_updated", "oe_wrapup_email", "new_carrier_census",
+  ]);
   const GROUPS = ["miscTasks", "postOETasks", "renewalTasks"];
   let updated = { ...client };
   GROUPS.forEach(group => {
-    updated[group] = (client[group] || []).filter(t =>
-      !t._standardTemplateId ||                          // keep manual tasks
-      (activeStdIds.has(t._standardTemplateId) &&        // keep if template still exists
-       templateGroup[t._standardTemplateId] === group)   // AND still belongs to this group
-    );
+    updated[group] = (client[group] || []).filter(t => {
+      if (!t._standardTemplateId) return true; // keep manual tasks
+      if (group === "postOETasks" && POST_OE_FIXED_IDS_SET.has(t._standardTemplateId)) return false; // remove postOEFixed dupes
+      return activeStdIds.has(t._standardTemplateId) &&  // keep if template still exists
+             templateGroup[t._standardTemplateId] === group; // AND still belongs to this group
+    });
   });
 
   // Now add/update matching standard tasks into the correct group
@@ -132,9 +138,19 @@ function syncStandardTasks(client, tasksDb) {
     return [...newStandard, ...manualTasks];
   }
 
-  const miscTemplates   = matchingTemplates.filter(t => groupForCategory(t.category) === "miscTasks");
-  const postOETemplates = matchingTemplates.filter(t => groupForCategory(t.category) === "postOETasks");
-  const renewalTemplates= matchingTemplates.filter(t => groupForCategory(t.category) === "renewalTasks");
+  // These task IDs are managed by postOEFixed — never sync standard tasks into postOETasks
+  // if they'd duplicate what's already rendered from postOEFixed
+  const POST_OE_FIXED_IDS = new Set([
+    "elections_received", "oe_changes_processed", "carrier_bill_audited",
+    "lineup_updated", "oe_wrapup_email", "new_carrier_census",
+  ]);
+
+  const miscTemplates    = matchingTemplates.filter(t => groupForCategory(t.category) === "miscTasks");
+  const postOETemplates  = matchingTemplates.filter(t =>
+    groupForCategory(t.category) === "postOETasks" &&
+    !POST_OE_FIXED_IDS.has(t.id)  // skip tasks that live in postOEFixed
+  );
+  const renewalTemplates = matchingTemplates.filter(t => groupForCategory(t.category) === "renewalTasks");
 
   updated.miscTasks    = syncGroup(updated.miscTasks,    miscTemplates,    GROUPS);
   updated.postOETasks  = syncGroup(updated.postOETasks,  postOETemplates,  GROUPS);
