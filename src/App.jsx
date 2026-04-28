@@ -7219,14 +7219,14 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
   function buildMailto(member, memberTasks, teamObj) {
     const email = memberTasks[0]?.memberEmail || "";
     if (!email) return null;
-    const subject = encodeURIComponent(`BenefitTrack Task Reminder — ${new Date().toLocaleDateString()}`);
+    const subject = `BenefitTrack Task Reminder - ${new Date().toLocaleDateString()}`;
     const lines = [`Hi ${member},`, "", "Here are your pending tasks:", ""];
     memberTasks.forEach(({ clientName, label, dueDate, status }) => {
-      const due = dueDate ? ` — Due: ${formatDate(dueDate)}` : "";
-      lines.push(`• ${clientName}: ${label}${due} [${status}]`);
+      const due = dueDate ? ` - Due: ${formatDate(dueDate)}` : "";
+      lines.push(`* ${clientName}: ${label}${due} [${status}]`);
     });
     lines.push("", "Please update task statuses in BenefitTrack as you complete them.", "", "Thank you!");
-    return `mailto:${email}?subject=${subject}&body=${encodeURIComponent(lines.join("\n"))}`;
+    return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join("\n"))}`;
   }
 
   // Group open tasks by assignee for notification
@@ -7238,7 +7238,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
       collectOpenTasks(c, null, tasksDb).forEach(t => {
         const assignee = t.assignee || "Unassigned";
         if (!tasksByMember[assignee]) tasksByMember[assignee] = [];
-        const memberInfo = teamObj?.members?.find(m => m.name === assignee);
+        const memberInfo = teamObj?.members?.find(m => m.name === assignee || m.name.split(" ")[0] === assignee);
         tasksByMember[assignee].push({
           clientName: c.name, label: t.label, dueDate: t.dueDate,
           status: t.status, memberEmail: memberInfo?.email || "",
@@ -7539,7 +7539,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {Object.entries(groups).map(([member, tasks]) => {
-                const memberInfo = teamObj?.members?.find(m => m.name === member);
+                const memberInfo = teamObj?.members?.find(m => m.name === member || m.name.split(" ")[0] === member);
                 const email = memberInfo?.email;
                 const mailto = email ? buildMailto(member, tasks.map(t => ({ ...t, memberEmail: email })), teamObj) : null;
                 const overdue = tasks.filter(t => t.dueDate && new Date(t.dueDate + "T12:00:00") < new Date()).length;
@@ -10756,7 +10756,7 @@ function CarriersView({ carriers, onSave, currentUser }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: editingId ? "1fr 420px" : "1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: editingId ? "1fr 560px" : "1fr", gap: 16 }}>
         {/* Carrier list */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filtered.length === 0 && (
@@ -11162,13 +11162,32 @@ function CarriersView({ carriers, onSave, currentUser }) {
               )}
               {(editData.contacts || []).map((contact, ci) => (
                 <div key={ci} style={{ background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px", marginBottom: 8 }}>
-                  {/* Row 1: Role + ✕ */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 6 }}>
+                  {/* Row 1: Role + move buttons + ✕ */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
                     <select value={contact.role || "Sales Representative"}
                       onChange={e => { const c = [...(editData.contacts||[])]; c[ci] = { ...c[ci], role: e.target.value }; setEditData(p => ({ ...p, contacts: c })); }}
                       style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
                       {CARRIER_CONTACT_ROLES.map(r => <option key={r}>{r}</option>)}
                     </select>
+                    <button type="button" disabled={ci === 0}
+                      onClick={() => {
+                        const c = [...(editData.contacts||[])];
+                        [c[ci-1], c[ci]] = [c[ci], c[ci-1]];
+                        setEditData(p => ({ ...p, contacts: c }));
+                      }}
+                      style={{ padding: "4px 7px", borderRadius: 6, fontSize: 11, border: "1.5px solid #e2e8f0",
+                        background: ci === 0 ? "#f8fafc" : "#fff", color: ci === 0 ? "#cbd5e1" : "#475569",
+                        cursor: ci === 0 ? "default" : "pointer", fontFamily: "inherit", lineHeight: 1 }}>↑</button>
+                    <button type="button" disabled={ci === (editData.contacts||[]).length - 1}
+                      onClick={() => {
+                        const c = [...(editData.contacts||[])];
+                        [c[ci], c[ci+1]] = [c[ci+1], c[ci]];
+                        setEditData(p => ({ ...p, contacts: c }));
+                      }}
+                      style={{ padding: "4px 7px", borderRadius: 6, fontSize: 11, border: "1.5px solid #e2e8f0",
+                        background: ci === (editData.contacts||[]).length - 1 ? "#f8fafc" : "#fff",
+                        color: ci === (editData.contacts||[]).length - 1 ? "#cbd5e1" : "#475569",
+                        cursor: ci === (editData.contacts||[]).length - 1 ? "default" : "pointer", fontFamily: "inherit", lineHeight: 1 }}>↓</button>
                     <button type="button" onClick={() => setEditData(p => ({ ...p, contacts: p.contacts.filter((_, i) => i !== ci) }))}
                       style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
                         background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
@@ -11363,6 +11382,129 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
     });
   }
   return items;
+}
+
+// ── OpenTaskRow — stable component so edits don't collapse the panel ──────────────
+function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdateTask, clients, teamMembers, today, statusChip, statusDot }) {
+  const taskOpen = expandedTask === taskKey;
+  const sc = statusChip[t.status] || statusChip["Not Started"];
+  const dot = statusDot[t.status] || statusDot["Not Started"];
+  const taskDate = t.dueDate ? new Date(t.dueDate + "T12:00:00") : null;
+  const pastDue = taskDate && taskDate < today;
+
+  // Local notes state so keystrokes don't trigger a save+re-render on every character
+  const [localNotes, setLocalNotes] = React.useState(t.notes || "");
+  // Sync if the task notes change externally (e.g. a different save path)
+  React.useEffect(() => { setLocalNotes(t.notes || ""); }, [t.notes]);
+
+  function updateTaskFields(fields) {
+    if (!onUpdateTask) return;
+    const client = clients.find(cl => cl.id === c.id);
+    if (!client) return;
+    let updated = JSON.parse(JSON.stringify(client));
+    if (t.group === "compliance" || t.group === "preRenewal") {
+      const existing = updated[t.group]?.[t.taskId];
+      const base = (typeof existing === "object" && existing) ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
+      updated[t.group] = { ...updated[t.group], [t.taskId]: { ...base, ...fields } };
+    } else if (t.group === "openEnrollment") {
+      const existing = updated.openEnrollment?.tasks?.[t.taskId];
+      const base = (typeof existing === "object" && existing) ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
+      updated.openEnrollment = { ...updated.openEnrollment, tasks: { ...(updated.openEnrollment?.tasks || {}), [t.taskId]: { ...base, ...fields } } };
+    } else if (t.group === "postOETasks" || t.group === "miscTasks" || t.group === "renewalTasks") {
+      const arr = [...(updated[t.group] || [])];
+      arr[t.arrayIndex] = { ...arr[t.arrayIndex], ...fields };
+      updated[t.group] = arr;
+    } else if (t.group === "renewalMeeting") {
+      updated.renewalMeeting = { ...(updated.renewalMeeting || {}), ...fields };
+    } else if (t.group === "renewalTasksAuto") {
+      updated.renewalTasksAuto = { ...(updated.renewalTasksAuto || {}), [t.taskId]: { ...(updated.renewalTasksAuto?.[t.taskId] || {}), ...fields } };
+    } else if (t.group === "ongoingTasks") {
+      updated.ongoingTasks = { ...(updated.ongoingTasks || {}), [t.taskId]: { ...(updated.ongoingTasks?.[t.taskId] || {}), ...fields } };
+    } else if (t.group === "transactions") {
+      const arr = [...(updated.transactions || [])];
+      arr[t.arrayIndex] = { ...arr[t.arrayIndex], ...fields };
+      updated.transactions = arr;
+    }
+    onUpdateTask(updated);
+  }
+
+  return (
+    <div key={ti} style={{
+      borderRadius: 7, overflow: "hidden",
+      border: `1px solid ${pastDue ? "#fecdd3" : taskOpen ? "#bfdbfe" : "#e2e8f0"}`,
+      background: taskOpen ? "#f8fbff" : pastDue ? "#fff1f2" : "#f8fafc",
+    }}>
+      {/* Summary row */}
+      <div onClick={e => { e.stopPropagation(); setExpandedTask(taskOpen ? null : taskKey); }}
+        style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", userSelect: "none" }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: pastDue ? "#f43f5e" : dot }} />
+        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#0f172a" }}>{t.label}</span>
+        {t.assignee && !taskOpen && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#3e5878", background: "#e8f0f7", borderRadius: 99, padding: "1px 7px" }}>
+            {t.assignee}
+          </span>
+        )}
+        {t.dueDate && !taskOpen && (
+          <span style={{ fontSize: 10, fontWeight: 600, color: pastDue ? "#e11d48" : "#64748b" }}>
+            {pastDue ? "⚠ " : "📅 "}{formatDate(t.dueDate)}
+          </span>
+        )}
+        <select
+          value={t.status || "Not Started"}
+          onClick={e => e.stopPropagation()}
+          onChange={e => {
+            const newStatus = e.target.value;
+            updateTaskFields({ status: newStatus, ...(newStatus === "Complete" ? { completedDate: new Date().toISOString().split("T")[0] } : {}) });
+          }}
+          style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+            border: `1.5px solid ${sc.bg}`, background: sc.bg, color: sc.text,
+            cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+          <option value="Not Started">Not Started</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Complete">Complete</option>
+          <option value="N/A">N/A</option>
+        </select>
+        <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }}>{taskOpen ? "▲" : "▼"}</span>
+      </div>
+
+      {/* Expanded edit panel */}
+      {taskOpen && (
+        <div onClick={e => e.stopPropagation()}
+          style={{ padding: "8px 12px 12px", borderTop: "1px solid #dbeafe",
+            display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
+            Assignee
+            <select value={t.assignee || ""} onChange={e => updateTaskFields({ assignee: e.target.value })}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
+              <option value="">— Unassigned —</option>
+              {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
+            Due Date
+            <input type="date" value={t.dueDate || ""} onChange={e => updateTaskFields({ dueDate: e.target.value })}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px",
+                borderColor: pastDue ? "#fca5a5" : undefined }} />
+          </label>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
+            Completed Date
+            <input type="date" value={t.completedDate || ""}
+              onChange={e => updateTaskFields({ completedDate: e.target.value, ...(e.target.value ? { status: "Complete" } : {}) })}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+          </label>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
+            Notes
+            <input type="text"
+              value={localNotes}
+              onChange={e => setLocalNotes(e.target.value)}
+              onBlur={e => { if (e.target.value !== (t.notes || "")) updateTaskFields({ notes: e.target.value }); }}
+              placeholder="Notes…"
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
+          </label>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
@@ -11793,127 +11935,17 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                             textTransform: "uppercase", color: cc.text, marginBottom: 5 }}>{cat}</div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             {tasks.map((t, ti) => {
-                              const sc = statusChip[t.status] || statusChip["Not Started"];
-                              const dot = statusDot[t.status] || statusDot["Not Started"];
-                              const taskDate = t.dueDate ? new Date(t.dueDate + "T12:00:00") : null;
-                              const pastDue  = taskDate && taskDate < today;
                               const taskKey  = `${c.id}__${t.group}__${t.taskId || t.arrayIndex}__${ti}`;
-                              const taskOpen = expandedTask === taskKey;
                               const teamMembers = c.team === "India" ? INDIA_MEMBERS : JULIET_MEMBERS;
-
-                              // Shared updater — writes any field(s) back to the client record
-                              function updateTaskFields(fields) {
-                                if (!onUpdateTask) return;
-                                const client = clients.find(cl => cl.id === c.id);
-                                if (!client) return;
-                                let updated = JSON.parse(JSON.stringify(client));
-                                if (t.group === "compliance" || t.group === "preRenewal") {
-                                  const existing = updated[t.group]?.[t.taskId];
-                                  const base = (typeof existing === "object" && existing) ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
-                                  updated[t.group] = { ...updated[t.group], [t.taskId]: { ...base, ...fields } };
-                                } else if (t.group === "openEnrollment") {
-                                  const existing = updated.openEnrollment?.tasks?.[t.taskId];
-                                  const base = (typeof existing === "object" && existing) ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
-                                  updated.openEnrollment = { ...updated.openEnrollment, tasks: { ...(updated.openEnrollment?.tasks || {}), [t.taskId]: { ...base, ...fields } } };
-                                } else if (t.group === "postOETasks" || t.group === "miscTasks" || t.group === "renewalTasks") {
-                                  const arr = [...(updated[t.group] || [])];
-                                  arr[t.arrayIndex] = { ...arr[t.arrayIndex], ...fields };
-                                  updated[t.group] = arr;
-                                } else if (t.group === "renewalMeeting") {
-                                  updated.renewalMeeting = { ...(updated.renewalMeeting || {}), ...fields };
-                                } else if (t.group === "renewalTasksAuto") {
-                                  updated.renewalTasksAuto = { ...(updated.renewalTasksAuto || {}), [t.taskId]: { ...(updated.renewalTasksAuto?.[t.taskId] || {}), ...fields } };
-                                } else if (t.group === "ongoingTasks") {
-                                  updated.ongoingTasks = { ...(updated.ongoingTasks || {}), [t.taskId]: { ...(updated.ongoingTasks?.[t.taskId] || {}), ...fields } };
-                                } else if (t.group === "transactions") {
-                                  const arr = [...(updated.transactions || [])];
-                                  arr[t.arrayIndex] = { ...arr[t.arrayIndex], ...fields };
-                                  updated.transactions = arr;
-                                }
-                                onUpdateTask(updated);
-                              }
-
                               return (
-                                <div key={ti} style={{
-                                  borderRadius: 7, overflow: "hidden",
-                                  border: `1px solid ${pastDue ? "#fecdd3" : taskOpen ? "#bfdbfe" : "#e2e8f0"}`,
-                                  background: taskOpen ? "#f8fbff" : pastDue ? "#fff1f2" : "#f8fafc",
-                                }}>
-                                  {/* Summary row — always visible */}
-                                  <div onClick={e => { e.stopPropagation(); setExpandedTask(taskOpen ? null : taskKey); }}
-                                    style={{ display: "flex", alignItems: "center", gap: 8,
-                                      padding: "6px 10px", cursor: "pointer", userSelect: "none" }}>
-                                    <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-                                      background: pastDue ? "#f43f5e" : dot }} />
-                                    <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#0f172a" }}>
-                                      {t.label}
-                                    </span>
-                                    {t.assignee && !taskOpen && (
-                                      <span style={{ fontSize: 10, fontWeight: 700, color: "#3e5878",
-                                        background: "#e8f0f7", borderRadius: 99, padding: "1px 7px" }}>
-                                        {t.assignee}
-                                      </span>
-                                    )}
-                                    {t.dueDate && !taskOpen && (
-                                      <span style={{ fontSize: 10, fontWeight: 600,
-                                        color: pastDue ? "#e11d48" : "#64748b" }}>
-                                        {pastDue ? "⚠ " : "📅 "}{formatDate(t.dueDate)}
-                                      </span>
-                                    )}
-                                    <select
-                                      value={t.status || "Not Started"}
-                                      onClick={e => e.stopPropagation()}
-                                      onChange={e => {
-                                        const newStatus = e.target.value;
-                                        updateTaskFields({ status: newStatus, ...(newStatus === "Complete" ? { completedDate: new Date().toISOString().split("T")[0] } : {}) });
-                                      }}
-                                      style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px",
-                                        borderRadius: 99, border: `1.5px solid ${sc.bg}`,
-                                        background: sc.bg, color: sc.text, cursor: "pointer",
-                                        fontFamily: "inherit", flexShrink: 0 }}>
-                                      <option value="Not Started">Not Started</option>
-                                      <option value="In Progress">In Progress</option>
-                                      <option value="Complete">Complete</option>
-                                      <option value="N/A">N/A</option>
-                                    </select>
-                                    <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }}>{taskOpen ? "▲" : "▼"}</span>
-                                  </div>
-
-                                  {/* Expanded edit panel */}
-                                  {taskOpen && (
-                                    <div onClick={e => e.stopPropagation()}
-                                      style={{ padding: "8px 12px 12px", borderTop: "1px solid #dbeafe",
-                                        display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-                                      <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
-                                        Assignee
-                                        <select value={t.assignee || ""} onChange={e => updateTaskFields({ assignee: e.target.value })}
-                                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
-                                          <option value="">— Unassigned —</option>
-                                          {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
-                                        </select>
-                                      </label>
-                                      <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
-                                        Due Date
-                                        <input type="date" value={t.dueDate || ""} onChange={e => updateTaskFields({ dueDate: e.target.value })}
-                                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px",
-                                            borderColor: pastDue ? "#fca5a5" : undefined }} />
-                                      </label>
-                                      <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
-                                        Completed Date
-                                        <input type="date" value={t.completedDate || ""} onChange={e => updateTaskFields({ completedDate: e.target.value, ...(e.target.value ? { status: "Complete" } : {}) })}
-                                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                                      </label>
-                                      <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
-                                        Notes
-                                        <input type="text" value={t.notes || ""} onChange={e => updateTaskFields({ notes: e.target.value })}
-                                          placeholder="Notes…"
-                                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                                      </label>
-                                    </div>
-                                  )}
-                                </div>
+                                <OpenTaskRow key={taskKey} t={t} ti={ti} c={c} taskKey={taskKey}
+                                  expandedTask={expandedTask} setExpandedTask={setExpandedTask}
+                                  onUpdateTask={onUpdateTask} clients={clients}
+                                  teamMembers={teamMembers} today={today}
+                                  statusChip={statusChip} statusDot={statusDot} />
                               );
                             })}
+
                           </div>
                         </div>
                       );
