@@ -10036,7 +10036,6 @@ useEffect(() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
         return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />;
       })()}
-      )}
 
       {/* Team Edit/Add Modal */}
       {teamModal && (
