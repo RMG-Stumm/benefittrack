@@ -7104,11 +7104,14 @@ function parseClientSpreadsheet(rows, tasksDb) {
 
 // ── Meetings View ─────────────────────────────────────────────────────────────
 
-function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient, currentUser, userTeamId }) {
-  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
+function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient, currentUser, userTeamId, userTeams }) {
+  const isAC = currentUser?.role?.trim() === "Account Coordinator";
+  const isMultiTeam = (userTeams || []).length > 1;
+  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams || []).length > 0;
+  const canRecord = !isAC; // ACs can view but not record/edit meetings
   const [showForm, setShowForm]     = useState(false);
   const [editId, setEditId]         = useState(null);
-  const [filterTeam, setFilterTeam] = useState(isRestricted ? userTeamId : "All");
+  const [filterTeam, setFilterTeam] = useState(isRestricted && !isMultiTeam ? (userTeamId || "All") : "All");
   const [expandedId, setExpandedId] = useState(null);
   const [notifyState, setNotifyState] = useState({}); // { memberId: "sent"|"composing" }
 
@@ -7125,7 +7128,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
 
   // Collect all open tasks for the selected team's clients
   const teamClients = clients.filter(c => {
-    if (isRestricted && c.team !== userTeamId) return false;
+    if (isRestricted && !(userTeams || []).includes(c.team)) return false;
     if (form.team && c.team !== form.team) return false;
     return true;
   });
@@ -7247,7 +7250,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
 
   const sorted = [...meetings]
     .filter(m => {
-      if (isRestricted && m.team !== userTeamId) return false;
+      if (isRestricted && !(userTeams || []).includes(m.team)) return false;
       if (filterTeam !== "All" && m.team !== filterTeam) return false;
       return true;
     })
@@ -7264,15 +7267,18 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{sorted.length} meeting{sorted.length !== 1 ? "s" : ""} recorded</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {!isRestricted && (
+          {(!isRestricted || isMultiTeam) && (
             <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
               style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px" }}>
               <option value="All">All Teams</option>
-              {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
+              {(isMultiTeam && isRestricted
+                ? teams.filter(t => (userTeams || []).includes(t.id))
+                : teams
+              ).map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
             </select>
           )}
-          <button onClick={() => { setForm(emptyForm()); setShowForm(true); setEditId(null); }}
-            style={btnPrimary}>+ New Meeting</button>
+          {canRecord && <button onClick={() => { setForm(emptyForm()); setShowForm(true); setEditId(null); }}
+            style={btnPrimary}>+ New Meeting</button>}
         </div>
       </div>
 
@@ -7606,7 +7612,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                       {slippedTasks.length > 0 && <span style={{ color: "#92400e" }}>⚠ {slippedTasks.length} date{slippedTasks.length > 1 ? "s" : ""} extended</span>}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6 }}>
+                  {canRecord && <div style={{ display: "flex", gap: 6 }}>
                     <button type="button" onClick={e => { e.stopPropagation(); setForm({ ...mtg }); setEditId(mtg.id); setShowForm(true); }}
                       style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569",
@@ -7615,7 +7621,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                       style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                         cursor: "pointer", fontFamily: "inherit" }}>✕</button>
-                  </div>
+                  </div>}
                   <span style={{ fontSize: 13, color: "#94a3b8" }}>{isExpanded ? "▲" : "▼"}</span>
                 </div>
 
@@ -8663,40 +8669,6 @@ useEffect(() => {
 
   const userTeamId = currentUser?.team || null;
 
-  const filtered = useMemo(() => {
-    const teamRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
-    let list = clients.filter(c => {
-      if (teamRestricted && c.team !== userTeamId) return false;
-      const q = search.toLowerCase();
-      if (q && !c.name.toLowerCase().includes(q)) return false;
-      if (filterTeam !== "All" && c.team !== filterTeam) return false;
-      if (filterMarket !== "All" && c.marketSize !== filterMarket) return false;
-      if (filterFunding !== "All" && c.fundingMethod !== filterFunding) return false;
-      if (filterSitus !== "All" && (c.groupSitus || "") !== filterSitus) return false;
-      if (filterCarrier !== "All") {
-        const medCarrier = (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || "";
-        if (medCarrier !== filterCarrier) return false;
-      }
-      return true;
-    });
-    // Sort
-    list = [...list].sort((a, b) => {
-      let av = "", bv = "";
-      if (sortField === "name")        { av = a.name || ""; bv = b.name || ""; }
-      else if (sortField === "renewal") { av = a.renewalDate || ""; bv = b.renewalDate || ""; }
-      else if (sortField === "market") { av = a.marketSize || ""; bv = b.marketSize || ""; }
-      else if (sortField === "carrier") {
-        av = (a.benefitCarriers || {}).medical || (a.carriers || [])[0] || "";
-        bv = (b.benefitCarriers || {}).medical || (b.carriers || [])[0] || "";
-      }
-      else if (sortField === "situs")   { av = a.groupSitus || ""; bv = b.groupSitus || ""; }
-      else if (sortField === "funding") { av = a.fundingMethod || ""; bv = b.fundingMethod || ""; }
-      else if (sortField === "team")    { av = a.team || ""; bv = b.team || ""; }
-      const cmp = av.localeCompare(bv);
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return list;
-  }, [clients, search, filterTeam, filterMarket, filterCarrier, filterSitus, filterFunding, sortField, sortDir, currentUser, userTeamId]);
 
   function saveClient(data) {
     // Sync standard tasks before saving
@@ -8742,6 +8714,8 @@ useEffect(() => {
   // View: "dashboard" | "clients" | "renewals" | "teams"
   const [view, setView] = useState(() => sessionStorage.getItem("bt_view") || "dashboard");
   const changeView = (v) => { setView(v); sessionStorage.setItem("bt_view", v); };
+  const [dashNav, setDashNav] = useState({}); // { assignee, window, cat } — pre-sets for OpenTasksView
+  function navToTasks(opts={}) { setDashNav(opts); changeView("overdue"); }
   const [meetings, setMeetingsRaw] = useState([]);
   function setMeetings(updater) {
     setMeetingsRaw(prev => {
@@ -8767,8 +8741,60 @@ useEffect(() => {
       }));
     }
   });
+  const userTeams = React.useMemo(() => {
+    if (!currentUser) return [];
+    const nameLC = (currentUser.name || "").toLowerCase().trim();
+    const emailLC = (currentUser.email || "").toLowerCase().trim();
+    // Match against Supabase teams (live data)
+    const byMembership = teams.filter(t => t.members?.some(m =>
+      (m.name || "").toLowerCase().trim() === nameLC ||
+      (emailLC && (m.email || "").toLowerCase().trim() === emailLC)
+    )).map(t => t.id);
+    // Match against hardcoded TEAMS constant (reliable fallback)
+    const byHardcoded = Object.entries(TEAMS)
+      .filter(([, t]) => (t.members||[]).some(m =>
+        (m.name||"").toLowerCase().trim() === nameLC
+      )).map(([k]) => k);
+    // Match against user's stored team field
+    const byTeamField = currentUser.team ? [currentUser.team] : [];
+    return [...new Set([...byMembership, ...byHardcoded, ...byTeamField])];
+  }, [currentUser, teams]);
+
+  const filtered = useMemo(() => {
+    const teamRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && userTeams.length > 0;
+    let list = clients.filter(c => {
+      if (teamRestricted && !userTeams.includes(c.team)) return false;
+      const q = search.toLowerCase();
+      if (q && !c.name.toLowerCase().includes(q)) return false;
+      if (filterTeam !== "All" && c.team !== filterTeam) return false;
+      if (filterMarket !== "All" && c.marketSize !== filterMarket) return false;
+      if (filterFunding !== "All" && c.fundingMethod !== filterFunding) return false;
+      if (filterSitus !== "All" && (c.groupSitus || "") !== filterSitus) return false;
+      if (filterCarrier !== "All") {
+        const medCarrier = (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || "";
+        if (medCarrier !== filterCarrier) return false;
+      }
+      return true;
+    });
+    // Sort
+    list = [...list].sort((a, b) => {
+      let av = "", bv = "";
+      if (sortField === "name")        { av = a.name || ""; bv = b.name || ""; }
+      else if (sortField === "renewal") { av = a.renewalDate || ""; bv = b.renewalDate || ""; }
+      else if (sortField === "market") { av = a.marketSize || ""; bv = b.marketSize || ""; }
+      else if (sortField === "carrier") {
+        av = (a.benefitCarriers || {}).medical || (a.carriers || [])[0] || "";
+        bv = (b.benefitCarriers || {}).medical || (b.carriers || [])[0] || "";
+      }
+      else if (sortField === "situs")   { av = a.groupSitus || ""; bv = b.groupSitus || ""; }
+      else if (sortField === "funding") { av = a.fundingMethod || ""; bv = b.fundingMethod || ""; }
+      else if (sortField === "team")    { av = a.team || ""; bv = b.team || ""; }
+      const cmp = av.localeCompare(bv);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return list;
+  }, [clients, search, filterTeam, filterMarket, filterCarrier, filterSitus, filterFunding, sortField, sortDir, currentUser, userTeamId, userTeams]);
   const [teamModal, setTeamModal] = useState(null); // null | team object | "new"
-  const userTeams = currentUser ? [...new Set(teams.filter(t => t.members?.some(m => m.name === currentUser.name)).map(t => t.id))] : [];
   const [dashFilter, setDashFilter] = useState({
     team: "All", market: "All", carrier: "All", situs: "All", funding: "All",
   });
@@ -8918,194 +8944,479 @@ useEffect(() => {
 
       <div style={{ maxWidth: 1280, margin: "0 auto", padding: "28px 32px" }}>
 
-        {/* Stats tiles — Open Tasks */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(1,1fr)", gap: 14, marginBottom: 28, maxWidth: 320 }}>
-          {[
-            { label: "Open Tasks", value: openTasksCount, icon: "🚨", color: "#ef4444", action: () => changeView("overdue") },
-          ].map(s => (
-            <div key={s.label}
-              className="stat-tile"
-              onClick={s.action || undefined}
-              style={{
-                background: "#fff", borderRadius: 14, padding: "16px 20px",
-                border: s.action ? "1.5px solid #bfdbfe" : "1px solid #e2e8f0",
-                display: "flex", alignItems: "center", gap: 14,
-                cursor: s.action ? "pointer" : "default",
-                boxShadow: "0 1px 4px rgba(0,0,0,.05)",
-              }}>
-              <div style={{
-                width: 44, height: 44, borderRadius: 12, fontSize: 20,
-                background: `${s.color}18`, display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{s.icon}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
-                <div style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>{s.label}</div>
-              </div>
-              {s.action && <div style={{ fontSize: 16, color: "#93c5fd" }}>→</div>}
-            </div>
-          ))}
-        </div>
+
 
         {/* ── DASHBOARD VIEW ── */}
         {view === "dashboard" && (() => {
-          const allCarriersD = [...new Set(clients.map(c =>
-            (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || ""
-          ).filter(Boolean))].sort();
-          const allSitusD  = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
-          const allFundingD = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
+          const role = currentUser?.role?.trim() || "";
+          const isLead = ["Team Lead","VP","Lead"].includes(role);
+          const isAE   = role === "Account Executive";
+          const isAM   = role === "Account Manager";
+          const isAC   = role === "Account Coordinator";
 
-          const teamRestricted2 = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
-          const dashFiltered = upcoming120.filter(c => {
-            if (teamRestricted2 && c.team !== userTeamId) return false;
-            if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
-            if (dashFilter.market  !== "All" && c.marketSize !== dashFilter.market) return false;
-            if (dashFilter.funding !== "All" && c.fundingMethod !== dashFilter.funding) return false;
-            if (dashFilter.situs   !== "All" && (c.groupSitus || "") !== dashFilter.situs) return false;
-            if (dashFilter.carrier !== "All") {
-              const mc = (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || "";
-              if (mc !== dashFilter.carrier) return false;
-            }
-            return true;
+          const hour = new Date().getHours();
+          const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+          const todayStr = new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+
+          const myTeamObjs  = teams.filter(t => userTeams.includes(t.id));
+          const myTeamLabel = myTeamObjs.length > 1
+            ? myTeamObjs.map(t => "Team "+t.label).join(" & ")
+            : myTeamObjs[0] ? "Team "+myTeamObjs[0].label : "";
+          const myClients   = clients.filter(c => userTeams.length > 0 ? userTeams.includes(c.team) : true);
+          const myUpcoming  = myClients
+            .map(c => ({ ...c, _days: daysUntil(c.renewalDate) }))
+            .filter(c => c._days !== null && c._days >= 0 && c._days <= 120)
+            .sort((a,b) => a._days - b._days);
+          const myUpcoming30 = myUpcoming.filter(c => c._days <= 30);
+
+          const myAllTasks = myClients.flatMap(c =>
+            collectOpenTasks(c, null, tasksData).map(t => ({ ...t, clientId:c.id, clientName:c.name, clientObj:c }))
+          );
+          const myTasks = isLead ? myAllTasks : myAllTasks.filter(t => (t.assignee||"") === currentUser.name);
+          const myOverdueTasks = myTasks.filter(t => t.dueDate && new Date(t.dueDate+"T23:59:59") < new Date());
+          const myDueThisWeek  = myTasks.filter(t => {
+            if (!t.dueDate) return false;
+            const d = new Date(t.dueDate+"T23:59:59"), now = new Date(), end = new Date();
+            end.setDate(now.getDate()+7);
+            return d >= now && d <= end;
           });
 
-          const activeDashFilters = Object.values(dashFilter).filter(v => v !== "All").length;
+          const tasksByAssignee = {};
+          myAllTasks.forEach(t => {
+            const a = t.assignee || "Unassigned";
+            if (!tasksByAssignee[a]) tasksByAssignee[a] = [];
+            tasksByAssignee[a].push(t);
+          });
 
+          function getTaskRoleBadge(t) {
+            const tmpl = (tasksData||[]).find(td => td.id === t.taskId || td.label === t.label);
+            const da = tmpl?.defaultAssignee || "";
+            if (da === "Account Coordinator") return "AC";
+            if (da === "Account Manager")     return "AM";
+            if (da === "Account Executive")   return "AE";
+            return null;
+          }
+
+          const perfByMember = {};
+          myAllTasks.forEach(t => {
+            const a = t.assignee||""; if (!a) return;
+            if (!perfByMember[a]) perfByMember[a] = {total:0,onTime:0};
+            if (t.completedDate) {
+              perfByMember[a].total++;
+              const due = t.plannedDueDate || t.dueDate;
+              if (!due || t.completedDate <= due) perfByMember[a].onTime++;
+            }
+          });
+
+          const AVATAR_COLORS = {
+            D:{bg:"#d1fae5",color:"#065f46"},
+            M:{bg:"#dbeafe",color:"#1e40af"},
+            K:{bg:"#fce7f3",color:"#9d174d"},
+            R:{bg:"#dce8f2",color:"#3e5878"}
+          };
+          const ROLE_BADGE = {
+            AC:{bg:"#fce7f3",color:"#9d174d",border:"#f9a8d4"},
+            AM:{bg:"#dbeafe",color:"#1e40af",border:"#93c5fd"},
+            AE:{bg:"#d1fae5",color:"#065f46",border:"#6ee7b7"}
+          };
+          // Team colors for client tiles — India=blue, Juliet=green
+          const TEAM_TILE_COLORS = {
+            India:  {bg:"#eff6ff", border:"#93c5fd", accent:"#1e40af", dot:"#3b82f6"},
+            Juliet: {bg:"#f0fdf4", border:"#86efac", accent:"#166534", dot:"#22c55e"},
+          };
+
+          function Avatar({name}) {
+            const init = (name||"?")[0].toUpperCase();
+            const s = AVATAR_COLORS[init]||{bg:"#dce8f2",color:"#3e5878"};
+            return <div style={{width:30,height:30,borderRadius:"50%",background:s.bg,color:s.color,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,letterSpacing:"-0.5px"}}>{init}</div>;
+          }
+
+          function RoleBadge({role}) {
+            if (!role) return null;
+            const s = ROLE_BADGE[role]||{bg:"#f1f5f9",color:"#475569",border:"#e2e8f0"};
+            return <span style={{fontSize:9,padding:"2px 6px",borderRadius:6,fontWeight:800,background:s.bg,color:s.color,border:"0.5px solid "+s.border,flexShrink:0,letterSpacing:"0.3px"}}>{role}</span>;
+          }
+
+          function UrgBadge({days,dueDate}) {
+            let diff, label;
+            if (dueDate) {
+              const d = new Date(dueDate+"T23:59:59"), now = new Date(); now.setHours(0,0,0,0);
+              diff = Math.round((d-now)/(1000*60*60*24));
+              label = diff < 0 ? Math.abs(diff)+"d overdue" : diff === 0 ? "due today" : diff+" days";
+            } else if (days !== undefined) {
+              diff = days; label = days+" days";
+            } else return null;
+            const urgent = diff < 0;
+            const warn   = !urgent && diff <= 30;
+            const bg     = urgent ? "#fee2e2" : warn ? "#fef3c7" : "#eff6ff";
+            const color  = urgent ? "#991b1b" : warn ? "#92400e" : "#1e40af";
+            return <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,fontWeight:700,background:bg,color,whiteSpace:"nowrap",flexShrink:0}}>{label}</span>;
+          }
+
+          const completedThisWeek = myAllTasks.filter(t => {
+            if (!t.completedDate) return false;
+            const d = new Date(t.completedDate+"T12:00:00"), now = new Date(), start = new Date();
+            start.setDate(now.getDate()-7);
+            return d >= start && d <= now && (isLead || (t.assignee||"") === currentUser.name);
+          }).length;
+
+          const myMeetings = [...meetings]
+            .filter(m => userTeams.length === 0 || userTeams.includes(m.team))
+            .sort((a,b) => b.date.localeCompare(a.date)).slice(0,3);
+
+          const myFollowUps = myClients.flatMap(c => {
+            const allT = [
+              ...Object.entries(c.preRenewal||{}).map(([,v])=>({task:v,client:c})),
+              ...Object.entries(c.compliance||{}).map(([,v])=>({task:v,client:c})),
+              ...(c.renewalTasks||[]).map(v=>({task:v,client:c})),
+              ...(c.miscTasks||[]).map(v=>({task:v,client:c})),
+              ...(c.postOETasks||[]).map(v=>({task:v,client:c})),
+              ...(c.transactions||[]).map(v=>({task:v,client:c})),
+            ];
+            return allT.flatMap(({task,client}) =>
+              (task?.followUps||[])
+                .filter(fu => fu.date && fu.date <= new Date().toISOString().split("T")[0])
+                .filter(() => isLead || (task.assignee||"") === currentUser.name)
+                .map(fu => ({...fu, clientName:client.name, clientObj:client}))
+            );
+          }).slice(0,5);
+
+          const topTasks = (isLead ? myAllTasks : myTasks)
+            .filter(t => t.dueDate).sort((a,b) => a.dueDate.localeCompare(b.dueDate)).slice(0,6);
+
+          const topTasksByAssignee = Object.entries(tasksByAssignee)
+            .filter(([a]) => a !== "Unassigned")
+            .map(([a, tasks]) => {
+              const overdue = tasks.filter(t => t.dueDate && new Date(t.dueDate+"T23:59:59") < new Date());
+              const next = [...tasks].filter(t=>t.dueDate).sort((a,b)=>a.dueDate.localeCompare(b.dueDate))[0];
+              return {name:a, total:tasks.length, overdue:overdue.length, next};
+            }).sort((a,b) => b.overdue - a.overdue);
+
+          const perf = Object.entries(perfByMember)
+            .filter(([a]) => a !== "Unassigned")
+            .map(([name, {total,onTime}]) => ({name, rate:total>0?Math.round((onTime/total)*100):null, total}))
+            .filter(p => p.total > 0).sort((a,b) => (a.rate||0)-(b.rate||0));
+
+          // ── Styled sub-components ─────────────────────────────────────────
+          function Panel({title, sub, children, accent}) {
+            const hdrBg  = accent ? accent+"18" : "#f8fafc";
+            const hdrBdr = accent ? accent+"40" : "#e8ecf0";
+            const hdrTxt = accent || "#3e5878";
+            return (
+              <div style={{background:"#fff",borderRadius:14,border:"1px solid #e8ecf0",overflow:"hidden",boxShadow:"0 1px 3px rgba(62,88,120,.06)"}}>
+                <div style={{padding:"11px 16px",borderBottom:"1px solid "+hdrBdr,background:hdrBg,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:hdrTxt,letterSpacing:"0.2px"}}>{title}</span>
+                  {sub && <span style={{fontSize:11,color:"#94a3b8",fontWeight:500}}>{sub}</span>}
+                </div>
+                {children}
+              </div>
+            );
+          }
+
+          const rowHover = {onMouseEnter:e=>e.currentTarget.style.background="#f0f5fa",onMouseLeave:e=>e.currentTarget.style.background="transparent"};
+
+          function TaskRow({task, showAvatar, useTeamColor}) {
+            const role = getTaskRoleBadge(task);
+            const teamKey = task.clientObj ? (Object.keys(TEAMS).find(k=>k===task.clientObj.team||TEAMS[k]?.label===task.clientObj.team)||task.clientObj.team) : null;
+            const tc = useTeamColor && teamKey ? (TEAM_TILE_COLORS[teamKey]||null) : null;
+            return (
+              <div style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer",transition:"background .1s",background:tc?tc.bg:"transparent"}}
+                onMouseEnter={e=>e.currentTarget.style.background=tc?tc.border+"40":"#f0f5fa"}
+                onMouseLeave={e=>e.currentTarget.style.background=tc?tc.bg:"transparent"}
+                onClick={() => setModal(task.clientObj)}>
+                {tc && <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:tc.dot,flexShrink:0}}></div>}
+                {showAvatar && <Avatar name={task.assignee} />}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontWeight:700,fontSize:13,color:tc?tc.accent:"#0f172a"}}>{task.label}</span>
+                    <RoleBadge role={role} />
+                  </div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                    {task.clientName}
+                    {tc && <span style={{marginLeft:6,fontSize:10,fontWeight:700,color:tc.accent}}>Team {TEAMS[teamKey]?.label||teamKey}</span>}
+                  </div>
+                </div>
+                <UrgBadge dueDate={task.dueDate} />
+              </div>
+            );
+          }
+
+          function ClientRow({c, useTeamColor}) {
+            const mc = (c.benefitCarriers||{}).medical||(c.carriers||[])[0]||"";
+            const teamKey = Object.keys(TEAMS).find(k=>k===c.team||TEAMS[k]?.label===c.team)||c.team;
+            const tc = useTeamColor ? (TEAM_TILE_COLORS[teamKey]||{bg:"#fff",border:"#e2e8f0",accent:"#3e5878",dot:"#94a3b8"}) : null;
+            return (
+              <div style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s",background: tc ? tc.bg : "transparent"}}
+                onMouseEnter={e=>e.currentTarget.style.background=tc?tc.border+"40":"#f0f5fa"}
+                onMouseLeave={e=>e.currentTarget.style.background=tc?tc.bg:"transparent"}
+                onClick={() => setModal(c)}>
+                {tc && <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:tc.dot,flexShrink:0}}></div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:tc?tc.accent:"#0f172a"}}>{c.name}</div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                    {formatDate(c.renewalDate)}{mc?" · "+mc:""}
+                    {tc && <span style={{marginLeft:6,fontSize:10,fontWeight:700,color:tc.accent}}>Team {TEAMS[teamKey]?.label||teamKey}</span>}
+                  </div>
+                </div>
+                <UrgBadge days={c._days} />
+              </div>
+            );
+          }
+
+          function StatTile({label, value, type, sub, onClick, icon}) {
+            const palette = {
+              danger:  {bg:"#fff1f2",border:"#fecdd3",val:"#be123c",lbl:"#9f1239"},
+              warning: {bg:"#fffbeb",border:"#fde68a",val:"#b45309",lbl:"#92400e"},
+              success: {bg:"#f0fdf4",border:"#bbf7d0",val:"#15803d",lbl:"#166534"},
+              info:    {bg:"#eff6ff",border:"#bfdbfe",val:"#1d4ed8",lbl:"#1e40af"},
+              default: {bg:"#f8fafc",border:"#e2e8f0",val:"#3e5878",lbl:"#507c9c"},
+            };
+            const p = palette[type||"default"];
+            return (
+              <div onClick={onClick}
+                style={{background:p.bg,borderRadius:12,padding:"16px 18px",border:"1px solid "+p.border,cursor:onClick?"pointer":"default",transition:"all .15s",position:"relative",overflow:"hidden"}}
+                onMouseEnter={e=>{if(onClick){e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,.1)";}}}
+                onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none";}}>
+                <div style={{fontSize:28,fontWeight:800,color:p.val,lineHeight:1,marginBottom:4}}>{value}</div>
+                <div style={{fontSize:12,fontWeight:600,color:p.lbl}}>{label}</div>
+                {sub && <div style={{fontSize:10,color:p.lbl,opacity:.7,marginTop:2}}>{sub}</div>}
+                {onClick && <div style={{position:"absolute",right:14,bottom:12,fontSize:16,color:p.val,opacity:.4}}>→</div>}
+              </div>
+            );
+          }
+
+          // ── Layout ────────────────────────────────────────────────────────
           return (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
-              <div>
-                <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
-                  Upcoming Renewals
+            <div>
+              {/* Greeting banner */}
+              <div style={{
+                background:"linear-gradient(135deg, #3e5878 0%, #507c9c 100%)",
+                borderRadius:16, padding:"20px 28px", marginBottom:20,
+                display:"flex", alignItems:"center", justifyContent:"space-between",
+                boxShadow:"0 4px 16px rgba(62,88,120,.25)",
+              }}>
+                <div>
+                  <div style={{fontFamily:"'Playfair Display',Georgia,serif",fontWeight:800,fontSize:22,color:"#fff",lineHeight:1.2}}>
+                    {greeting}, {currentUser.name}
+                  </div>
+                  <div style={{fontSize:12,color:"rgba(255,255,255,.75)",marginTop:6,fontWeight:500}}>
+                    {todayStr}
+                    {myTeamLabel && <span style={{marginLeft:10,padding:"2px 10px",borderRadius:20,background:"rgba(255,255,255,.15)",color:"#fff",fontWeight:600}}>{myTeamLabel}</span>}
+                    {myClients.length > 0 && <span style={{marginLeft:8,color:"rgba(255,255,255,.6)"}}>{myClients.length} clients</span>}
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                  Next 120 days — {dashFiltered.length} of {upcoming120.length} client{upcoming120.length !== 1 ? "s" : ""}
-                  {activeDashFilters > 0 && (
-                    <button onClick={() => setDashFilter({ team: ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? "All" : (userTeamId || "All"), market:"All",carrier:"All",situs:"All",funding:"All" })}
-                      style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
-                        background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
-                      Clear {activeDashFilters} filter{activeDashFilters > 1 ? "s" : ""}
-                    </button>
-                  )}
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginBottom:2}}>Today's date</div>
+                  <div style={{fontSize:22,fontWeight:800,color:"#fff",lineHeight:1}}>{new Date().getDate()}</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,.7)"}}>{new Date().toLocaleDateString("en-US",{month:"short",year:"numeric"})}</div>
                 </div>
               </div>
-            </div>
 
-            {/* Filter bar */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-              {/* Team dropdown — Leads/VP only */}
-              {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
-                <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                    background: dashFilter.team !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Teams</option>
-                  {Object.entries(TEAMS).map(([key, t]) => (
-                    <option key={key} value={key}>Team {t.label}</option>
-                  ))}
-                </select>
+              {/* Stat tiles */}
+              {isLead && (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+                  <StatTile label="Renewing in 30 days" value={myUpcoming30.length} type="danger" onClick={() => changeView("renewals")} />
+                  <StatTile label="Renewing in 120 days" value={myUpcoming.length} type="warning" onClick={() => changeView("renewals")} />
+                  <StatTile label="Open tasks" value={myAllTasks.length} type="info" onClick={() => navToTasks({})} />
+                  <StatTile label="Completed this week" value={completedThisWeek} type="success" />
+                </div>
               )}
-              {/* Dropdown filters */}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <select value={dashFilter.market} onChange={e => setDashF("market", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 130px",
-                    background: dashFilter.market !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Markets</option>
-                  {MARKET_SIZES.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <select value={dashFilter.funding} onChange={e => setDashF("funding", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                    background: dashFilter.funding !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Funding</option>
-                  {allFundingD.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-                <select value={dashFilter.carrier} onChange={e => setDashF("carrier", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                    background: dashFilter.carrier !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Carriers</option>
-                  {allCarriersD.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={dashFilter.situs} onChange={e => setDashF("situs", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 135px",
-                    background: dashFilter.situs !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Situs</option>
-                  {allSitusD.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {dashFiltered.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", padding: "48px 20px", textAlign: "center", color: "#94a3b8" }}>
-                <div style={{ fontSize: 36, marginBottom: 10 }}>🎉</div>
-                <div style={{ fontWeight: 700, fontSize: 16, color: "#64748b" }}>
-                  No renewals in the next 120 days{activeDashFilters > 0 ? " matching these filters" : ""}
+              {(isAE || isAM) && (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+                  <StatTile label="Renewing in 120 days" value={myUpcoming.length} type="danger" onClick={() => changeView("renewals")} />
+                  <StatTile label="My tasks due this week" value={myDueThisWeek.length} type="warning" onClick={() => navToTasks({assignee:currentUser.name})} />
+                  <StatTile label="Completed this week" value={completedThisWeek} type="success" />
                 </div>
-              </div>
-            ) : (
-              <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", overflow: "hidden" }}>
-                {dashFiltered.map((c, i) => {
-                  const team = TEAMS[c.team];
-                  const badge = renewalBadge(c.renewalDate);
-                  const isLast = i === dashFiltered.length - 1;
-                  const urgency = c._days <= 30 ? "#fef3c7" : c._days <= 60 ? "#eff6ff" : "#f8fafc";
-                  return (
-                    <div key={c.id}
-                      onClick={() => setModal(c)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 16,
-                        padding: "14px 20px",
-                        borderBottom: isLast ? "none" : "1px solid #f1f5f9",
-                        background: urgency,
-                        cursor: "pointer",
-                        transition: "background .12s",
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#ccdaeb"}
-                      onMouseLeave={e => e.currentTarget.style.background = urgency}
-                    >
-                      {/* Day countdown */}
-                      <div style={{
-                        minWidth: 52, textAlign: "center",
-                        background: badge ? badge.bg : "#f1f5f9",
-                        borderRadius: 10, padding: "6px 4px",
-                      }}>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: badge ? badge.text : "#64748b", lineHeight: 1 }}>{c._days}</div>
-                        <div style={{ fontSize: 9, fontWeight: 700, color: badge ? badge.text : "#94a3b8", letterSpacing: ".5px" }}>DAYS</div>
-                      </div>
+              )}
+              {isAC && (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+                  <StatTile label="Tasks overdue" value={myOverdueTasks.length} type="danger" onClick={() => navToTasks({assignee:currentUser.name,window:"overdue"})} />
+                  <StatTile label="Due this week" value={myDueThisWeek.length} type="warning" onClick={() => navToTasks({assignee:currentUser.name})} />
+                  <StatTile label="Completed this week" value={completedThisWeek} type="success" />
+                </div>
+              )}
 
-                      {/* Client info */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {c.name}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                          Renews {formatDate(c.renewalDate)}
-                        </div>
-                      </div>
+              {/* Main panels */}
+              {isLead && (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <Panel title="Upcoming renewals" sub="next 120 days" accent="#3e5878">
+                      {myUpcoming.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No renewals in 120 days</div>
+                        : myUpcoming.slice(0,5).map(c => <ClientRow key={c.id} c={c} useTeamColor={false} />)
+                      }
+                    </Panel>
+                    <Panel title="Team performance" sub="on-time rate" accent="#3e5878">
+                      {perf.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No completion data yet</div>
+                        : perf.map(p => {
+                            const init = (p.name||"?")[0].toUpperCase();
+                            const av = AVATAR_COLORS[init]||{bg:"#dce8f2",color:"#3e5878"};
+                            const barColor = (p.rate||0)>=85?"#16a34a":(p.rate||0)>=70?"#d97706":"#dc2626";
+                            const mRole = teams.flatMap(t=>t.members||[]).find(m=>m.name===p.name)?.role||"";
+                            const roleAbbr = mRole==="Account Coordinator"?"AC":mRole==="Account Manager"?"AM":mRole==="Account Executive"?"AE":null;
+                            return (
+                              <div key={p.name}
+                                style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s"}}
+                                {...rowHover} onClick={() => navToTasks({assignee:p.name})}>
+                                <div style={{width:30,height:30,borderRadius:"50%",background:av.bg,color:av.color,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{init}</div>
+                                <div style={{flex:1,display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                                  <span style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{p.name}</span>
+                                  {roleAbbr && <RoleBadge role={roleAbbr} />}
+                                </div>
+                                {p.rate!==null ? <>
+                                  <div style={{width:90,height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
+                                    <div style={{width:p.rate+"%",height:"100%",borderRadius:3,background:barColor}}></div>
+                                  </div>
+                                  <span style={{fontSize:12,fontWeight:800,color:barColor,minWidth:34,textAlign:"right"}}>{p.rate}%</span>
+                                </> : <span style={{fontSize:11,color:"#94a3b8"}}>No data</span>}
+                              </div>
+                            );
+                          })
+                      }
+                    </Panel>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <Panel title="Open tasks by member" sub="most urgent first" accent="#3e5878">
+                      {topTasksByAssignee.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No open tasks</div>
+                        : topTasksByAssignee.map(({name,total,overdue,next}) => {
+                            const init = (name||"?")[0].toUpperCase();
+                            const av = AVATAR_COLORS[init]||{bg:"#dce8f2",color:"#3e5878"};
+                            const mRole = teams.flatMap(t=>t.members||[]).find(m=>m.name===name)?.role||"";
+                            const roleAbbr = mRole==="Account Coordinator"?"AC":mRole==="Account Manager"?"AM":mRole==="Account Executive"?"AE":null;
+                            return (
+                              <div key={name}
+                                style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer",transition:"background .1s"}}
+                                {...rowHover} onClick={() => navToTasks({assignee:name})}>
+                                <div style={{width:30,height:30,borderRadius:"50%",background:av.bg,color:av.color,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{init}</div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                    <span style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{name}</span>
+                                    {roleAbbr && <RoleBadge role={roleAbbr} />}
+                                  </div>
+                                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                                    {total} task{total!==1?"s":""}{overdue>0&&<span style={{color:"#be123c",fontWeight:700}}> · {overdue} overdue</span>}
+                                    {next&&" · "+next.label}
+                                  </div>
+                                </div>
+                                {next && <UrgBadge dueDate={next.dueDate} />}
+                              </div>
+                            );
+                          })
+                      }
+                    </Panel>
+                    <Panel title="Recent meetings" accent="#3e5878">
+                      {myMeetings.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No meetings recorded</div>
+                        : myMeetings.map(m => {
+                            const tObj = teams.find(t=>t.id===m.team);
+                            const tc = tObj ? (TEAM_TILE_COLORS[tObj.id]||TEAM_TILE_COLORS[tObj.label]||null) : null;
+                            return (
+                              <div key={m.id}
+                                style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s"}}
+                                {...rowHover} onClick={() => changeView("meetings")}>
+                                <div style={{width:38,textAlign:"center",flexShrink:0}}>
+                                  <div style={{fontSize:14,fontWeight:800,color:"#3e5878"}}>{new Date(m.date+"T12:00:00").getDate()}</div>
+                                  <div style={{fontSize:9,color:"#94a3b8",fontWeight:600,textTransform:"uppercase"}}>{new Date(m.date+"T12:00:00").toLocaleDateString("en-US",{month:"short"})}</div>
+                                </div>
+                                <div style={{flex:1}}>
+                                  <div style={{fontWeight:700,fontSize:13,color:"#0f172a"}}>{tObj?"Team "+tObj.label+" meeting":m.notes?.slice(0,40)||"Team meeting"}</div>
+                                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{(m.taskReviews||[]).length} tasks reviewed</div>
+                                </div>
+                                {tc && <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:tc.bg,color:tc.accent,fontWeight:700,border:"1px solid "+tc.border}}>{tObj.label}</span>}
+                              </div>
+                            );
+                          })
+                      }
+                    </Panel>
+                  </div>
+                </div>
+              )}
 
-                      {/* Tags */}
-                      <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                        {team && <span style={{ padding: "2px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: team.color, color: team.text }}>
-                          {team.label}
-                        </span>}
-                        <span style={{ padding: "2px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: "#f1f5f9", color: "#475569" }}>
-                          {c.marketSize}
-                        </span>
-                        {(() => {
-                          const mc = (c.benefitCarriers || {}).medical || (c.carriers || [])[0];
-                          return mc ? <span style={{ padding: "2px 9px", borderRadius: 99, fontSize: 11, fontWeight: 600, background: "#f0fdf4", color: "#166534" }}>{mc}</span> : null;
-                        })()}
-                        {c.fundingMethod && (
-                          <span style={{ padding: "2px 9px", borderRadius: 99, fontSize: 11, fontWeight: 600, background: "#fef3c7", color: "#92400e" }}>
-                            {c.fundingMethod === "Fully Insured" ? "FI" : c.fundingMethod === "Level-Funded" ? "LF" : "SF"}
-                          </span>
-                        )}
-                      </div>
+              {(isAE||isAM) && (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <Panel title="My clients renewing soon" accent="#3e5878">
+                      {myUpcoming.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No upcoming renewals</div>
+                        : myUpcoming.slice(0,5).map(c => <ClientRow key={c.id} c={c} useTeamColor={false} />)
+                      }
+                    </Panel>
+                    {myFollowUps.length>0 && (
+                      <Panel title="Follow-ups due" accent="#b45309">
+                        {myFollowUps.map((fu,i) => (
+                          <div key={i} style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s"}}
+                            {...rowHover} onClick={() => setModal(fu.clientObj)}>
+                            <div style={{flex:1}}>
+                              <div style={{fontWeight:700,fontSize:13,color:"#0f172a"}}>{fu.note||"Follow-up"}</div>
+                              <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{fu.clientName}</div>
+                            </div>
+                            <UrgBadge dueDate={fu.date} />
+                          </div>
+                        ))}
+                      </Panel>
+                    )}
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <Panel title="My tasks" sub="assigned to me" accent="#3e5878">
+                      {topTasks.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No open tasks</div>
+                        : topTasks.map((t,i) => <TaskRow key={i} task={t} showAvatar={false} />)
+                      }
+                    </Panel>
+                    <Panel title="Team tasks on my clients" sub="needs attention" accent="#be123c">
+                      {myAllTasks.filter(t=>t.assignee!==currentUser.name&&t.dueDate).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)).slice(0,4).map((t,i) => (
+                        <TaskRow key={i} task={t} showAvatar={true} />
+                      ))}
+                    </Panel>
+                  </div>
+                </div>
+              )}
 
-                      <div style={{ color: "#cbd5e1", fontSize: 14, flexShrink: 0 }}>›</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+              {isAC && (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                  <Panel title="My tasks — most urgent first" accent="#3e5878">
+                    {topTasks.length===0
+                      ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No open tasks</div>
+                      : topTasks.map((t,i) => <TaskRow key={i} task={t} showAvatar={false} useTeamColor={true} />)
+                    }
+                  </Panel>
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <Panel title="Upcoming renewals" sub="by team" accent="#3e5878">
+                      {myUpcoming.length===0
+                        ? <div style={{padding:"24px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No upcoming renewals</div>
+                        : myUpcoming.slice(0,5).map(c => <ClientRow key={c.id} c={c} useTeamColor={true} />)
+                      }
+                    </Panel>
+                    {myFollowUps.length>0 && (
+                      <Panel title="Follow-ups due" accent="#b45309">
+                        {myFollowUps.map((fu,i) => {
+                          const fuTeamKey = fu.clientObj ? (Object.keys(TEAMS).find(k=>k===fu.clientObj.team||TEAMS[k]?.label===fu.clientObj.team)||fu.clientObj.team) : null;
+                          const fuTc = fuTeamKey ? (TEAM_TILE_COLORS[fuTeamKey]||null) : null;
+                          return (
+                            <div key={i} style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s",background:fuTc?fuTc.bg:"transparent"}}
+                              onMouseEnter={e=>e.currentTarget.style.background=fuTc?fuTc.border+"40":"#f0f5fa"}
+                              onMouseLeave={e=>e.currentTarget.style.background=fuTc?fuTc.bg:"transparent"}
+                              onClick={() => setModal(fu.clientObj)}>
+                              {fuTc && <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:fuTc.dot,flexShrink:0}}></div>}
+                              <div style={{flex:1}}>
+                                <div style={{fontWeight:700,fontSize:13,color:fuTc?fuTc.accent:"#0f172a"}}>{fu.note||"Follow-up"}</div>
+                                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                                  {fu.clientName}
+                                  {fuTc && <span style={{marginLeft:6,fontSize:10,fontWeight:700,color:fuTc.accent}}>Team {TEAMS[fuTeamKey]?.label||fuTeamKey}</span>}
+                                </div>
+                              </div>
+                              <UrgBadge dueDate={fu.date} />
+                            </div>
+                          );
+                        })}
+                      </Panel>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           );
         })()}
 
@@ -9117,9 +9428,9 @@ useEffect(() => {
           const allSitusR   = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
           const allFundingR = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
 
-          const teamRestricted3 = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+          const teamRestricted3 = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && userTeams.length > 0;
           const renewalsFiltered = upcoming120.filter(c => {
-            if (teamRestricted3 && c.team !== userTeamId) return false;
+            if (teamRestricted3 && !userTeams.includes(c.team)) return false;
             if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
             if (dashFilter.market  !== "All" && c.marketSize !== dashFilter.market) return false;
             if (dashFilter.funding !== "All" && c.fundingMethod !== dashFilter.funding) return false;
@@ -9143,7 +9454,7 @@ useEffect(() => {
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                   Next 120 days — {renewalsFiltered.length} of {upcoming120.length} client{upcoming120.length !== 1 ? "s" : ""}
                   {activeRFilters > 0 && (
-                    <button onClick={() => setDashFilter({ team: ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? "All" : (userTeamId || "All"), market:"All",carrier:"All",situs:"All",funding:"All" })}
+                    <button onClick={() => setDashFilter({ team: "All", market:"All",carrier:"All",situs:"All",funding:"All" })}
                       style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
                         background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
                       Clear {activeRFilters} filter{activeRFilters > 1 ? "s" : ""}
@@ -9215,7 +9526,7 @@ useEffect(() => {
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} />
+          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} />
         )}
 
 
@@ -9237,11 +9548,7 @@ useEffect(() => {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
-              {teams.filter(team => 
-                ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ||
-                team.id === userTeamId ||
-                team.createdBy === currentUser?.name
-              ).map(team => (
+              {teams.map(team => (
                 <div key={team.id} style={{
                   background: "#fff", borderRadius: 14,
                   border: `2px solid ${team.border || "#e2e8f0"}`,
@@ -9291,12 +9598,14 @@ useEffect(() => {
                     <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>
                       {clients.filter(c => c.team === team.id).length} client{clients.filter(c => c.team === team.id).length !== 1 ? "s" : ""}
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>
-                        {formatRevenue(clients.filter(c => c.team === team.id).reduce((sum, c) => sum + parseRevenue(c.annualRevenue), 0))}
+                    {["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim()) && (
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>
+                          {formatRevenue(clients.filter(c => c.team === team.id).reduce((sum, c) => sum + parseRevenue(c.annualRevenue), 0))}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>Annual Revenue</div>
                       </div>
-                      <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>Annual Revenue</div>
-                    </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -9390,11 +9699,14 @@ useEffect(() => {
                 placeholder="🔍  Search clients..."
                 style={{ ...inputStyle, flex: "1 1 200px", minWidth: 160 }}
               />
-              {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
+              {(["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) || userTeams.length > 1) && (
                 <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
                   style={{ ...inputStyle, flex: "0 0 150px", background: filterTeam !== "All" ? "#dce8f0" : undefined }}>
                   <option value="All">All Teams</option>
-                  {Object.keys(TEAMS).map(k => <option key={k} value={k}>Team {k}</option>)}
+                  {(["Team Lead","VP","Lead"].includes(currentUser?.role?.trim())
+                    ? Object.keys(TEAMS)
+                    : userTeams
+                  ).map(k => <option key={k} value={k}>Team {k}</option>)}
                 </select>
               )}
               <select value={filterMarket} onChange={e => setFilterMarket(e.target.value)}
@@ -9463,6 +9775,7 @@ useEffect(() => {
             onOpenClient={setModal}
             currentUser={currentUser}
             userTeamId={userTeamId}
+            userTeams={userTeams}
           />
         )}
 
@@ -9524,6 +9837,23 @@ useEffect(() => {
             persistTeams(updated);
             setTeamModal(null);
             if (isNew) alert(`Team "${finalTeam.label}" was saved successfully.`);
+            // If the logged-in user's name was changed in this team, update sessionStorage
+            if (currentUser) {
+              const oldTeam = teams.find(x => x.id === finalTeam.id);
+              if (oldTeam) {
+                const oldMember = (oldTeam.members || []).find(m =>
+                  m.name === currentUser.name || m.email === currentUser.email
+                );
+                const newMember = oldMember
+                  ? (finalTeam.members || []).find(m => m.email === oldMember.email || m.name === oldMember.name)
+                  : null;
+                if (newMember && newMember.name !== currentUser.name) {
+                  const updated = { ...currentUser, name: newMember.name, role: newMember.role || currentUser.role };
+                  setCurrentUser(updated);
+                  sessionStorage.setItem("bt_user", JSON.stringify(updated));
+                }
+              }
+            }
           }}
           onDelete={id => {
             if (confirm("Delete this team?")) {
@@ -10327,7 +10657,9 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
 // ── CarriersView ─────────────────────────────────────────────────────────────
 
 function CarriersView({ carriers, onSave, currentUser }) {
+  const isAC = currentUser?.role?.trim() === "Account Coordinator";
   const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const canEditCarrier = !isAC;
   const [activeCategory, setActiveCategory] = useState("Medical");
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState(null);
@@ -10404,11 +10736,11 @@ function CarriersView({ carriers, onSave, currentUser }) {
           </div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Configure available products and eligibility rules per carrier</div>
         </div>
-        <button type="button" onClick={startNew} style={{
+        {canEditCarrier && <button type="button" onClick={startNew} style={{
           background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
           border: "none", borderRadius: 9, padding: "9px 20px",
           fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-        }}>+ Add Carrier</button>
+        }}>+ Add Carrier</button>}
       </div>
 
       {/* Category tabs */}
@@ -10544,12 +10876,12 @@ function CarriersView({ carriers, onSave, currentUser }) {
                         border: `1.5px solid ${carrier.pinned ? "#fcd34d" : "#e2e8f0"}`,
                         background: carrier.pinned ? "#fef9c3" : "#f8fafc",
                         cursor: "pointer", fontFamily: "inherit" }}>📌</button>
-                    <button type="button" onClick={() => isEditing ? (setEditingId(null), setEditData(null)) : startEdit(carrier)}
+                    {canEditCarrier && <button type="button" onClick={() => isEditing ? (setEditingId(null), setEditData(null)) : startEdit(carrier)}
                       style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: `1.5px solid ${isEditing ? "#4a7fa5" : "#e2e8f0"}`,
                         background: isEditing ? "#dce8f0" : "#f8fafc",
                         color: isEditing ? "#2d4a6b" : "#475569",
-                        cursor: "pointer", fontFamily: "inherit" }}>{isEditing ? "Close" : "Edit"}</button>
+                        cursor: "pointer", fontFamily: "inherit" }}>{isEditing ? "Close" : "Edit"}</button>}
                     <button type="button" onClick={() => deleteCarrier(carrier.id)}
                       style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
@@ -11035,8 +11367,8 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId }) {
-  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && !!userTeamId;
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav }) {
+  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams||[]).length > 0;
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -11048,10 +11380,10 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const [ovSitus,    setOvSitus]    = useState("All");
   const [ovFunding,  setOvFunding]  = useState("All");
   const [ovCat,      setOvCat]      = useState("All");
-  const [ovAssignee, setOvAssignee] = useState("All");
+  const [ovAssignee, setOvAssignee] = useState(dashNav?.assignee || "All");
   const [ovStatus,   setOvStatus]   = useState("All");
   const [ovSort,     setOvSort]     = useState("renewal");
-  const [ovWindow,   setOvWindow]   = useState("all");   // "all" | "30" | "60" | "90" | "120" | "overdue"
+  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "all");   // "all" | "30" | "60" | "90" | "120" | "overdue"
   const [expanded,   setExpanded]   = useState({});
   function toggleExpand(id) { setExpanded(p => ({ ...p, [id]: !p[id] })); }
 
@@ -11074,7 +11406,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const clientRows = useMemo(() => {
     const teamRestrictedOT = isRestricted;
     return clients
-      .filter(c => !teamRestrictedOT || c.team === userTeamId)
+      .filter(c => !teamRestrictedOT || (userTeams||[]).includes(c.team))
       .map(c => {
         const _days = daysUntil(c.renewalDate);
         // Window filter
@@ -11599,7 +11931,8 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
 }
 
 function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUser }) {
-  const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const canEdit   = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const canDelete = canEdit;
   const [activeCategory, setActiveCategory] = useState("Compliance");
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState(null);
@@ -11721,6 +12054,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {canEdit && activeCategory !== "Compliance" && (<>
           <button type="button" onClick={() => {
             if (confirm("Reset all tasks to built-in defaults? Your customizations will be lost.")) {
               onSave(DEFAULT_TASKS_DATA);
@@ -11734,6 +12068,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
             border: "none", borderRadius: 9, padding: "9px 20px",
             fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
           }}>+ Add Task</button>
+          </>)}
         </div>
       </div>
 
@@ -11757,8 +12092,8 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
             </button>
           );
         })}
-        {/* Due Date Rules tab */}
-        <button type="button" onClick={() => { setShowDDR(s => !s); setEditingId(null); }} style={{
+        {/* Due Date Rules tab — hidden for ACs */}
+        {canEdit && <button type="button" onClick={() => { setShowDDR(s => !s); setEditingId(null); }} style={{
           padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
           border: `1.5px solid ${showDDR ? "#7c3aed" : "#e2e8f0"}`,
           background: showDDR ? "#f3e8ff" : "#fff",
@@ -11769,7 +12104,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
           <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>
             ({(dueDateRules || []).length})
           </span>
-        </button>
+        </button>}
       </div>
 
       {/* Due Date Rules management panel */}
@@ -11777,7 +12112,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
         <div style={{ marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: "#6d28d9" }}>Due Date Rules</div>
-            <button type="button" onClick={() => {
+            {canEdit && <button type="button" onClick={() => {
               const newId = "ddr_" + Date.now();
               setDdrEditing(newId);
               setDdrForm({ id: newId, label: "", anchor: "renewal", direction: "before", days: 30, builtin: false });
@@ -11785,7 +12120,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
               background: "linear-gradient(135deg,#6d28d9,#7c3aed)", color: "#fff",
               border: "none", borderRadius: 8, padding: "7px 16px",
               fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-            }}>+ New Rule</button>
+            }}>+ New Rule</button>}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -11865,17 +12200,17 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
                         )}
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        {!rule.builtin && (
+                        {canEdit && !rule.builtin && (
                           <>
                             <button type="button" onClick={() => { setDdrEditing(rule.id); setDdrForm({ ...rule }); }}
                               style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                                 border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#475569",
                                 cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
-                            {canDelete && <button type="button" onClick={() => {
+                            <button type="button" onClick={() => {
                               if (confirm("Delete this rule?")) onSaveDueDateRules(prev => prev.filter(r => r.id !== rule.id));
                             }} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                               border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                              cursor: "pointer", fontFamily: "inherit" }}>✕</button>}
+                              cursor: "pointer", fontFamily: "inherit" }}>✕</button>
                           </>
                         )}
                       </div>
@@ -11971,7 +12306,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {/* Reorder buttons */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                  {canEdit && activeCategory !== "Compliance" && <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
                     <button type="button" onClick={() => moveTask(task.id, -1)} disabled={idx === 0}
                       style={{ padding: "1px 5px", fontSize: 10, border: "1px solid #e2e8f0",
                         borderRadius: 4, background: "#f8fafc", color: "#94a3b8", cursor: idx === 0 ? "default" : "pointer",
@@ -11981,7 +12316,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
                         borderRadius: 4, background: "#f8fafc", color: "#94a3b8",
                         cursor: idx === filtered.length - 1 ? "default" : "pointer",
                         opacity: idx === filtered.length - 1 ? 0.3 : 1, fontFamily: "inherit" }}>▼</button>
-                  </div>
+                  </div>}
 
                   {/* Task info */}
                   <div style={{ flex: 1 }}>
@@ -12010,17 +12345,20 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
 
                   {/* Actions */}
                   <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button type="button" onClick={() => isEditing ? (setEditingId(null), setEditData(null)) : startEdit(task)}
-                      style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        border: `1.5px solid ${isEditing ? "#4a7fa5" : "#e2e8f0"}`,
-                        background: isEditing ? "#dce8f0" : "#f8fafc",
-                        color: isEditing ? "#2d4a6b" : "#475569",
-                        cursor: "pointer", fontFamily: "inherit" }}>{isEditing ? "Close" : "Edit"}</button>
-                    <button type="button" onClick={() => deleteTask(task.id)}
-                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                        cursor: "pointer", fontFamily: "inherit",
-                        display: canDelete ? "inline-block" : "none" }}>✕</button>
+                    {(canEdit && activeCategory !== "Compliance") ? (
+                      <>
+                        <button type="button" onClick={() => isEditing ? (setEditingId(null), setEditData(null)) : startEdit(task)}
+                          style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                            border: `1.5px solid ${isEditing ? "#4a7fa5" : "#e2e8f0"}`,
+                            background: isEditing ? "#dce8f0" : "#f8fafc",
+                            color: isEditing ? "#2d4a6b" : "#475569",
+                            cursor: "pointer", fontFamily: "inherit" }}>{isEditing ? "Close" : "Edit"}</button>
+                        <button type="button" onClick={() => deleteTask(task.id)}
+                          style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                            border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                            cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </div>
