@@ -7960,6 +7960,16 @@ function applyDataFixes(c) {
       t.followUps ? t : { ...t, followUps: [] }
     );
   }
+  // Remove any postOETasks entries that duplicate postOEFixed (by title)
+  // These were incorrectly added by an earlier version of the standard task sync
+  if (Array.isArray(fixed.postOETasks) && fixed.postOETasks.length > 0) {
+    const POST_OE_FIXED_LABELS = new Set([
+      "Elections Received?", "OE Changes Processed?", "Carrier Bill Audited?",
+      "Lineup Updated?", "OE Wrap-Up Email Sent?", "New Carrier Submission Census Created?",
+    ]);
+    fixed.postOETasks = fixed.postOETasks.filter(t => !POST_OE_FIXED_LABELS.has(t.title));
+  }
+
   if (fixed.clientStatusDate === undefined) fixed.clientStatusDate = "";
   // Auto-assign Illinois situs for BCBSIL medical carrier
   if (!fixed.groupSitus) {
