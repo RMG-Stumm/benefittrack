@@ -290,6 +290,11 @@ const CARRIERS = [
 
 const FUNDING_METHODS = ["Fully Insured","Self-Funded","Level-Funded"];
 
+// Generate a stable unique ID for employee classes and benefit plans
+function generateId() {
+  return "id_" + Math.random().toString(36).slice(2, 11) + "_" + Date.now().toString(36);
+}
+
 const BENEFITS_SCHEMA = [
   {
     id: "medical", label: "Medical",
@@ -834,7 +839,7 @@ function newClient(tasksDb) {
     benefitPolicyNumbers: {},
     benefitEnrolled: {},
     benefitRates: {},          // { cat.id: { ee, es, ec, ff } } — PEPM rates per coverage tier
-    benefitPlans: {},         // { cat.id: [ { name, type, groupNumber } ] }
+    benefitPlans: {},         // { cat.id: [ { id, planName, planType, groupNumber, carrier, effectiveDate, eligibleClasses: [classId, ...] } ] }
     benefitDecision: {},      // { cat.id: "renew_as_is"|"change_plans"|"change_carrier"|"" }
     benefitCommissions: {},   // { cat.id: { type: "PEPM"|"Flat %"|"Graded"|"", amount: "" } }
     bundledDiscount: false,   // Medical only
@@ -1148,7 +1153,7 @@ function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove 
   );
 }
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser }) {
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary }) {
   // Helper: fire-and-forget audit log entry
   function logChange(p, category, taskLabel, field, oldValue, newValue) {
     if (oldValue === newValue) return;
@@ -1161,6 +1166,26 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   }
   const [data, setData] = useState(() => {
     const base = JSON.parse(JSON.stringify(client));
+    // Backfill stable IDs on any employee classes that predate this change
+    if (base.employeeClasses) {
+      base.employeeClasses = base.employeeClasses.map(cls =>
+        cls.id ? cls : { ...cls, id: generateId() }
+      );
+    }
+    // Backfill stable IDs on any benefit plans that predate this change
+    if (base.benefitPlans) {
+      Object.keys(base.benefitPlans).forEach(catId => {
+        base.benefitPlans[catId] = (base.benefitPlans[catId] || []).map(plan =>
+          plan.id ? plan : {
+            ...plan,
+            id: generateId(),
+            planName: plan.planName || plan.name || "",
+            planType: plan.planType || plan.type || "",
+            eligibleClasses: plan.eligibleClasses || [],
+          }
+        );
+      });
+    }
     return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
   });
 
@@ -1206,6 +1231,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
       benefitPlans:         JSON.parse(JSON.stringify(data.benefitPlans   || {})),
       benefitPolicyNumbers: JSON.parse(JSON.stringify(data.benefitPolicyNumbers || {})),
       benefitCommissions:   JSON.parse(JSON.stringify(data.benefitCommissions || {})),
+      benefitEnrolled:      JSON.parse(JSON.stringify(data.benefitEnrolled || {})),
       employeeClasses:      JSON.parse(JSON.stringify(data.employeeClasses || [])),
     };
   }
@@ -2807,7 +2833,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </div>
               ))}
               <button type="button" onClick={() => setData(p => ({
-                ...p, employeeClasses: [...(p.employeeClasses||[]), { name: "", definition: "", eligible: "", classBenefits: {}, notes: "" }]
+                ...p, employeeClasses: [...(p.employeeClasses||[]), { id: generateId(), name: "", definition: "", eligible: "", classBenefits: {}, notes: "" }]
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #4a7fa5", background: "#f0f5fa", color: "#2d4a6b",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
@@ -8868,7 +8894,7 @@ useEffect(() => {
         setCarriersDataRaw(merged);
       }
       if (tasks)    setTasksDataRaw(tasks);
-      if (ddr)      setDueDateRulesRaw(ddr);
+      if (ddr)      setDueDateRulesRaw(ddr.map((r, i) => r.order != null ? r : { ...r, order: i }));
       if (meetings) setMeetingsRaw(meetings);
       if (teams)    setTeams(teams);
     }
@@ -9071,6 +9097,47 @@ useEffect(() => {
       return next;
     });
   }
+
+  // Plans library — user-managed list of benefit plans selectable when configuring client benefits
+  const [plansLibrary, setPlansLibraryRaw] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("benefittrack_plans_v1") || "[]"); }
+    catch { return []; }
+  });
+  function setPlansLibrary(updater) {
+    setPlansLibraryRaw(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("benefittrack_plans_v1", JSON.stringify(next)); } catch(e) {}
+      return next;
+    });
+  }
+
+  // Anchor Events library — user-managed list of anchor events used in Due Date Rules
+  const [anchorEventsLibrary, setAnchorEventsLibraryRaw] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("benefittrack_anchors_v1") || "[]"); }
+    catch { return []; }
+  });
+  function setAnchorEventsLibrary(updater) {
+    setAnchorEventsLibraryRaw(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("benefittrack_anchors_v1", JSON.stringify(next)); } catch(e) {}
+      return next;
+    });
+  }
+
+  // Task Types library — user-managed list of task categories
+  const [taskTypesLibrary, setTaskTypesLibraryRaw] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("benefittrack_tasktypes_v1") || "[]");
+      return saved.length ? saved : TASK_CATEGORIES_DB.map((label, i) => ({ id: "tt_" + i, label, order: i, builtin: true }));
+    } catch { return TASK_CATEGORIES_DB.map((label, i) => ({ id: "tt_" + i, label, order: i, builtin: true })); }
+  });
+  function setTaskTypesLibrary(updater) {
+    setTaskTypesLibraryRaw(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("benefittrack_tasktypes_v1", JSON.stringify(next)); } catch(e) {}
+      return next;
+    });
+  }
   function setCarriersData(updater) {
     setCarriersDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -9179,7 +9246,7 @@ useEffect(() => {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {/* Nav tabs */}
           <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 9, padding: 3, gap: 2 }}>
-            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],["carriers","📋 Carriers"],["tasks","✅ Tasks"],["benefitsDb","💊 Benefits"],...(["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? [["reports","📊 Reports"]] : [])].map(([v, label]) => (
+            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],...(["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? [["reports","📊 Reports"]] : []),...(["VP","Lead","Team Lead"].includes(currentUser?.role?.trim()) ? [["admin","⚙️ Admin"]] : [])].map(([v, label]) => (
               <button key={v} onClick={() => changeView(v)} style={{
                 background: view === v ? "#fff" : "transparent",
                 border: "none", borderRadius: 7, padding: "6px 14px",
@@ -10059,30 +10126,34 @@ useEffect(() => {
             carriers={carriersData}
             onSave={setCarriersData}
             currentUser={currentUser}
-            onBack={() => changeView("dashboard")}
+            onBack={() => changeView("admin")}
           />
         )}
 
-        {view === "benefitsDb" && (
-          <BenefitsDbView
+        {view === "admin" && ["VP","Lead","Team Lead"].includes(currentUser?.role?.trim()) && (
+          <AdminView
+            plansLibrary={plansLibrary}
+            onSavePlansLibrary={setPlansLibrary}
+            anchorEventsLibrary={anchorEventsLibrary}
+            onSaveAnchorEvents={setAnchorEventsLibrary}
+            taskTypesLibrary={taskTypesLibrary}
+            onSaveTaskTypes={setTaskTypesLibrary}
             benefitsDb={benefitsDb}
-            onSave={setBenefitsDb}
-            currentUser={currentUser}
-            onBack={() => changeView("dashboard")}
-          />
-        )}
-
-        {view === "tasks" && (
-          <TasksView
+            onSaveBenefitsDb={setBenefitsDb}
             tasks={tasksData}
-            onSave={setTasksData}
+            onSaveTasks={setTasksData}
             dueDateRules={dueDateRules}
             onSaveDueDateRules={setDueDateRules}
-            currentUser={currentUser}
             clients={clients}
             onSyncClients={syncAllClientsToTasks}
-            onBack={() => changeView("dashboard")}
+            onNavigateCarriers={() => changeView("carriers")}
+            currentUser={currentUser}
           />
+        )}
+        {view === "admin" && !["VP","Lead","Team Lead"].includes(currentUser?.role?.trim()) && (
+          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 15 }}>
+            Admin is available to VPs and Team Leads only.
+          </div>
         )}
 
         {view === "reports" && ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
@@ -10099,7 +10170,7 @@ useEffect(() => {
 
       {modal && (() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
-        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />;
+        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} />;
       })()}
 
       {/* Team Edit/Add Modal */}
@@ -10621,8 +10692,900 @@ const BENEFITS_DB_SEED = [
   { id:"bds_23", benefit:"Commuter",          category:"Tax-Advantaged",    planDesign:"Transit / Parking",                      variant:"",  fundingMethod:"Unfunded",                                    billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 132(f)",    erisa:"No",  ndtApplicability:"No",                              notes:"" },
 ];
 
+// ── AdminView ─────────────────────────────────────────────────────────────────
+// ── Shared library styles ─────────────────────────────────────────────────────
+const LIB_INPUT = {
+  display: "block", width: "100%", padding: "8px 12px",
+  border: "1.5px solid #e2e8f0", borderRadius: 8, fontSize: 13,
+  color: "#0f172a", background: "#fff", fontFamily: "inherit",
+  marginTop: 4, boxSizing: "border-box",
+};
+const LIB_LABEL = {
+  display: "block", fontSize: 12, fontWeight: 700,
+  color: "#64748b", letterSpacing: ".3px",
+};
+const LIB_FORM_CARD = {
+  background: "#f0f5fa", border: "1.5px solid #507c9c", borderRadius: 12,
+  padding: "18px 20px", marginBottom: 18,
+};
+const LIB_TABLE_WRAP = {
+  border: "1.5px solid #e2e8f0", borderRadius: 10, overflow: "hidden",
+};
+const LIB_TABLE_HEADER = {
+  background: "#f8fafc", padding: "9px 16px",
+  borderBottom: "1px solid #e2e8f0",
+};
+const LIB_TH = {
+  fontSize: 11, fontWeight: 800, color: "#64748b",
+  letterSpacing: ".5px", textTransform: "uppercase",
+};
+const LIB_BTN_PRIMARY = {
+  background: "linear-gradient(135deg,#3e5878,#507c9c)", color: "#fff",
+  border: "none", borderRadius: 8, padding: "9px 18px",
+  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+};
+const LIB_BTN_SAVE = {
+  background: "linear-gradient(135deg,#3e5878,#507c9c)", color: "#fff",
+  border: "none", borderRadius: 8, padding: "8px 20px",
+  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+};
+const LIB_BTN_CANCEL = {
+  background: "#f1f5f9", border: "none", borderRadius: 8, padding: "8px 16px",
+  fontSize: 13, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit",
+};
+const LIB_BTN_EDIT = {
+  padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+  border: "1.5px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8",
+  cursor: "pointer", fontFamily: "inherit",
+};
+const LIB_BTN_DELETE = {
+  padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+  border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+  cursor: "pointer", fontFamily: "inherit",
+};
+const LIB_BTN_SECONDARY = {
+  background: "#f0f5fa", border: "1.5px solid #507c9c", borderRadius: 8, padding: "9px 18px",
+  fontSize: 13, fontWeight: 700, color: "#3e5878", cursor: "pointer", fontFamily: "inherit",
+};
+const LIB_EMPTY = {
+  fontSize: 13, color: "#94a3b8", fontStyle: "italic", padding: "20px 4px",
+};
+const LIB_FOOTER = {
+  marginTop: 12, fontSize: 11, color: "#94a3b8",
+};
+
+// ── AdminView ─────────────────────────────────────────────────────────────────
+function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
+  const [adminTab, setAdminTab] = useState("plans");
+
+  const tabs = [
+    { id: "plans",      label: "📋 Plans" },
+    { id: "taskTypes",  label: "🏷️ Task Types" },
+    { id: "tasks",      label: "✅ Tasks" },
+    { id: "anchors",    label: "⚓ Anchor Events" },
+    { id: "ddr",        label: "📅 Due Date Rules" },
+    { id: "benefitsDb", label: "💊 Benefits DB" },
+    { id: "carriers",   label: "🏢 Carriers" },
+  ];
+
+  const tileStyle = (active) => ({
+    padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+    cursor: "pointer", border: "none", fontFamily: "inherit",
+    background: active ? "#fff" : "transparent",
+    color: active ? "#1d4ed8" : "#64748b",
+    boxShadow: active ? "0 1px 4px rgba(0,0,0,.1)" : "none",
+    transition: "all .15s",
+  });
+
+  // Merge hardcoded DDR_ANCHORS with user-defined anchor events library
+  // Library entries take precedence; hardcoded ones are always available as fallback
+  const allAnchors = [
+    ...DDR_ANCHORS,
+    ...(anchorEventsLibrary || []).filter(a => !DDR_ANCHORS.find(d => d.id === a.id)),
+  ];
+
+  return (
+    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 0" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>⚙️ Admin</div>
+        <div style={{ fontSize: 13, color: "#64748b" }}>Manage libraries, reference data, and system configuration.</div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 2, marginBottom: 28, width: "fit-content" }}>
+        {tabs.map(t => (
+          <button key={t.id}
+            onClick={() => t.id === "carriers" ? onNavigateCarriers() : setAdminTab(t.id)}
+            style={tileStyle(adminTab === t.id && t.id !== "carriers")}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {adminTab === "plans" && (
+        <PlansLibraryView plansLibrary={plansLibrary} onSave={onSavePlansLibrary} currentUser={currentUser} />
+      )}
+      {adminTab === "taskTypes" && (
+        <TaskTypesLibraryView taskTypesLibrary={taskTypesLibrary} onSave={onSaveTaskTypes} currentUser={currentUser} />
+      )}
+      {adminTab === "tasks" && (
+        <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} currentUser={currentUser} />
+      )}
+      {adminTab === "anchors" && (
+        <AnchorEventsLibraryView anchorEventsLibrary={anchorEventsLibrary} onSave={onSaveAnchorEvents} currentUser={currentUser} />
+      )}
+      {adminTab === "ddr" && (
+        <DdrLibraryView dueDateRules={dueDateRules} onSave={onSaveDueDateRules} allAnchors={allAnchors} currentUser={currentUser} />
+      )}
+      {adminTab === "benefitsDb" && (
+        <BenefitsDbView benefitsDb={benefitsDb} onSave={onSaveBenefitsDb} currentUser={currentUser} />
+      )}
+    </div>
+  );
+}
+
+// ── PlansLibraryView ──────────────────────────────────────────────────────────
+const PLAN_BENEFIT_CATEGORIES = [
+  "Core Health", "Life & AD&D", "Income Protection",
+  "Statutory Income", "Worksite", "Wellness", "Lifestyle", "Tax-Advantaged",
+];
+
+const PLAN_TYPES_BY_CATEGORY = {
+  "Core Health":        ["PPO", "HMO", "EPO", "HDHP", "Indemnity", "DMO", "Other"],
+  "Life & AD&D":        ["Flat $", "Salary Multiple", "Increments", "Other"],
+  "Income Protection":  ["% of Income", "Benefit Increments", "Other"],
+  "Statutory Income":   ["State-Defined", "Other"],
+  "Worksite":           ["Fixed Schedule", "Lump Sum", "Per Diem", "Other"],
+  "Wellness":           ["Embedded", "Stand-alone", "Other"],
+  "Lifestyle":          ["Embedded", "Stand-alone", "Other"],
+  "Tax-Advantaged":     ["Health FSA", "Limited FSA", "Dependent Care FSA", "HSA", "HRA", "Commuter", "Other"],
+};
+
+// Default plans seeded from Benefits DB — one entry per plan design variant
+const DEFAULT_PLANS_LIBRARY = [
+  // Core Health — Medical
+  { planName: "Medical", category: "Core Health", planType: "PPO",       notes: "" },
+  { planName: "Medical", category: "Core Health", planType: "HMO",       notes: "" },
+  { planName: "Medical", category: "Core Health", planType: "EPO",       notes: "" },
+  { planName: "Medical", category: "Core Health", planType: "HDHP",      notes: "" },
+  { planName: "Medical", category: "Core Health", planType: "Indemnity", notes: "" },
+  // Core Health — Dental
+  { planName: "Dental", category: "Core Health", planType: "PPO",       notes: "" },
+  { planName: "Dental", category: "Core Health", planType: "DMO",       notes: "" },
+  { planName: "Dental", category: "Core Health", planType: "Indemnity", notes: "" },
+  // Core Health — Vision
+  { planName: "Vision", category: "Core Health", planType: "PPO",   notes: "" },
+  { planName: "Vision", category: "Core Health", planType: "Other", notes: "" },
+  // Core Health — Telehealth
+  { planName: "Telehealth", category: "Core Health", planType: "Embedded",    notes: "" },
+  { planName: "Telehealth", category: "Core Health", planType: "Stand-alone", notes: "" },
+  // Life & AD&D
+  { planName: "Basic Life/AD&D", category: "Life & AD&D", planType: "Flat $",          notes: "" },
+  { planName: "Basic Life/AD&D", category: "Life & AD&D", planType: "Salary Multiple", notes: "" },
+  { planName: "Voluntary Life/AD&D", category: "Life & AD&D", planType: "Increments",  notes: "" },
+  { planName: "AD&D",                category: "Life & AD&D", planType: "Increments",  notes: "" },
+  // Income Protection
+  { planName: "STD", category: "Income Protection", planType: "% of Income",        notes: "" },
+  { planName: "STD", category: "Income Protection", planType: "Benefit Increments", notes: "" },
+  { planName: "LTD", category: "Income Protection", planType: "% of Income",        notes: "" },
+  { planName: "LTD", category: "Income Protection", planType: "Benefit Increments", notes: "" },
+  { planName: "IDI", category: "Income Protection", planType: "% of Income",        notes: "" },
+  // Statutory Income
+  { planName: "NYDBL & PFL", category: "Statutory Income", planType: "State-Defined", notes: "Contribution rules vary by state" },
+  // Worksite
+  { planName: "Accident",           category: "Worksite", planType: "Fixed Schedule", notes: "" },
+  { planName: "Cancer",             category: "Worksite", planType: "Lump Sum",       notes: "" },
+  { planName: "Critical Illness",   category: "Worksite", planType: "Lump Sum",       notes: "" },
+  { planName: "Hospital Indemnity", category: "Worksite", planType: "Per Diem",       notes: "" },
+  // Wellness
+  { planName: "EAP", category: "Wellness", planType: "Embedded",    notes: "" },
+  { planName: "EAP", category: "Wellness", planType: "Stand-alone", notes: "" },
+  // Lifestyle
+  { planName: "Identity Theft", category: "Lifestyle", planType: "Embedded", notes: "" },
+  { planName: "Prepaid Legal",   category: "Lifestyle", planType: "Embedded", notes: "" },
+  { planName: "Pet Insurance",   category: "Lifestyle", planType: "Other",    notes: "" },
+  // Tax-Advantaged
+  { planName: "FSA", category: "Tax-Advantaged", planType: "Health FSA",         notes: "" },
+  { planName: "FSA", category: "Tax-Advantaged", planType: "Limited FSA",        notes: "" },
+  { planName: "FSA", category: "Tax-Advantaged", planType: "Dependent Care FSA", notes: "" },
+  { planName: "HSA", category: "Tax-Advantaged", planType: "HSA",                notes: "Must be paired with HDHP" },
+  { planName: "HRA", category: "Tax-Advantaged", planType: "HRA",                notes: "" },
+  { planName: "Commuter", category: "Tax-Advantaged", planType: "Commuter",      notes: "" },
+].map((p, i) => ({ ...p, id: "seed_" + i + "_" + p.planName.toLowerCase().replace(/[^a-z0-9]+/g, "_") + "_" + p.planType.toLowerCase().replace(/[^a-z0-9]+/g, "_") }));
+
+function PlansLibraryView({ plansLibrary, onSave, currentUser }) {
+  const [filterCat, setFilterCat] = useState("All");
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData]   = useState(null);
+  const [search, setSearch]       = useState("");
+
+  function populateFromDefaults() {
+    const manualPlans = (plansLibrary || []).filter(p => !p.id.startsWith("seed_"));
+    if (!confirm(`This will add ${DEFAULT_PLANS_LIBRARY.length} default plans from the Benefits DB. Any plans you've added manually will not be affected. Continue?`)) return;
+    onSave([...manualPlans, ...DEFAULT_PLANS_LIBRARY]);
+  }
+
+  function startAdd() {
+    const p = { id: generateId(), planName: "", category: "Core Health", planType: "PPO", notes: "" };
+    setEditingId(p.id); setEditData(p);
+  }
+  function startEdit(plan) { setEditingId(plan.id); setEditData({ ...plan }); }
+  function cancelEdit() { setEditingId(null); setEditData(null); }
+  function savePlan() {
+    if (!editData.planName.trim()) return;
+    onSave(prev => {
+      const exists = (prev || []).find(p => p.id === editData.id);
+      return exists ? prev.map(p => p.id === editData.id ? editData : p) : [...(prev || []), editData];
+    });
+    cancelEdit();
+  }
+  function deletePlan(id) {
+    if (!confirm("Delete this plan from the library?")) return;
+    onSave(prev => prev.filter(p => p.id !== id));
+  }
+
+  const categories = ["All", ...PLAN_BENEFIT_CATEGORIES];
+  const filtered = (plansLibrary || []).filter(p => {
+    const catMatch = filterCat === "All" || p.category === filterCat;
+    const searchMatch = !search || p.planName.toLowerCase().includes(search.toLowerCase()) || (p.planType || "").toLowerCase().includes(search.toLowerCase());
+    return catMatch && searchMatch;
+  });
+  const planTypeOptions = PLAN_TYPES_BY_CATEGORY[editData?.category] || ["Other"];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search plans…" style={{ ...LIB_INPUT, marginTop: 0, width: 220 }} />
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...LIB_INPUT, marginTop: 0, width: 200 }}>
+          {categories.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button onClick={startAdd} style={LIB_BTN_PRIMARY}>+ Add Plan</button>
+          <button onClick={populateFromDefaults} style={LIB_BTN_SECONDARY}>⬇ Populate from Benefits DB</button>
+        </div>
+      </div>
+
+      {editingId && editData && (
+        <div style={LIB_FORM_CARD}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
+            {(plansLibrary || []).find(p => p.id === editingId) ? "Edit Plan" : "New Plan"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <label style={LIB_LABEL}>Plan Name *<input value={editData.planName} onChange={e => setEditData(p => ({ ...p, planName: e.target.value }))} placeholder="e.g. Medical, Dental…" style={LIB_INPUT} /></label>
+            <label style={LIB_LABEL}>Benefit Category
+              <select value={editData.category} onChange={e => setEditData(p => ({ ...p, category: e.target.value, planType: (PLAN_TYPES_BY_CATEGORY[e.target.value] || ["Other"])[0] }))} style={LIB_INPUT}>
+                {PLAN_BENEFIT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </label>
+            <label style={LIB_LABEL}>Plan Type
+              <select value={editData.planType} onChange={e => setEditData(p => ({ ...p, planType: e.target.value }))} style={LIB_INPUT}>
+                {planTypeOptions.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+          </div>
+          <label style={LIB_LABEL}>Notes<input value={editData.notes || ""} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))} placeholder="Optional notes…" style={LIB_INPUT} /></label>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button onClick={savePlan} style={LIB_BTN_SAVE}>Save Plan</button>
+            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div style={LIB_EMPTY}>{(plansLibrary || []).length === 0 ? "No plans in the library yet. Click \"+ Add Plan\" to get started." : "No plans match your filter."}</div>
+      ) : (
+        <div style={LIB_TABLE_WRAP}>
+          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1.5fr auto", gap: 12 }}>
+            {["Plan Name", "Category", "Type", "Notes", ""].map((h, i) => <div key={i} style={LIB_TH}>{h}</div>)}
+          </div>
+          {filtered.map((plan, idx) => (
+            <div key={plan.id} style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1.5fr auto", padding: "10px 16px", gap: 12, alignItems: "center", borderBottom: idx < filtered.length - 1 ? "1px solid #f1f5f9" : "none", background: editingId === plan.id ? "#f0f5fa" : "#fff" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>{plan.planName}</div>
+              <div><span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "#dce8f2", color: "#3e5878" }}>{plan.category}</span></div>
+              <div style={{ fontSize: 12, color: "#475569" }}>{plan.planType}</div>
+              <div style={{ fontSize: 12, color: plan.notes ? "#475569" : "#94a3b8", fontStyle: plan.notes ? "normal" : "italic" }}>{plan.notes || "—"}</div>
+              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                <button onClick={() => startEdit(plan)} style={LIB_BTN_EDIT}>Edit</button>
+                <button onClick={() => deletePlan(plan.id)} style={LIB_BTN_DELETE}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={LIB_FOOTER}>{(plansLibrary || []).length} plan{(plansLibrary || []).length !== 1 ? "s" : ""} in library{filterCat !== "All" || search ? ` · ${filtered.length} shown` : ""}</div>
+    </div>
+  );
+}
+// ── TaskTypesLibraryView ──────────────────────────────────────────────────────
+function TaskTypesLibraryView({ taskTypesLibrary, onSave, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData]   = useState(null);
+
+  const sorted = [...(taskTypesLibrary || [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+  function moveType(id, dir) {
+    const idx = sorted.findIndex(t => t.id === id);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+    const [a, b] = [sorted[idx], sorted[swapIdx]];
+    const [ao, bo] = [a.order ?? idx, b.order ?? swapIdx];
+    onSave(prev => prev.map(t => {
+      if (t.id === a.id) return { ...t, order: bo };
+      if (t.id === b.id) return { ...t, order: ao };
+      return t;
+    }));
+  }
+
+  function startAdd() {
+    const maxOrder = sorted.reduce((m, t) => Math.max(m, t.order ?? 0), 0);
+    const t = { id: generateId(), label: "", order: maxOrder + 10, builtin: false };
+    setEditingId(t.id); setEditData(t);
+  }
+  function startEdit(type) { setEditingId(type.id); setEditData({ ...type }); }
+  function cancelEdit() { setEditingId(null); setEditData(null); }
+  function saveType() {
+    if (!editData.label.trim()) return;
+    onSave(prev => {
+      const exists = (prev || []).find(t => t.id === editData.id);
+      return exists ? prev.map(t => t.id === editData.id ? editData : t) : [...(prev || []), editData];
+    });
+    cancelEdit();
+  }
+  function deleteType(id) {
+    if (!confirm("Delete this task type? Tasks using it will still reference the old name.")) return;
+    onSave(prev => prev.filter(t => t.id !== id));
+  }
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+        <div style={{ fontSize: 12, color: "#64748b" }}>
+          Task types organize tasks into workflow phases. Built-in types are always available; add custom ones as needed.
+        </div>
+        {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginLeft: "auto" }}>+ Add Type</button>}
+      </div>
+
+      {/* Add / Edit form */}
+      {editingId && editData && (
+        <div style={LIB_FORM_CARD}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
+            {(taskTypesLibrary || []).find(t => t.id === editingId) ? "Edit Task Type" : "New Task Type"}
+          </div>
+          <label style={LIB_LABEL}>Task Type Name *
+            <input value={editData.label}
+              onChange={e => setEditData(p => ({ ...p, label: e.target.value }))}
+              placeholder="e.g. Implementation, Onboarding…"
+              style={{ ...LIB_INPUT, maxWidth: 360 }} />
+          </label>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button onClick={saveType} style={LIB_BTN_SAVE}>Save Type</button>
+            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      {sorted.length === 0 ? (
+        <div style={LIB_EMPTY}>No task types defined yet.</div>
+      ) : (
+        <div style={LIB_TABLE_WRAP}>
+          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "3fr 100px 160px", gap: 0 }}>
+            {["Task Type", "Kind", ""].map((h, i) => <div key={i} style={{ ...LIB_TH, padding: "0 12px" }}>{h}</div>)}
+          </div>
+          {sorted.map((type, idx) => (
+            <div key={type.id} style={{
+              display: "grid", gridTemplateColumns: "3fr 100px 160px",
+              padding: "10px 16px", gap: 0, alignItems: "center",
+              borderBottom: idx < sorted.length - 1 ? "1px solid #f1f5f9" : "none",
+              background: editingId === type.id ? "#f0f5fa" : "#fff",
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", paddingRight: 12 }}>{type.label}</div>
+              <div style={{ paddingRight: 12 }}>
+                {type.builtin
+                  ? <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#f3e8ff", color: "#7c3aed" }}>Built-in</span>
+                  : <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#dcfce7", color: "#166534" }}>Custom</span>
+                }
+              </div>
+              <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                <button onClick={() => moveType(type.id, -1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move up">↑</button>
+                <button onClick={() => moveType(type.id, 1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move down">↓</button>
+                {canEdit && <>
+                  <button onClick={() => startEdit(type)} style={LIB_BTN_EDIT}>Edit</button>
+                  <button onClick={() => deleteType(type.id)} style={LIB_BTN_DELETE}>✕</button>
+                </>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={LIB_FOOTER}>
+        {sorted.filter(t => t.builtin).length} built-in · {sorted.filter(t => !t.builtin).length} custom
+      </div>
+    </div>
+  );
+}
+
+// ── TasksLibraryView ─────────────────────────────────────────────────────────
+function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [activeCategory, setActiveCategory] = useState("Pre-Renewal");
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState(null);
+
+  const CHIP = ({ label, active, onClick, color = "#4a7fa5" }) => (
+    <button type="button" onClick={onClick} style={{
+      padding: "3px 10px", borderRadius: 99, fontSize: 11, fontWeight: active ? 700 : 500,
+      border: `1.5px solid ${active ? color : "#e2e8f0"}`,
+      background: active ? "#dce8f0" : "#fff",
+      color: active ? "#2d4a6b" : "#64748b",
+      cursor: "pointer", fontFamily: "inherit", transition: "all .12s",
+    }}>{label}</button>
+  );
+
+  const categoryColors = {
+    "Pre-Renewal":     { bg: "#dce8f2", text: "#3e5878", border: "#507c9c" },
+    "Renewal":         { bg: "#d6e4f0", text: "#2d4a6b", border: "#3e5878" },
+    "Open Enrollment": { bg: "#dde7c7", text: "#54652d", border: "#7a8a3d" },
+    "Post-OE":         { bg: "#e8efd5", text: "#3d4f20", border: "#54652d" },
+    "Compliance":      { bg: "#eef0e0", text: "#7a8a3d", border: "#7a8a3d" },
+    "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
+    "Ongoing":         { bg: "#d8e6d0", text: "#54652d", border: "#7a8a3d" },
+    "Transactions":    { bg: "#fce7f3", text: "#9d174d", border: "#f472b6" },
+  };
+
+  const filtered = (tasks || []).filter(t => t.category === activeCategory).sort((a, b) => (a.order||0) - (b.order||0));
+
+  function startNew() {
+    const newId = "t_" + Date.now();
+    const maxOrder = filtered.reduce((m, t) => Math.max(m, t.order||0), 0);
+    const blank = { id: newId, label: "", category: activeCategory, markets: ["ACA","Mid-Market","Large"], defaultAssignee: "", dueDateRule: "", order: maxOrder + 10 };
+    setEditingId(newId); setEditData(blank);
+  }
+  function startEdit(task) { setEditingId(task.id); setEditData(JSON.parse(JSON.stringify(task))); }
+  function cancelEdit() { setEditingId(null); setEditData(null); }
+  function saveEdit() {
+    if (!editData.label.trim()) return;
+    onSave(prev => {
+      const exists = prev.find(t => t.id === editData.id);
+      const next = exists ? prev.map(t => t.id === editData.id ? editData : t) : [...prev, editData];
+      if (editData.isStandard && onSyncClients) setTimeout(() => onSyncClients(next), 0);
+      return next;
+    });
+    cancelEdit();
+  }
+  function deleteTask(id) {
+    if (confirm("Delete this task?")) { onSave(prev => prev.filter(t => t.id !== id)); if (editingId === id) cancelEdit(); }
+  }
+  function moveTask(id, dir) {
+    onSave(prev => {
+      const cat = prev.filter(t => t.category === activeCategory).sort((a,b) => (a.order||0)-(b.order||0));
+      const idx = cat.findIndex(t => t.id === id); const swapIdx = idx + dir;
+      if (swapIdx < 0 || swapIdx >= cat.length) return prev;
+      const a = cat[idx], b = cat[swapIdx], ao = a.order||0, bo = b.order||0;
+      return prev.map(t => { if (t.id === a.id) return {...t, order: bo}; if (t.id === b.id) return {...t, order: ao}; return t; });
+    });
+  }
+  function toggleArr(field, val) {
+    const cur = editData[field] || [];
+    setEditData(p => ({ ...p, [field]: cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val] }));
+  }
+
+  const ruleLabel = (id) => (dueDateRules || []).find(r => r.id === id)?.label || "Manual";
+  const CARRIERS = ["BCBS","Aetna","UnitedHealthcare","Cigna","Humana","Kaiser","Delta Dental","MetLife","Guardian","Principal","Sun Life","Unum","Lincoln Financial","Hartford","Mutual of Omaha","Symetra","Reliance Standard","Anthem","CVS Health","Other"];
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1 }}>
+          {TASK_CATEGORIES_DB.map(cat => {
+            const cc = categoryColors[cat] || categoryColors["Miscellaneous"];
+            const active = activeCategory === cat;
+            return (
+              <button key={cat} type="button" onClick={() => { setActiveCategory(cat); cancelEdit(); }} style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                border: `1.5px solid ${active ? cc.border : "#e2e8f0"}`,
+                background: active ? cc.bg : "#fff", color: active ? cc.text : "#64748b", cursor: "pointer",
+              }}>
+                {cat} <span style={{ fontSize: 10, opacity: 0.7 }}>({(tasks||[]).filter(t => t.category === cat).length})</span>
+              </button>
+            );
+          })}
+        </div>
+        {canEdit && activeCategory !== "Compliance" && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => { if (confirm("Reset all tasks to built-in defaults?")) { onSave(DEFAULT_TASKS_DATA); cancelEdit(); } }}
+              style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:700, border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", cursor:"pointer", fontFamily:"inherit" }}>
+              ↺ Reset Defaults
+            </button>
+            <button type="button" onClick={startNew} style={LIB_BTN_PRIMARY}>+ Add Task</button>
+          </div>
+        )}
+      </div>
+
+      {/* Edit form */}
+      {editingId && editData && (
+        <div style={LIB_FORM_CARD}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
+            {(tasks||[]).find(t => t.id === editingId) ? "Edit Task" : "New Task"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <label style={LIB_LABEL}>Task Label *
+              <input value={editData.label} onChange={e => setEditData(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Renewal Download" style={LIB_INPUT} />
+            </label>
+            <label style={LIB_LABEL}>Category
+              <select value={editData.category} onChange={e => setEditData(p => ({ ...p, category: e.target.value }))} style={LIB_INPUT}>
+                {TASK_CATEGORIES_DB.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </label>
+            <label style={LIB_LABEL}>Default Assignee Role
+              <select value={editData.defaultAssignee || ""} onChange={e => setEditData(p => ({ ...p, defaultAssignee: e.target.value }))} style={LIB_INPUT}>
+                <option value="">— Unassigned —</option>
+                {TASK_ROLES.map(r => <option key={r}>{r}</option>)}
+              </select>
+            </label>
+          </div>
+          <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 9, background: editData.isStandard ? "#eff6ff" : "#f8fafc", border: `1.5px solid ${editData.isStandard ? "#93c5fd" : "#e2e8f0"}`, marginBottom: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!editData.isStandard} onChange={e => setEditData(p => ({ ...p, isStandard: e.target.checked }))} style={{ accentColor: "#3b82f6", width: 16, height: 16 }} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: editData.isStandard ? "#1d4ed8" : "#475569" }}>Standard Task</div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>Auto-assign to all matching clients</div>
+              </div>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <div style={{ ...LIB_LABEL, marginBottom: 6 }}>Markets</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {MARKET_SIZES.map(m => <CHIP key={m} label={m} active={(editData.markets||[]).includes(m)} onClick={() => toggleArr("markets", m)} />)}
+              </div>
+            </div>
+            <div>
+              <div style={{ ...LIB_LABEL, marginBottom: 6 }}>Funding</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {FUNDING_METHODS.map(f => <CHIP key={f} label={f} active={(editData.funding||[]).includes(f)} onClick={() => toggleArr("funding", f)} color="#f59e0b" />)}
+              </div>
+            </div>
+            <label style={LIB_LABEL}>Due Date Rule
+              <select value={editData.dueDateRule || ""} onChange={e => setEditData(p => ({ ...p, dueDateRule: e.target.value }))} style={LIB_INPUT}>
+                <option value="">None / Manual</option>
+                {(dueDateRules || []).map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <button onClick={saveEdit} style={LIB_BTN_SAVE}>Save Task</button>
+            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Tasks table */}
+      {filtered.length === 0 ? (
+        <div style={LIB_EMPTY}>No {activeCategory} tasks yet. Click "+ Add Task" to get started.</div>
+      ) : (
+        <div style={LIB_TABLE_WRAP}>
+          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "3fr 130px 160px 180px 90px 110px", gap: 0 }}>
+            {["Task", "Type", "Assignee", "Due Date Rule", "Standard", ""].map((h, i) => (
+              <div key={i} style={{ ...LIB_TH, padding: "0 12px" }}>{h}</div>
+            ))}
+          </div>
+          {filtered.map((task, idx) => {
+            const cc = categoryColors[task.category] || categoryColors["Miscellaneous"];
+            return (
+              <div key={task.id} style={{ display: "grid", gridTemplateColumns: "3fr 130px 160px 180px 90px 110px", gap: 0, padding: "10px 16px", alignItems: "center", borderBottom: idx < filtered.length - 1 ? "1px solid #f1f5f9" : "none", background: editingId === task.id ? "#f0f5fa" : "#fff" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", paddingRight: 12 }}>{task.label}</div>
+                <div style={{ paddingRight: 12 }}><span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: cc.bg, color: cc.text }}>{task.category}</span></div>
+                <div style={{ fontSize: 12, color: "#475569", paddingRight: 12 }}>{task.defaultAssignee || "—"}</div>
+                <div style={{ fontSize: 12, color: "#64748b", paddingRight: 12 }}>{ruleLabel(task.dueDateRule)}</div>
+                <div style={{ paddingRight: 12 }}>{task.isStandard && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#dbeafe", color: "#1d4ed8" }}>Standard</span>}</div>
+                <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
+                  <button onClick={() => moveTask(task.id, -1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move up">↑</button>
+                  <button onClick={() => moveTask(task.id, 1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move down">↓</button>
+                  <button onClick={() => startEdit(task)} style={LIB_BTN_EDIT}>Edit</button>
+                  <button onClick={() => deleteTask(task.id)} style={LIB_BTN_DELETE}>✕</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={LIB_FOOTER}>{filtered.length} task{filtered.length !== 1 ? "s" : ""} in {activeCategory}</div>
+    </div>
+  );
+}
+
+// ── AnchorEventsLibraryView ───────────────────────────────────────────────────
+// Default anchor events seeded from DDR_ANCHORS constant
+const DEFAULT_ANCHOR_EVENTS = DDR_ANCHORS.map(a => ({ ...a, builtin: true }));
+
+function AnchorEventsLibraryView({ anchorEventsLibrary, onSave, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData]   = useState(null);
+  const [search, setSearch]       = useState("");
+
+  const builtinIds = new Set(DDR_ANCHORS.map(a => a.id));
+  // Merge saved order from library into builtins, then combine with custom anchors
+  const savedById = Object.fromEntries((anchorEventsLibrary || []).map(a => [a.id, a]));
+  const allForDisplay = [
+    ...DDR_ANCHORS.map((a, i) => ({ ...a, builtin: true, order: savedById[a.id]?.order ?? i })),
+    ...(anchorEventsLibrary || []).filter(a => !builtinIds.has(a.id))
+      .map((a, i) => ({ ...a, order: a.order ?? (DDR_ANCHORS.length + i) })),
+  ].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+  const userAnchors = (anchorEventsLibrary || []).filter(a => !builtinIds.has(a.id));
+  const filtered = allForDisplay.filter(a =>
+    !search || a.label.toLowerCase().includes(search.toLowerCase())
+  );
+
+  function moveAnchor(id, dir) {
+    const idx = filtered.findIndex(a => a.id === id);
+    const swapIdx = idx + dir;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= filtered.length) return;
+    const [a, b] = [filtered[idx], filtered[swapIdx]];
+    const [ao, bo] = [a.order ?? idx, b.order ?? swapIdx];
+    // Builtins aren't in the user library — persist order for them too
+    onSave(prev => {
+      const updatedIds = new Set([a.id, b.id]);
+      const updated = prev.map(p => {
+        if (p.id === a.id) return { ...p, order: bo };
+        if (p.id === b.id) return { ...p, order: ao };
+        return p;
+      });
+      // If a builtin wasn't in the library yet, add it with its new order
+      if (!prev.find(p => p.id === a.id)) updated.push({ ...a, order: bo });
+      if (!prev.find(p => p.id === b.id)) updated.push({ ...b, order: ao });
+      return updated;
+    });
+  }
+
+  function startAdd() {
+    const a = { id: generateId(), label: "", description: "", builtin: false };
+    setEditingId(a.id); setEditData(a);
+  }
+  function startEdit(anchor) { setEditingId(anchor.id); setEditData({ ...anchor }); }
+  function cancelEdit() { setEditingId(null); setEditData(null); }
+  function saveAnchor() {
+    if (!editData.label.trim()) return;
+    onSave(prev => {
+      const exists = (prev || []).find(a => a.id === editData.id);
+      return exists ? prev.map(a => a.id === editData.id ? editData : a) : [...(prev || []), editData];
+    });
+    cancelEdit();
+  }
+  function deleteAnchor(id) {
+    if (!confirm("Delete this anchor event? Any DDR rules using it will need to be updated.")) return;
+    onSave(prev => (prev || []).filter(a => a.id !== id));
+  }
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search anchor events…"
+          style={{ ...LIB_INPUT, marginTop: 0, width: 260 }} />
+        <div style={{ fontSize: 12, color: "#64748b", marginLeft: 8 }}>
+          Built-in anchors are always available. Add custom ones for your workflow.
+        </div>
+        {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginLeft: "auto" }}>+ Add Anchor</button>}
+      </div>
+
+      {/* Edit / Add form */}
+      {editingId && editData && (
+        <div style={LIB_FORM_CARD}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
+            {(anchorEventsLibrary || []).find(a => a.id === editingId) ? "Edit Anchor Event" : "New Anchor Event"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12, marginBottom: 12 }}>
+            <label style={LIB_LABEL}>Anchor Event Name *
+              <input value={editData.label}
+                onChange={e => setEditData(p => ({ ...p, label: e.target.value }))}
+                placeholder="e.g. Census Request Date"
+                style={LIB_INPUT} />
+            </label>
+            <label style={LIB_LABEL}>Description
+              <input value={editData.description || ""}
+                onChange={e => setEditData(p => ({ ...p, description: e.target.value }))}
+                placeholder="Optional — what triggers this event?"
+                style={LIB_INPUT} />
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={saveAnchor} style={LIB_BTN_SAVE}>Save Anchor</button>
+            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      <div style={LIB_TABLE_WRAP}>
+        <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "2fr 3fr 80px 160px", gap: 0 }}>
+          {["Anchor Event", "Description", "Type", ""].map((h, i) => <div key={i} style={{ ...LIB_TH, padding: "0 12px" }}>{h}</div>)}
+        </div>
+        {filtered.length === 0 ? (
+          <div style={{ ...LIB_EMPTY, padding: "16px" }}>No anchor events match your search.</div>
+        ) : filtered.map((anchor, idx) => (
+          <div key={anchor.id} style={{
+            display: "grid", gridTemplateColumns: "2fr 3fr 80px 160px",
+            padding: "10px 16px", gap: 0, alignItems: "center",
+            borderBottom: idx < filtered.length - 1 ? "1px solid #f1f5f9" : "none",
+            background: editingId === anchor.id ? "#f0f5fa" : "#fff",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", paddingRight: 12 }}>{anchor.label}</div>
+            <div style={{ fontSize: 12, color: "#64748b", fontStyle: anchor.description ? "normal" : "italic", paddingRight: 12 }}>
+              {anchor.description || "—"}
+            </div>
+            <div style={{ paddingRight: 12 }}>
+              {anchor.builtin
+                ? <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#f3e8ff", color: "#7c3aed" }}>Built-in</span>
+                : <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#dcfce7", color: "#166534" }}>Custom</span>
+              }
+            </div>
+            <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+              <button onClick={() => moveAnchor(anchor.id, -1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move up">↑</button>
+              <button onClick={() => moveAnchor(anchor.id, 1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move down">↓</button>
+              {canEdit && <>
+                <button onClick={() => startEdit(anchor)} style={LIB_BTN_EDIT}>Edit</button>
+                <button onClick={() => deleteAnchor(anchor.id)} style={LIB_BTN_DELETE}>✕</button>
+              </>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={LIB_FOOTER}>
+        {DDR_ANCHORS.length} built-in · {userAnchors.length} custom · {filtered.length} shown
+      </div>
+    </div>
+  );
+}
+
+// ── DdrLibraryView ────────────────────────────────────────────────────────────
+function DdrLibraryView({ dueDateRules, onSave, allAnchors, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm]   = useState(null);
+
+  // Sort: builtins first (in their original order), then user rules by order field
+  const builtinRules = (dueDateRules||[]).filter(r => r.builtin);
+  const userRules = (dueDateRules||[]).filter(r => !r.builtin);
+  const sortedRules = [...(dueDateRules||[])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+  function moveRule(id, dir) {
+    const idx = sortedRules.findIndex(r => r.id === id);
+    const swapIdx = idx + dir;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= sortedRules.length) return;
+    const [a, b] = [sortedRules[idx], sortedRules[swapIdx]];
+    const [ao, bo] = [a.order ?? idx, b.order ?? swapIdx];
+    onSave(prev => prev.map(r => {
+      if (r.id === a.id) return { ...r, order: bo };
+      if (r.id === b.id) return { ...r, order: ao };
+      return r;
+    }));
+  }
+
+  function startNew() {
+    const id = "ddr_" + Date.now();
+    setEditingId(id);
+    setEditForm({ id, label: "", anchor: "renewal", direction: "before", days: 30, builtin: false });
+  }
+  function startEdit(rule) { setEditingId(rule.id); setEditForm({ ...rule }); }
+  function cancelEdit() { setEditingId(null); setEditForm(null); }
+  function saveRule() {
+    if (!editForm.label.trim()) return;
+    const finalRule = { ...editForm };
+    onSave(prev => {
+      const exists = (prev||[]).find(r => r.id === finalRule.id);
+      return exists ? prev.map(r => r.id === finalRule.id ? finalRule : r) : [...(prev||[]), finalRule];
+    });
+    cancelEdit();
+  }
+  function deleteRule(id) {
+    if (confirm("Delete this rule?")) onSave(prev => prev.filter(r => r.id !== id));
+  }
+
+  const isNew = editingId && !(dueDateRules||[]).find(r => r.id === editingId);
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+        <div style={{ fontSize: 12, color: "#64748b" }}>Define reusable date calculation rules based on anchor events like renewal date or OE start.</div>
+        {canEdit && <button onClick={startNew} style={{ ...LIB_BTN_PRIMARY, marginLeft: "auto" }}>+ Add Rule</button>}
+      </div>
+
+      {/* New rule form */}
+      {isNew && editForm && (
+        <div style={LIB_FORM_CARD}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>New Rule</div>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <label style={LIB_LABEL}>Rule Label *
+              <input value={editForm.label} onChange={e => setEditForm(p => ({ ...p, label: e.target.value }))} placeholder="e.g. 30 days before renewal" style={LIB_INPUT} />
+            </label>
+            <label style={LIB_LABEL}>Anchor Event
+              <select value={editForm.anchor} onChange={e => setEditForm(p => ({ ...p, anchor: e.target.value }))} style={LIB_INPUT}>
+                {allAnchors.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+              </select>
+            </label>
+            <label style={LIB_LABEL}>Direction
+              <select value={editForm.direction} onChange={e => setEditForm(p => ({ ...p, direction: e.target.value }))} style={LIB_INPUT}>
+                <option value="before">Before</option>
+                <option value="after">After</option>
+              </select>
+            </label>
+            <label style={LIB_LABEL}>Days
+              <input type="number" min="0" value={editForm.days || ""} onChange={e => setEditForm(p => ({ ...p, days: Number(e.target.value) }))} style={LIB_INPUT} />
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={saveRule} style={LIB_BTN_SAVE}>Save Rule</button>
+            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Rules table */}
+      {(dueDateRules||[]).length === 0 ? (
+        <div style={LIB_EMPTY}>No due date rules defined yet. Click "+ Add Rule" to get started.</div>
+      ) : (
+        <div style={LIB_TABLE_WRAP}>
+          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "3fr 200px 100px 80px 160px", gap: 0 }}>
+            {["Rule Label", "Anchor", "Direction", "Days", ""].map((h, i) => <div key={i} style={{ ...LIB_TH, padding: "0 12px" }}>{h}</div>)}
+          </div>
+          {sortedRules.map((rule, idx) => {
+            const isEditing = editingId === rule.id;
+            const form = isEditing ? editForm : rule;
+            return (
+              <div key={rule.id} style={{ borderBottom: idx < sortedRules.length - 1 ? "1px solid #f1f5f9" : "none", background: isEditing ? "#f0f5fa" : "#fff" }}>
+                {!isEditing ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "3fr 200px 100px 80px 160px", padding: "10px 16px", gap: 0, alignItems: "center" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", paddingRight: 12 }}>
+                      {rule.label}
+                      {rule.builtin && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, background: "#f3e8ff", color: "#7c3aed" }}>Built-in</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#64748b", paddingRight: 12 }}>{allAnchors.find(a => a.id === rule.anchor)?.label || rule.anchor}</div>
+                    <div style={{ fontSize: 12, color: "#64748b", textTransform: "capitalize", paddingRight: 12 }}>{rule.direction}</div>
+                    <div style={{ fontSize: 12, color: "#475569", paddingRight: 12 }}>{rule.builtin ? "—" : rule.days}</div>
+                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                      <button onClick={() => moveRule(rule.id, -1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move up">↑</button>
+                      <button onClick={() => moveRule(rule.id, 1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move down">↓</button>
+                      {canEdit && <>
+                        <button onClick={() => startEdit(rule)} style={LIB_BTN_EDIT}>Edit</button>
+                        <button onClick={() => deleteRule(rule.id)} style={LIB_BTN_DELETE}>✕</button>
+                      </>}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                      <label style={LIB_LABEL}>Rule Label *<input value={form.label} onChange={e => setEditForm(p => ({ ...p, label: e.target.value }))} style={LIB_INPUT} /></label>
+                      <label style={LIB_LABEL}>Anchor<select value={form.anchor} onChange={e => setEditForm(p => ({ ...p, anchor: e.target.value }))} style={LIB_INPUT}>{allAnchors.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
+                      <label style={LIB_LABEL}>Direction<select value={form.direction} onChange={e => setEditForm(p => ({ ...p, direction: e.target.value }))} style={LIB_INPUT}><option value="before">Before</option><option value="after">After</option></select></label>
+                      <label style={LIB_LABEL}>Days<input type="number" min="0" value={form.days || ""} onChange={e => setEditForm(p => ({ ...p, days: Number(e.target.value) }))} style={LIB_INPUT} /></label>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={saveRule} style={LIB_BTN_SAVE}>Save Rule</button>
+                      <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={LIB_FOOTER}>{sortedRules.length} rule{sortedRules.length !== 1 ? "s" : ""} defined · {builtinRules.length} built-in · {userRules.length} custom</div>
+    </div>
+  );
+}
+
+
 // ── BenefitsDbView ────────────────────────────────────────────────────────────
-function BenefitsDbView({ benefitsDb, onSave, currentUser, onBack }) {
+function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
   const canEdit = ["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim());
   const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const [activeCategory, setActiveCategory] = useState("All");
@@ -10707,32 +11670,20 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser, onBack }) {
 
   return (
     <div>
-      {/* Sticky header */}
-      <div style={{ position:"sticky", top:64, zIndex:40, background:"#f8fafc",
-        borderBottom:"1px solid #e2e8f0", paddingBottom:12, marginBottom:20,
-        boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-      {/* Header */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-        <div>
-          <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontWeight:800, fontSize:20, color:"#0f172a" }}>Benefits</div>
-          <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>Reference database of employee benefit types, structures, and regulatory attributes</div>
-        </div>
-        <div style={{ display:"flex", gap:8 }}>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           {canEdit && <button type="button" onClick={resetToDefaults}
             style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:700, fontFamily:"inherit",
               border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", cursor:"pointer" }}>
             ↺ Reset to Defaults
           </button>}
-          {canEdit && <button type="button" onClick={startNew}
-            style={{ background:"linear-gradient(135deg,#2d4a6b,#4a7fa5)", color:"#fff",
-              border:"none", borderRadius:9, padding:"9px 20px", fontSize:13, fontWeight:700,
-              cursor:"pointer", fontFamily:"inherit" }}>+ Add Row</button>}
-          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
+          {canEdit && <button type="button" onClick={startNew} style={LIB_BTN_PRIMARY}>+ Add Row</button>}
         </div>
       </div>
 
       {/* Category filter tabs */}
-      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom: 16 }}>
         {["All", ...BENEFITS_DB_CATEGORIES].map(cat => {
           const count = cat === "All" ? records.length : (catCounts[cat]||0);
           const cc = catColors[cat] || { bg:"#f1f5f9", text:"#475569" };
@@ -10747,7 +11698,6 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser, onBack }) {
             }}>{cat} <span style={{ opacity:.7 }}>({count})</span></button>
           );
         })}
-      </div>
       </div>
 
       {/* Table */}
