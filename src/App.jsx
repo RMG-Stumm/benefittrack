@@ -8834,7 +8834,16 @@ useEffect(() => {
         fetchMeetings(),
         fetchTeams(),
       ]);
-      if (clients)  setClientsRaw(clients.map(applyDataFixes));
+      if (clients) {
+        const fixed = clients.map(applyDataFixes);
+        setClientsRaw(fixed);
+        // Persist any clients that were cleaned up (duplicates stripped, defaults added)
+        fixed.forEach((c, i) => {
+          if (JSON.stringify(c) !== JSON.stringify(clients[i])) {
+            upsertClient(c);
+          }
+        });
+      }
       if (carriers) {
         // Merge DEFAULT_CARRIERS_DATA commission rules, planLimits, and contacts
         // into Supabase carriers that are missing them — so new fields always appear
@@ -10063,6 +10072,7 @@ useEffect(() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
         return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />;
       })()}
+npm run dev
 
       {/* Team Edit/Add Modal */}
       {teamModal && (
