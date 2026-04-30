@@ -7320,7 +7320,7 @@ function parseClientSpreadsheet(rows, tasksDb) {
 
 // ── Meetings View ─────────────────────────────────────────────────────────────
 
-function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient, currentUser, userTeamId, userTeams }) {
+function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksDb, onOpenClient, currentUser, userTeamId, userTeams, onBack }) {
   const isAC = currentUser?.role?.trim() === "Account Coordinator";
   const isMultiTeam = (userTeams || []).length > 1;
   const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams || []).length > 0;
@@ -7476,8 +7476,11 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
 
   return (
     <div>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+      {/* Sticky header */}
+      <div style={{ position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
+        borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12, marginBottom: 20,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>Team Meetings</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{sorted.length} meeting{sorted.length !== 1 ? "s" : ""} recorded</div>
@@ -7495,7 +7498,9 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
           )}
           {canRecord && <button onClick={() => { setForm(emptyForm()); setShowForm(true); setEditId(null); }}
             style={btnPrimary}>+ New Meeting</button>}
+          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
         </div>
+      </div>
       </div>
 
       {/* New / Edit Meeting Form */}
@@ -9191,7 +9196,7 @@ useEffect(() => {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "28px 32px" }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 32px 28px" }}>
 
 
 
@@ -9695,6 +9700,11 @@ useEffect(() => {
 
           return (
           <div>
+            <div style={{
+              position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
+              borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12,
+              marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,.06)",
+            }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
               <div>
                 <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
@@ -9714,9 +9724,8 @@ useEffect(() => {
               <button onClick={() => changeView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
             </div>
 
-            {/* Filter bar — same structure as dashboard */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-              {/* Team dropdown — Leads/VP only */}
+            {/* Filter bar */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
                 <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
@@ -9754,6 +9763,7 @@ useEffect(() => {
                 </select>
               </div>
             </div>
+            </div>{/* end sticky */}
 
             {renewalsFiltered.length === 0 ? (
               <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", padding: "48px 20px", textAlign: "center", color: "#94a3b8" }}>
@@ -9775,7 +9785,7 @@ useEffect(() => {
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} />
+          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} onBack={() => changeView("dashboard")} />
         )}
 
 
@@ -9790,10 +9800,10 @@ useEffect(() => {
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{teams.length} team{teams.length !== 1 ? "s" : ""}</div>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => changeView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
                 {["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim()) && (
                   <button onClick={() => setTeamModal({ id: "", label: "", members: [] })} style={btnPrimary}>+ Add Team</button>
                 )}
+                <button onClick={() => changeView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
@@ -9896,8 +9906,32 @@ useEffect(() => {
 
           return (
           <div>
-           
-                  <div style={{ display: "flex", gap: 8 }}>
+            {/* ── Sticky controls header ── */}
+            <div style={{
+              position: "sticky", top: 64, zIndex: 40,
+              background: "#f8fafc",
+              paddingTop: 28, paddingBottom: 12,
+              marginBottom: 4,
+              borderBottom: "1px solid #e2e8f0",
+              boxShadow: "0 2px 8px rgba(0,0,0,.06)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>All Clients</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                    {filtered.length} of {clients.length} shown
+                    {activeFilterCount > 0 && (
+                      <button onClick={() => {
+                        setSearch(""); setFilterTeam("All"); setFilterMarket("All");
+                        setFilterCarrier("All"); setFilterSitus("All"); setFilterFunding("All");
+                      }} style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
+                        background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+                        Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <button onClick={() => setModal(newClient(tasksData))} style={btnPrimary}>+ Add Client</button>
                     <label title="Import from spreadsheet" style={{ ...btnPrimary, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
                       📂 Import
@@ -9924,21 +9958,9 @@ useEffect(() => {
                         }}
                       />
                     </label>
- 
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                  {filtered.length} of {clients.length} shown
-                  {activeFilterCount > 0 && (
-                    <button onClick={() => {
-                      setSearch(""); setFilterTeam("All"); setFilterMarket("All");
-                      setFilterCarrier("All"); setFilterSitus("All"); setFilterFunding("All");
-                    }} style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
-                      background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
-                      Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
-                    </button>
-                  )}
+                    <button onClick={() => changeView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
                 </div>
-
-            </div>
+              </div>
 
             {/* Filters row 1: search + core filters */}
             <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
@@ -9991,8 +10013,10 @@ useEffect(() => {
               <SortBtn field="situs"   label="Situs" />
               <SortBtn field="funding" label="Funding" />
             </div>
+            </div>{/* end sticky controls */}
 
             {/* Grid */}
+            <div style={{ paddingTop: 16 }}>
             {filtered.length === 0 ? (
               <div style={{
                 textAlign: "center", padding: "80px 20px", color: "#94a3b8",
@@ -10009,6 +10033,7 @@ useEffect(() => {
                 ))}
               </div>
             )}
+            </div>
           </div>
           );
         })()}
@@ -10025,6 +10050,7 @@ useEffect(() => {
             currentUser={currentUser}
             userTeamId={userTeamId}
             userTeams={userTeams}
+            onBack={() => changeView("dashboard")}
           />
         )}
 
@@ -10033,6 +10059,7 @@ useEffect(() => {
             carriers={carriersData}
             onSave={setCarriersData}
             currentUser={currentUser}
+            onBack={() => changeView("dashboard")}
           />
         )}
 
@@ -10041,6 +10068,7 @@ useEffect(() => {
             benefitsDb={benefitsDb}
             onSave={setBenefitsDb}
             currentUser={currentUser}
+            onBack={() => changeView("dashboard")}
           />
         )}
 
@@ -10053,11 +10081,12 @@ useEffect(() => {
             currentUser={currentUser}
             clients={clients}
             onSyncClients={syncAllClientsToTasks}
+            onBack={() => changeView("dashboard")}
           />
         )}
 
         {view === "reports" && ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
-          <ReportsView clients={clients} currentUser={currentUser} teams={teams} />
+          <ReportsView clients={clients} currentUser={currentUser} teams={teams} onBack={() => changeView("dashboard")} />
         )}
         {view === "reports" && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
           <div style={{ padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 15 }}>
@@ -10072,7 +10101,6 @@ useEffect(() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
         return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} />;
       })()}
-npm run dev
 
       {/* Team Edit/Add Modal */}
       {teamModal && (
@@ -10127,7 +10155,7 @@ npm run dev
 // ── Team Edit Modal ──────────────────────────────────────────────────────────
 
 // ── Reports View ──────────────────────────────────────────────────────────────
-function ReportsView({ clients, currentUser, teams }) {
+function ReportsView({ clients, currentUser, teams, onBack }) {
   const [tab, setTab] = React.useState("performance");
   const [auditLogs, setAuditLogs] = React.useState([]);
   const [auditLoading, setAuditLoading] = React.useState(false);
@@ -10217,17 +10245,23 @@ function ReportsView({ clients, currentUser, teams }) {
   const tdMuted = { ...td, color: "#64748b" };
 
   return (
-    <div style={{ padding: "24px 32px", maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ marginBottom: 20 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", margin: 0 }}>📊 Reports</h2>
-        <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 0" }}>Task performance, team metrics, and change history</p>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-        {[["performance","👥 Team Performance"],["audit","📋 Audit Log"],["benchmarks","⏱ Task Benchmarks"]].map(([id, label]) => (
-          <button key={id} onClick={() => { setTab(id); setDrillMember(null); }} style={tabStyle(tab === id)}>{label}</button>
-        ))}
+    <div style={{ padding: "0 32px 28px", maxWidth: 1100, margin: "0 auto" }}>
+      <div style={{ position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
+        borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12,
+        marginBottom: 20, boxShadow: "0 2px 8px rgba(0,0,0,.06)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", margin: 0 }}>📊 Reports</h2>
+            <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 0" }}>Task performance, team metrics, and change history</p>
+          </div>
+          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
+        </div>
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["performance","👥 Team Performance"],["audit","📋 Audit Log"],["benchmarks","⏱ Task Benchmarks"]].map(([id, label]) => (
+            <button key={id} onClick={() => { setTab(id); setDrillMember(null); }} style={tabStyle(tab === id)}>{label}</button>
+          ))}
+        </div>
       </div>
 
       {/* ── Team Performance Tab ── */}
@@ -10588,7 +10622,7 @@ const BENEFITS_DB_SEED = [
 ];
 
 // ── BenefitsDbView ────────────────────────────────────────────────────────────
-function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
+function BenefitsDbView({ benefitsDb, onSave, currentUser, onBack }) {
   const canEdit = ["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim());
   const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const [activeCategory, setActiveCategory] = useState("All");
@@ -10673,8 +10707,12 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
 
   return (
     <div>
+      {/* Sticky header */}
+      <div style={{ position:"sticky", top:64, zIndex:40, background:"#f8fafc",
+        borderBottom:"1px solid #e2e8f0", paddingBottom:12, marginBottom:20,
+        boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
       {/* Header */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
         <div>
           <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontWeight:800, fontSize:20, color:"#0f172a" }}>Benefits</div>
           <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>Reference database of employee benefit types, structures, and regulatory attributes</div>
@@ -10689,11 +10727,12 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
             style={{ background:"linear-gradient(135deg,#2d4a6b,#4a7fa5)", color:"#fff",
               border:"none", borderRadius:9, padding:"9px 20px", fontSize:13, fontWeight:700,
               cursor:"pointer", fontFamily:"inherit" }}>+ Add Row</button>}
+          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
         </div>
       </div>
 
       {/* Category filter tabs */}
-      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
         {["All", ...BENEFITS_DB_CATEGORIES].map(cat => {
           const count = cat === "All" ? records.length : (catCounts[cat]||0);
           const cc = catColors[cat] || { bg:"#f1f5f9", text:"#475569" };
@@ -10708,6 +10747,7 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
             }}>{cat} <span style={{ opacity:.7 }}>({count})</span></button>
           );
         })}
+      </div>
       </div>
 
       {/* Table */}
@@ -10909,7 +10949,7 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
 
 // ── CarriersView ─────────────────────────────────────────────────────────────
 
-function CarriersView({ carriers, onSave, currentUser }) {
+function CarriersView({ carriers, onSave, currentUser, onBack }) {
   const isAC = currentUser?.role?.trim() === "Account Coordinator";
   const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const canEditCarrier = !isAC;
@@ -10981,23 +11021,30 @@ function CarriersView({ carriers, onSave, currentUser }) {
 
   return (
     <div>
+      {/* Sticky header */}
+      <div style={{ position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
+        borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12, marginBottom: 20,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
             Carrier Products
           </div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Configure available products and eligibility rules per carrier</div>
         </div>
-        {canEditCarrier && <button type="button" onClick={startNew} style={{
-          background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
-          border: "none", borderRadius: 9, padding: "9px 20px",
-          fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-        }}>+ Add Carrier</button>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {canEditCarrier && <button type="button" onClick={startNew} style={{
+            background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
+            border: "none", borderRadius: 9, padding: "9px 20px",
+            fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+          }}>+ Add Carrier</button>}
+          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
+        </div>
       </div>
 
       {/* Category tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 8 }}>
         {CARRIER_CATEGORIES.map(cat => (
           <button key={cat} type="button" onClick={() => { setActiveCategory(cat); setEditingId(null); }} style={{
             padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
@@ -11007,6 +11054,7 @@ function CarriersView({ carriers, onSave, currentUser }) {
             cursor: "pointer", fontFamily: "inherit",
           }}>{cat}</button>
         ))}
+      </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: editingId ? "1fr 560px" : "1fr", gap: 16 }}>
@@ -11769,7 +11817,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav }) {
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, onBack }) {
   const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams||[]).length > 0;
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
@@ -11874,8 +11922,12 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
 
   return (
     <div>
+      {/* Sticky header */}
+      <div style={{ position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
+        borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12, marginBottom: 14,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
             Open Tasks
@@ -11911,6 +11963,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             color: showAddTask ? "#6d28d9" : "#fff",
             cursor: "pointer", fontFamily: "inherit",
           }}>+ Add Task</button>
+          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
         </div>
       </div>
 
@@ -11925,6 +11978,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             cursor: "pointer", fontFamily: "inherit",
           }}>{label}</button>
         ))}
+      </div>
       </div>
 
       {/* Add Task Panel */}
@@ -12222,7 +12276,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   );
 }
 
-function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUser, clients, onSyncClients }) {
+function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUser, clients, onSyncClients, onBack }) {
   const canEdit   = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const canDelete = canEdit;
   const [activeCategory, setActiveCategory] = useState("Compliance");
@@ -12340,8 +12394,12 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
 
   return (
     <div>
+      {/* Sticky header */}
+      <div style={{ position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
+        borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12, marginBottom: 20,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
             Task Templates
@@ -12366,11 +12424,12 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
             fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
           }}>+ Add Task</button>
           </>)}
+          {onBack && <button onClick={onBack} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#64748b", cursor: "pointer", fontFamily: "inherit" }}>← Back</button>}
         </div>
       </div>
 
       {/* Category tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {TASK_CATEGORIES_DB.map(cat => {
           const cc = categoryColors[cat] || categoryColors["Miscellaneous"];
           const active = activeCategory === cat;
@@ -12402,6 +12461,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
             ({(dueDateRules || []).length})
           </span>
         </button>}
+      </div>
       </div>
 
       {/* Due Date Rules management panel */}
