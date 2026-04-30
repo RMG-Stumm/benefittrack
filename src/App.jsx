@@ -146,7 +146,18 @@ function syncStandardTasks(client, tasksDb) {
     "lineup_updated", "oe_wrapup_email", "new_carrier_census",
   ]);
 
-  const miscTemplates    = matchingTemplates.filter(t => groupForCategory(t.category) === "miscTasks");
+  // Labels already handled by the hardcoded PRERENEWAL_TASKS list —
+  // never sync standard tasks with these labels into any dynamic group
+  const PRERENEWAL_FIXED_LABELS = new Set([
+    "Renewal Download", "Bills Download", "SBC Download", "Blue Insights Download",
+    "Data Sheet Preparation", "Prepare Data Sheet", "Request/Download Census",
+    "Prepare/Send Medical RFP", "Prepare/Send Ancillary RFP", "Prepare Exhibits",
+  ]);
+
+  const miscTemplates    = matchingTemplates.filter(t =>
+    groupForCategory(t.category) === "miscTasks" &&
+    !PRERENEWAL_FIXED_LABELS.has(t.label)
+  );
   const postOETemplates  = matchingTemplates.filter(t =>
     groupForCategory(t.category) === "postOETasks" &&
     !POST_OE_FIXED_IDS.has(t.id)  // skip tasks that live in postOEFixed
@@ -1153,7 +1164,13 @@ function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove 
   );
 }
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary }) {
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary }) {
+  // Derive sorted label arrays from libraries (fall back to hardcoded defaults if library empty)
+  const marketOptions   = (marketsLibrary||[]).length  ? [...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
+  const fundingOptions  = (fundingLibrary||[]).length  ? [...(fundingLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : FUNDING_METHODS;
+  const situsOptions    = (situsLibrary||[]).length    ? [...(situsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : [];
+  const empTypeOptions  = (employerTypesLibrary||[]).length ? [...(employerTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : CARRIER_EMPLOYER_TYPES;
+
   // Helper: fire-and-forget audit log entry
   function logChange(p, category, taskLabel, field, oldValue, newValue) {
     if (oldValue === newValue) return;
@@ -1884,14 +1901,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 Market Size
                                 <select value={mktSize} onChange={e => setCE("marketSize", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3, fontSize: 12 }}>
-                                  {MARKET_SIZES.map(m => <option key={m} value={m}>{m}</option>)}
+                                  {marketOptions.map(m => <option key={m} value={m}>{m}</option>)}
                                 </select>
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Funding Method
                                 <select value={funding} onChange={e => setCE("fundingMethod", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3, fontSize: 12 }}>
-                                  {FUNDING_METHODS.map(f => <option key={f} value={f}>{f}</option>)}
+                                  {fundingOptions.map(f => <option key={f} value={f}>{f}</option>)}
                                 </select>
                               </label>
                             </div>
@@ -2264,7 +2281,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   const v = e.target.value;
                   setData(p => applyPreRenewalRules({ ...p, marketSize: v }));
                 }} style={inputStyle}>
-                  {MARKET_SIZES.map(s => <option key={s}>{s}</option>)}
+                  {marketOptions.map(s => <option key={s}>{s}</option>)}
                 </select>
               </label>
 
@@ -2410,7 +2427,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 style={{ ...inputStyle, marginTop: 0 }}
               >
                 <option value="">— Select state —</option>
-                {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                {situsOptions.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               {data.marketSize === "ACA" && (
                 <>
@@ -3249,7 +3266,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Funding Method
                             <select value={data.fundingMethod} onChange={e => set("fundingMethod", e.target.value)} style={{ ...inputStyle, marginTop: 3 }}>
-                              {FUNDING_METHODS.map(f => <option key={f}>{f}</option>)}
+                              {fundingOptions.map(f => <option key={f}>{f}</option>)}
                             </select>
                           </label>
                         )}
@@ -4983,13 +5000,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   </div>
                 );
               })}
-              <button type="button" onClick={() => setData(p => ({
-                ...p, preRenewal: { ...p.preRenewal, __extra: [...(p.preRenewal?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] }
-              }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                border: "1.5px dashed #507c9c", background: "#dce8f2", color: "#3e5878",
-                cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
-                + Add Task
-              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <select onChange={e => {
+                  const label = e.target.value; if (!label) return;
+                  setData(p => ({ ...p, preRenewal: { ...p.preRenewal, __extra: [...(p.preRenewal?.__extra||[]), { title: label, status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } }));
+                  e.target.value = "";
+                }} style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1.5px dashed #507c9c", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit" }}>
+                  <option value="">📋 Pick from library…</option>
+                  {(tasksDb||[]).filter(t => t.category === "Pre-Renewal").map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  <option value="" disabled>──────────</option>
+                  <option value="__custom__">+ Custom task</option>
+                </select>
+                <button type="button" onClick={() => setData(p => ({ ...p, preRenewal: { ...p.preRenewal, __extra: [...(p.preRenewal?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } }))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px dashed #507c9c", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  + Blank
+                </button>
+              </div>
             </div>
 
           </div>)} {/* end preRenewal tab */}
@@ -5350,13 +5375,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   </div>
                 );
               })}
-              <button type="button" onClick={() => setData(p => ({
-                ...p, renewalTasks: [...(p.renewalTasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }]
-              }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
-                cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
-                + Add Task
-              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <select onChange={e => {
+                  const label = e.target.value; if (!label || label === "__custom__") { if (label === "__custom__") setData(p => ({ ...p, renewalTasks: [...(p.renewalTasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }] })); e.target.value=""; return; }
+                  setData(p => ({ ...p, renewalTasks: [...(p.renewalTasks||[]), { title: label, status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }] }));
+                  e.target.value = "";
+                }} style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit" }}>
+                  <option value="">📋 Pick from library…</option>
+                  {(tasksDb||[]).filter(t => t.category === "Renewal").map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  <option value="" disabled>──────────</option>
+                  <option value="__custom__">+ Custom task</option>
+                </select>
+                <button type="button" onClick={() => setData(p => ({ ...p, renewalTasks: [...(p.renewalTasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }] }))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  + Blank
+                </button>
+              </div>
             </div>
 
           </div>)} {/* end renewal tab */}
@@ -5778,6 +5811,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 });
               })()}
               {(data.postOETasks || []).map((t, idx) => {
+                const fixedLabels = new Set([
+                  "Elections Received?", "OE Changes Processed?", "Carrier Bill Audited?",
+                  "Lineup Updated?", "OE Wrap-Up Email Sent?", "New Carrier Submission Census Created?",
+                ]);
+                if (fixedLabels.has(t.title)) return null;
                 const isNA = t.status === "N/A";
                 const isDone = t.status === "Complete";
                 return (
@@ -5867,13 +5905,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   </div>
                 );
               })}
-              <button type="button" onClick={() => setData(p => ({
-                ...p, postOETasks: [...(p.postOETasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }]
-              }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
-                cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
-                + Add Task
-              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <select onChange={e => {
+                  const label = e.target.value; if (!label || label === "__custom__") { if (label === "__custom__") setData(p => ({ ...p, postOETasks: [...(p.postOETasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }] })); e.target.value=""; return; }
+                  setData(p => ({ ...p, postOETasks: [...(p.postOETasks||[]), { title: label, status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }] }));
+                  e.target.value = "";
+                }} style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit" }}>
+                  <option value="">📋 Pick from library…</option>
+                  {(tasksDb||[]).filter(t => t.category === "Post-OE" || t.category === "Open Enrollment").map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  <option value="" disabled>──────────</option>
+                  <option value="__custom__">+ Custom task</option>
+                </select>
+                <button type="button" onClick={() => setData(p => ({ ...p, postOETasks: [...(p.postOETasks||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", notes:"", followUps:[] }] }))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  + Blank
+                </button>
+              </div>
             </div>
 
           </div>)} {/* end postOE tab */}
@@ -6053,13 +6099,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   </div>
                 );
               })}
-              <button type="button" onClick={() => setData(p => ({
-                ...p, compliance: { ...p.compliance, __extra: [...(p.compliance?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] }
-              }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
-                cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 8 }}>
-                + Add Task
-              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <select onChange={e => {
+                  const label = e.target.value; if (!label || label === "__custom__") { if (label === "__custom__") setData(p => ({ ...p, compliance: { ...p.compliance, __extra: [...(p.compliance?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } })); e.target.value=""; return; }
+                  setData(p => ({ ...p, compliance: { ...p.compliance, __extra: [...(p.compliance?.__extra||[]), { title: label, status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } }));
+                  e.target.value = "";
+                }} style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit" }}>
+                  <option value="">📋 Pick from library…</option>
+                  {(tasksDb||[]).filter(t => t.category === "Compliance").map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  <option value="" disabled>──────────</option>
+                  <option value="__custom__">+ Custom task</option>
+                </select>
+                <button type="button" onClick={() => setData(p => ({ ...p, compliance: { ...p.compliance, __extra: [...(p.compliance?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } }))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  + Blank
+                </button>
+              </div>
             </div>
 
           {/* Ongoing Tasks */}
@@ -6315,7 +6369,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           {taskTab === "misc" && (<div>
             <div style={{ padding: "8px 0" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {(data.miscTasks || []).map((t, idx) => {
+                {(data.miscTasks || []).filter(t => {
+                  const PRERENEWAL_FIXED_LABELS = new Set([
+                    "Renewal Download", "Bills Download", "SBC Download", "Blue Insights Download",
+                    "Data Sheet Preparation", "Prepare Data Sheet", "Request/Download Census",
+                    "Prepare/Send Medical RFP", "Prepare/Send Ancillary RFP", "Prepare Exhibits",
+                  ]);
+                  return !t._standardTemplateId || !PRERENEWAL_FIXED_LABELS.has(t.title);
+                }).map((t, idx) => {
                   const isDone = t.status === "Complete";
                   const isStd = !!t._standardTemplateId;
                   return (
@@ -6446,14 +6507,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   );
                 })}
               </div>
-              <button type="button" onClick={() => setData(p => ({
-                ...p,
-                miscTasks: [...(p.miscTasks||[]), { id: Date.now(), title: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [] }]
-              }))} style={{
-                marginTop: 8, padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                border: "1.5px dashed #c4b5fd", background: "#faf5ff", color: "#7c3aed",
-                cursor: "pointer", fontFamily: "inherit", width: "100%",
-              }}>+ Add Miscellaneous Task</button>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <select onChange={e => {
+                  const label = e.target.value; if (!label || label === "__custom__") { if (label === "__custom__") setData(p => ({ ...p, miscTasks: [...(p.miscTasks||[]), { id: Date.now(), title: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [] }] })); e.target.value=""; return; }
+                  setData(p => ({ ...p, miscTasks: [...(p.miscTasks||[]), { id: Date.now(), title: label, status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [] }] }));
+                  e.target.value = "";
+                }} style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1.5px dashed #c4b5fd", background: "#faf5ff", color: "#7c3aed", cursor: "pointer", fontFamily: "inherit" }}>
+                  <option value="">📋 Pick from library…</option>
+                  {(tasksDb||[]).filter(t => ["Miscellaneous","Ongoing","Wellness","Lifestyle"].includes(t.category)).map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  <option value="" disabled>──────────</option>
+                  <option value="__custom__">+ Custom task</option>
+                </select>
+                <button type="button" onClick={() => setData(p => ({ ...p, miscTasks: [...(p.miscTasks||[]), { id: Date.now(), title: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [] }] }))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px dashed #c4b5fd", background: "#faf5ff", color: "#7c3aed", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  + Blank
+                </button>
+              </div>
             </div>
           </div>)} {/* end misc tab */}
 
@@ -6980,9 +7048,10 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
               { id: "oe_wrapup_email",      label: "OE Wrap-Up Email Sent?" },
             ];
             const pof = client.postOEFixed || {};
+            const fixedLabels = new Set(fixedDefs.map(d => d.label));
             const all = [
               ...fixedDefs.map(d => ({ label: d.label, status: (pof[d.id] || {}).status || "Not Started", dueDate: (pof[d.id] || {}).dueDate || "" })),
-              ...postOETasks.map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.dueDate || "" })),
+              ...postOETasks.filter(t => !fixedLabels.has(t.title)).map(t => ({ label: t.title || "Unnamed", status: t.status || "Not Started", dueDate: t.dueDate || "" })),
             ];
             return [{ id: "postOE", label: "Post-OE", tasks: all }];
           })(),
@@ -7985,6 +8054,27 @@ function applyDataFixes(c) {
   if (!fixed.benefitRates)   fixed.benefitRates    = {};
   if (!fixed.ancillaryRenewalReceived) fixed.ancillaryRenewalReceived = {};
   if (!fixed.benefits)       fixed.benefits        = {};
+  // Permanently strip any miscTasks/postOETasks entries that duplicate hardcoded Pre-Renewal tasks
+  const PRERENEWAL_FIXED_LABELS = new Set([
+    "Renewal Download", "Bills Download", "SBC Download", "Blue Insights Download",
+    "Data Sheet Preparation", "Prepare Data Sheet", "Request/Download Census",
+    "Prepare/Send Medical RFP", "Prepare/Send Ancillary RFP", "Prepare Exhibits",
+  ]);
+  if (Array.isArray(fixed.miscTasks)) {
+    fixed.miscTasks = fixed.miscTasks.filter(t =>
+      !t._standardTemplateId || !PRERENEWAL_FIXED_LABELS.has(t.title)
+    );
+  }
+
+  // Permanently strip any postOETasks entries that duplicate postOEFixed labels
+  const POST_OE_FIXED_LABELS = new Set([
+    "Elections Received?", "OE Changes Processed?", "Carrier Bill Audited?",
+    "Lineup Updated?", "OE Wrap-Up Email Sent?", "New Carrier Submission Census Created?",
+  ]);
+  if (Array.isArray(fixed.postOETasks)) {
+    fixed.postOETasks = fixed.postOETasks.filter(t => !POST_OE_FIXED_LABELS.has(t.title));
+  }
+
   // Ensure miscTasks entries have followUps array (older entries won't have it)
   if (Array.isArray(fixed.miscTasks)) {
     fixed.miscTasks = fixed.miscTasks.map(t =>
@@ -9138,6 +9228,33 @@ useEffect(() => {
       return next;
     });
   }
+  // Markets library
+  const [marketsLibrary, setMarketsLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_markets_v1") || "[]"); return s.length ? s : MARKET_SIZES.map((label, i) => ({ id: "mkt_"+i, label, order: i, builtin: true })); } catch { return MARKET_SIZES.map((label, i) => ({ id: "mkt_"+i, label, order: i, builtin: true })); }
+  });
+  function setMarketsLibrary(updater) { setMarketsLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_markets_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
+  // Funding library
+  const [fundingLibrary, setFundingLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_funding_v1") || "[]"); return s.length ? s : FUNDING_METHODS.map((label, i) => ({ id: "fund_"+i, label, order: i, builtin: true })); } catch { return FUNDING_METHODS.map((label, i) => ({ id: "fund_"+i, label, order: i, builtin: true })); }
+  });
+  function setFundingLibrary(updater) { setFundingLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_funding_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
+  // Employer Types library
+  const [employerTypesLibrary, setEmployerTypesLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_emptypes_v1") || "[]"); return s.length ? s : CARRIER_EMPLOYER_TYPES.map((label, i) => ({ id: "et_"+i, label, order: i, builtin: true })); } catch { return CARRIER_EMPLOYER_TYPES.map((label, i) => ({ id: "et_"+i, label, order: i, builtin: true })); }
+  });
+  function setEmployerTypesLibrary(updater) { setEmployerTypesLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_emptypes_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
+  // Situs (States) library
+  const DEFAULT_STATES = [
+    {id:"st_AL",label:"Alabama",abbr:"AL"},{id:"st_AK",label:"Alaska",abbr:"AK"},{id:"st_AZ",label:"Arizona",abbr:"AZ"},{id:"st_AR",label:"Arkansas",abbr:"AR"},{id:"st_CA",label:"California",abbr:"CA"},{id:"st_CO",label:"Colorado",abbr:"CO"},{id:"st_CT",label:"Connecticut",abbr:"CT"},{id:"st_DE",label:"Delaware",abbr:"DE"},{id:"st_FL",label:"Florida",abbr:"FL"},{id:"st_GA",label:"Georgia",abbr:"GA"},{id:"st_HI",label:"Hawaii",abbr:"HI"},{id:"st_ID",label:"Idaho",abbr:"ID"},{id:"st_IL",label:"Illinois",abbr:"IL"},{id:"st_IN",label:"Indiana",abbr:"IN"},{id:"st_IA",label:"Iowa",abbr:"IA"},{id:"st_KS",label:"Kansas",abbr:"KS"},{id:"st_KY",label:"Kentucky",abbr:"KY"},{id:"st_LA",label:"Louisiana",abbr:"LA"},{id:"st_ME",label:"Maine",abbr:"ME"},{id:"st_MD",label:"Maryland",abbr:"MD"},{id:"st_MA",label:"Massachusetts",abbr:"MA"},{id:"st_MI",label:"Michigan",abbr:"MI"},{id:"st_MN",label:"Minnesota",abbr:"MN"},{id:"st_MS",label:"Mississippi",abbr:"MS"},{id:"st_MO",label:"Missouri",abbr:"MO"},{id:"st_MT",label:"Montana",abbr:"MT"},{id:"st_NE",label:"Nebraska",abbr:"NE"},{id:"st_NV",label:"Nevada",abbr:"NV"},{id:"st_NH",label:"New Hampshire",abbr:"NH"},{id:"st_NJ",label:"New Jersey",abbr:"NJ"},{id:"st_NM",label:"New Mexico",abbr:"NM"},{id:"st_NY",label:"New York",abbr:"NY"},{id:"st_NC",label:"North Carolina",abbr:"NC"},{id:"st_ND",label:"North Dakota",abbr:"ND"},{id:"st_OH",label:"Ohio",abbr:"OH"},{id:"st_OK",label:"Oklahoma",abbr:"OK"},{id:"st_OR",label:"Oregon",abbr:"OR"},{id:"st_PA",label:"Pennsylvania",abbr:"PA"},{id:"st_RI",label:"Rhode Island",abbr:"RI"},{id:"st_SC",label:"South Carolina",abbr:"SC"},{id:"st_SD",label:"South Dakota",abbr:"SD"},{id:"st_TN",label:"Tennessee",abbr:"TN"},{id:"st_TX",label:"Texas",abbr:"TX"},{id:"st_UT",label:"Utah",abbr:"UT"},{id:"st_VT",label:"Vermont",abbr:"VT"},{id:"st_VA",label:"Virginia",abbr:"VA"},{id:"st_WA",label:"Washington",abbr:"WA"},{id:"st_WV",label:"West Virginia",abbr:"WV"},{id:"st_WI",label:"Wisconsin",abbr:"WI"},{id:"st_WY",label:"Wyoming",abbr:"WY"},
+  ].map((s,i) => ({...s, order:i, builtin:true}));
+  const [situsLibrary, setSitusLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_situs_v1") || "[]"); return s.length ? s : DEFAULT_STATES; } catch { return DEFAULT_STATES; }
+  });
+  function setSitusLibrary(updater) { setSitusLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_situs_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
   function setCarriersData(updater) {
     setCarriersDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -9374,11 +9491,25 @@ useEffect(() => {
             return <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,fontWeight:700,background:bg,color,whiteSpace:"nowrap",flexShrink:0}}>{label}</span>;
           }
 
-          const completedThisWeek = myAllTasks.filter(t => {
-            if (!t.completedDate) return false;
-            const d = new Date(t.completedDate+"T12:00:00"), now = new Date(), start = new Date();
-            start.setDate(now.getDate()-7);
-            return d >= start && d <= now && (isLead || (t.assignee||"") === currentUser.name);
+          const completedThisWeek = myClients.flatMap(c => {
+            // Collect ALL tasks including completed ones across every group
+            const all = [];
+            const addTask = t => { if (t && typeof t === "object") all.push(t); };
+            PRERENEWAL_TASKS.forEach(def => { if (!(def.acaOnly && c.marketSize !== "ACA")) addTask(c.preRenewal?.[def.id]); });
+            addTask(c.renewalMeeting);
+            Object.values(c.renewalTasksAuto || {}).forEach(addTask);
+            (c.renewalTasks || []).forEach(addTask);
+            Object.values(c.compliance || {}).forEach(addTask);
+            Object.values(c.postOEFixed || {}).forEach(addTask);
+            (c.postOETasks || []).forEach(addTask);
+            (c.miscTasks || []).forEach(addTask);
+            (c.transactions || []).forEach(addTask);
+            return all;
+          }).filter(t => {
+            if (!t || t.status !== "Complete" || !t.completedDate) return false;
+            const d = new Date(t.completedDate + "T12:00:00"), now = new Date(), start = new Date();
+            start.setDate(now.getDate() - 7);
+            return d >= start && d <= now && (isLead || (t.assignee || "") === currentUser.name);
           }).length;
 
           const myMeetings = [...meetings]
@@ -9539,21 +9670,21 @@ useEffect(() => {
                   <StatTile label="Renewing in 30 days" value={myUpcoming30.length} type="danger" onClick={() => changeView("renewals")} />
                   <StatTile label="Renewing in 120 days" value={myUpcoming.length} type="warning" onClick={() => changeView("renewals")} />
                   <StatTile label="Open tasks" value={myAllTasks.length} type="info" onClick={() => navToTasks({})} />
-                  <StatTile label="Completed this week" value={completedThisWeek} type="success" />
+                  <StatTile label="Completed this week" value={completedThisWeek} type="success" onClick={() => navToTasks({window:"completed_week"})} />
                 </div>
               )}
               {(isAE || isAM) && (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
                   <StatTile label="Renewing in 120 days" value={myUpcoming.length} type="danger" onClick={() => changeView("renewals")} />
                   <StatTile label="My tasks due this week" value={myDueThisWeek.length} type="warning" onClick={() => navToTasks({assignee:currentUser.name})} />
-                  <StatTile label="Completed this week" value={completedThisWeek} type="success" />
+                  <StatTile label="Completed this week" value={completedThisWeek} type="success" onClick={() => navToTasks({window:"completed_week"})} />
                 </div>
               )}
               {isAC && (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
                   <StatTile label="Tasks overdue" value={myOverdueTasks.length} type="danger" onClick={() => navToTasks({assignee:currentUser.name,window:"overdue"})} />
                   <StatTile label="Due this week" value={myDueThisWeek.length} type="warning" onClick={() => navToTasks({assignee:currentUser.name})} />
-                  <StatTile label="Completed this week" value={completedThisWeek} type="success" />
+                  <StatTile label="Completed this week" value={completedThisWeek} type="success" onClick={() => navToTasks({window:"completed_week"})} />
                 </div>
               )}
 
@@ -9808,7 +9939,7 @@ useEffect(() => {
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 130px",
                     background: dashFilter.market !== "All" ? "#dce8f0" : undefined }}>
                   <option value="All">All Markets</option>
-                  {MARKET_SIZES.map(m => <option key={m} value={m}>{m}</option>)}
+                  {[...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
                 <select value={dashFilter.funding} onChange={e => setDashF("funding", e.target.value)}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
@@ -9852,7 +9983,7 @@ useEffect(() => {
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} onBack={() => changeView("dashboard")} />
+          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
         )}
 
 
@@ -10050,7 +10181,7 @@ useEffect(() => {
               <select value={filterMarket} onChange={e => setFilterMarket(e.target.value)}
                 style={{ ...inputStyle, flex: "0 0 150px", background: filterMarket !== "All" ? "#dce8f0" : undefined }}>
                 <option value="All">All Markets</option>
-                {MARKET_SIZES.map(m => <option key={m} value={m}>{m}</option>)}
+                {[...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(m => <option key={m} value={m}>{m}</option>)}
               </select>
               <select value={filterFunding} onChange={e => setFilterFunding(e.target.value)}
                 style={{ ...inputStyle, flex: "0 0 155px", background: filterFunding !== "All" ? "#dce8f0" : undefined }}>
@@ -10138,6 +10269,14 @@ useEffect(() => {
             onSaveAnchorEvents={setAnchorEventsLibrary}
             taskTypesLibrary={taskTypesLibrary}
             onSaveTaskTypes={setTaskTypesLibrary}
+            marketsLibrary={marketsLibrary}
+            onSaveMarkets={setMarketsLibrary}
+            fundingLibrary={fundingLibrary}
+            onSaveFunding={setFundingLibrary}
+            employerTypesLibrary={employerTypesLibrary}
+            onSaveEmployerTypes={setEmployerTypesLibrary}
+            situsLibrary={situsLibrary}
+            onSaveSitus={setSitusLibrary}
             benefitsDb={benefitsDb}
             onSaveBenefitsDb={setBenefitsDb}
             tasks={tasksData}
@@ -10170,7 +10309,7 @@ useEffect(() => {
 
       {modal && (() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
-        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} />;
+        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} />;
       })()}
 
       {/* Team Edit/Add Modal */}
@@ -10755,17 +10894,21 @@ const LIB_FOOTER = {
 };
 
 // ── AdminView ─────────────────────────────────────────────────────────────────
-function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
+function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
   const [adminTab, setAdminTab] = useState("plans");
 
   const tabs = [
-    { id: "plans",      label: "📋 Plans" },
-    { id: "taskTypes",  label: "🏷️ Task Types" },
-    { id: "tasks",      label: "✅ Tasks" },
-    { id: "anchors",    label: "⚓ Anchor Events" },
-    { id: "ddr",        label: "📅 Due Date Rules" },
-    { id: "benefitsDb", label: "💊 Benefits DB" },
-    { id: "carriers",   label: "🏢 Carriers" },
+    { id: "plans",         label: "📋 Plans" },
+    { id: "taskTypes",     label: "🏷️ Task Types" },
+    { id: "tasks",         label: "✅ Tasks" },
+    { id: "anchors",       label: "⚓ Anchor Events" },
+    { id: "ddr",           label: "📅 Due Date Rules" },
+    { id: "markets",       label: "📊 Markets" },
+    { id: "funding",       label: "💰 Funding" },
+    { id: "employerTypes", label: "🏢 Employer Types" },
+    { id: "situs",         label: "📍 Situs" },
+    { id: "benefitsDb",    label: "💊 Benefits DB" },
+    { id: "carriers",      label: "🏢 Carriers" },
   ];
 
   const tileStyle = (active) => ({
@@ -10810,7 +10953,7 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
         <TaskTypesLibraryView taskTypesLibrary={taskTypesLibrary} onSave={onSaveTaskTypes} currentUser={currentUser} />
       )}
       {adminTab === "tasks" && (
-        <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} currentUser={currentUser} />
+        <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} currentUser={currentUser} />
       )}
       {adminTab === "anchors" && (
         <AnchorEventsLibraryView anchorEventsLibrary={anchorEventsLibrary} onSave={onSaveAnchorEvents} currentUser={currentUser} />
@@ -10818,9 +10961,138 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
       {adminTab === "ddr" && (
         <DdrLibraryView dueDateRules={dueDateRules} onSave={onSaveDueDateRules} allAnchors={allAnchors} currentUser={currentUser} />
       )}
+      {adminTab === "markets" && (
+        <SimpleLibraryView title="Markets" items={marketsLibrary} onSave={onSaveMarkets} currentUser={currentUser} hasAbbr={false} description="Market size categories used to classify clients and filter tasks." />
+      )}
+      {adminTab === "funding" && (
+        <SimpleLibraryView title="Funding Methods" items={fundingLibrary} onSave={onSaveFunding} currentUser={currentUser} hasAbbr={false} description="Funding method options available when setting up a client." />
+      )}
+      {adminTab === "employerTypes" && (
+        <SimpleLibraryView title="Employer Types" items={employerTypesLibrary} onSave={onSaveEmployerTypes} currentUser={currentUser} hasAbbr={false} description="Employer type classifications used in carrier contacts." />
+      )}
+      {adminTab === "situs" && (
+        <SimpleLibraryView title="Situs States" items={situsLibrary} onSave={onSaveSitus} currentUser={currentUser} hasAbbr={true} description="States available as group situs options for clients." />
+      )}
       {adminTab === "benefitsDb" && (
         <BenefitsDbView benefitsDb={benefitsDb} onSave={onSaveBenefitsDb} currentUser={currentUser} />
       )}
+    </div>
+  );
+}
+
+// ── SimpleLibraryView ─────────────────────────────────────────────────────────
+// Reusable component for simple label (+ optional abbr) libraries: Markets, Funding, Employer Types, Situs
+function SimpleLibraryView({ title, items, onSave, currentUser, hasAbbr, description }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData]   = useState(null);
+
+  const sorted = [...(items || [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+  function moveItem(id, dir) {
+    const idx = sorted.findIndex(x => x.id === id);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+    const [a, b] = [sorted[idx], sorted[swapIdx]];
+    onSave(prev => prev.map(x => {
+      if (x.id === a.id) return { ...x, order: b.order ?? swapIdx };
+      if (x.id === b.id) return { ...x, order: a.order ?? idx };
+      return x;
+    }));
+  }
+
+  function startAdd() {
+    const maxOrder = sorted.reduce((m, x) => Math.max(m, x.order ?? 0), 0);
+    const x = { id: generateId(), label: "", abbr: "", order: maxOrder + 10, builtin: false };
+    setEditingId(x.id); setEditData(x);
+  }
+  function startEdit(item) { setEditingId(item.id); setEditData({ ...item }); }
+  function cancelEdit() { setEditingId(null); setEditData(null); }
+  function saveItem() {
+    if (!editData.label.trim()) return;
+    onSave(prev => {
+      const exists = (prev || []).find(x => x.id === editData.id);
+      return exists ? prev.map(x => x.id === editData.id ? editData : x) : [...(prev || []), editData];
+    });
+    cancelEdit();
+  }
+  function deleteItem(id) {
+    if (!confirm("Delete this entry?")) return;
+    onSave(prev => prev.filter(x => x.id !== id));
+  }
+
+  const cols = hasAbbr ? "3fr 80px 100px 160px" : "3fr 100px 160px";
+  const headers = hasAbbr ? ["Name", "Abbr", "Kind", ""] : ["Name", "Kind", ""];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+        <div style={{ fontSize: 12, color: "#64748b" }}>{description}</div>
+        {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginLeft: "auto" }}>+ Add</button>}
+      </div>
+
+      {editingId && editData && (
+        <div style={LIB_FORM_CARD}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
+            {(items || []).find(x => x.id === editingId) ? `Edit ${title.replace(/s$/, "")}` : `New ${title.replace(/s$/, "")}`}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: hasAbbr ? "2fr 100px" : "1fr", gap: 12, marginBottom: 12 }}>
+            <label style={LIB_LABEL}>Name *
+              <input value={editData.label} onChange={e => setEditData(p => ({ ...p, label: e.target.value }))}
+                placeholder={hasAbbr ? "e.g. New York" : `e.g. new ${title.replace(/s$/, "").toLowerCase()}`}
+                style={LIB_INPUT} />
+            </label>
+            {hasAbbr && (
+              <label style={LIB_LABEL}>Abbreviation
+                <input value={editData.abbr || ""} onChange={e => setEditData(p => ({ ...p, abbr: e.target.value.toUpperCase().slice(0,2) }))}
+                  placeholder="e.g. NY" maxLength={2} style={LIB_INPUT} />
+              </label>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={saveItem} style={LIB_BTN_SAVE}>Save</button>
+            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {sorted.length === 0 ? (
+        <div style={LIB_EMPTY}>No entries yet. Click "+ Add" to get started.</div>
+      ) : (
+        <div style={LIB_TABLE_WRAP}>
+          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: cols, gap: 0 }}>
+            {headers.map((h, i) => <div key={i} style={{ ...LIB_TH, padding: "0 12px" }}>{h}</div>)}
+          </div>
+          {sorted.map((item, idx) => (
+            <div key={item.id} style={{
+              display: "grid", gridTemplateColumns: cols, gap: 0,
+              padding: "10px 16px", alignItems: "center",
+              borderBottom: idx < sorted.length - 1 ? "1px solid #f1f5f9" : "none",
+              background: editingId === item.id ? "#f0f5fa" : "#fff",
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", paddingRight: 12 }}>{item.label}</div>
+              {hasAbbr && <div style={{ fontSize: 12, color: "#475569", paddingRight: 12, fontFamily: "monospace" }}>{item.abbr || "—"}</div>}
+              <div style={{ paddingRight: 12 }}>
+                {item.builtin
+                  ? <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#f3e8ff", color: "#7c3aed" }}>Built-in</span>
+                  : <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#dcfce7", color: "#166534" }}>Custom</span>
+                }
+              </div>
+              <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                <button onClick={() => moveItem(item.id, -1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }}>↑</button>
+                <button onClick={() => moveItem(item.id, 1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }}>↓</button>
+                {canEdit && <>
+                  <button onClick={() => startEdit(item)} style={LIB_BTN_EDIT}>Edit</button>
+                  <button onClick={() => deleteItem(item.id)} style={LIB_BTN_DELETE}>✕</button>
+                </>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={LIB_FOOTER}>
+        {sorted.filter(x => x.builtin).length} built-in · {sorted.filter(x => !x.builtin).length} custom
+      </div>
     </div>
   );
 }
@@ -11109,7 +11381,7 @@ function TaskTypesLibraryView({ taskTypesLibrary, onSave, currentUser }) {
 }
 
 // ── TasksLibraryView ─────────────────────────────────────────────────────────
-function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, currentUser }) {
+function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, marketsLibrary, fundingLibrary, currentUser }) {
   const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const [activeCategory, setActiveCategory] = useState("Pre-Renewal");
   const [editingId, setEditingId] = useState(null);
@@ -11241,13 +11513,13 @@ function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients,
             <div>
               <div style={{ ...LIB_LABEL, marginBottom: 6 }}>Markets</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {MARKET_SIZES.map(m => <CHIP key={m} label={m} active={(editData.markets||[]).includes(m)} onClick={() => toggleArr("markets", m)} />)}
+                {[...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(m => <CHIP key={m} label={m} active={(editData.markets||[]).includes(m)} onClick={() => toggleArr("markets", m)} />)}
               </div>
             </div>
             <div>
               <div style={{ ...LIB_LABEL, marginBottom: 6 }}>Funding</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {FUNDING_METHODS.map(f => <CHIP key={f} label={f} active={(editData.funding||[]).includes(f)} onClick={() => toggleArr("funding", f)} color="#f59e0b" />)}
+                {[...(fundingLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(f => <CHIP key={f} label={f} active={(editData.funding||[]).includes(f)} onClick={() => toggleArr("funding", f)} color="#f59e0b" />)}
               </div>
             </div>
             <label style={LIB_LABEL}>Due Date Rule
@@ -12476,7 +12748,7 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                       <select value={contact.employerType || "Any"}
                         onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],employerType:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
                         style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
-                        {CARRIER_EMPLOYER_TYPES.map(t => <option key={t}>{t}</option>)}
+                        {empTypeOptions.map(t => <option key={t}>{t}</option>)}
                       </select>
                     </label>
                     <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Funding Type
@@ -12767,7 +13039,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, onBack }) {
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, marketsLibrary, fundingLibrary, onBack }) {
   const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams||[]).length > 0;
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
@@ -12783,7 +13055,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const [ovAssignee, setOvAssignee] = useState(dashNav?.assignee || "All");
   const [ovStatus,   setOvStatus]   = useState("All");
   const [ovSort,     setOvSort]     = useState("renewal");
-  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "all");   // "all" | "30" | "60" | "90" | "120" | "overdue"
+  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "all");   // "all" | "30" | "60" | "90" | "120" | "overdue" | "completed_week"
   const [expanded,   setExpanded]   = useState({});
   function toggleExpand(id) { setExpanded(p => ({ ...p, [id]: !p[id] })); }
 
@@ -12809,11 +13081,13 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
       .filter(c => !teamRestrictedOT || (userTeams||[]).includes(c.team))
       .map(c => {
         const _days = daysUntil(c.renewalDate);
-        // Window filter
-        if (ovWindow === "overdue") { if (_days === null || _days >= 0) return null; }
-        else if (ovWindow !== "all") {
-          const n = Number(ovWindow);
-          if (_days === null || _days < 0 || _days > n) return null;
+        // Window filter (skip for completed_week mode)
+        if (ovWindow !== "completed_week") {
+          if (ovWindow === "overdue") { if (_days === null || _days >= 0) return null; }
+          else if (ovWindow !== "all") {
+            const n = Number(ovWindow);
+            if (_days === null || _days < 0 || _days > n) return null;
+          }
         }
         // Client-level filters
         if (ovTeam    !== "All" && c.team !== ovTeam) return null;
@@ -12825,9 +13099,28 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
           if (mc !== ovCarrier) return null;
         }
         // Collect tasks with category filter already applied
-        let tasks = collectOpenTasks(c, ovCat !== "All" ? ovCat : null, tasksDb);
+        const isCompletedWeekMode = ovWindow === "completed_week";
+        let tasks;
+        if (isCompletedWeekMode) {
+          // Collect ALL tasks (including completed) and filter for completed this week
+          const allT = [];
+          const addT = t => { if (t && typeof t === "object") allT.push(t); };
+          PRERENEWAL_TASKS.forEach(def => { if (!(def.acaOnly && c.marketSize !== "ACA")) addT(c.preRenewal?.[def.id]); });
+          addT(c.renewalMeeting);
+          Object.values(c.renewalTasksAuto || {}).forEach(addT);
+          (c.renewalTasks || []).forEach(addT);
+          Object.values(c.compliance || {}).forEach(addT);
+          Object.values(c.postOEFixed || {}).forEach(addT);
+          (c.postOETasks || []).forEach(addT);
+          (c.miscTasks || []).forEach(addT);
+          (c.transactions || []).forEach(addT);
+          const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7); weekAgo.setHours(0,0,0,0);
+          tasks = allT.filter(t => t.status === "Complete" && t.completedDate && new Date(t.completedDate + "T12:00:00") >= weekAgo);
+        } else {
+          tasks = collectOpenTasks(c, ovCat !== "All" ? ovCat : null, tasksDb);
+        }
         if (ovAssignee !== "All") tasks = tasks.filter(t => (t.assignee || "") === ovAssignee);
-        if (ovStatus   !== "All") tasks = tasks.filter(t => (t.status || "Not Started") === ovStatus);
+        if (!isCompletedWeekMode && ovStatus !== "All") tasks = tasks.filter(t => (t.status || "Not Started") === ovStatus);
         if (tasks.length === 0) return null;
         return { ...c, _openTasks: tasks, _days };
       })
@@ -12862,12 +13155,13 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
     .filter(v => v !== "All").length + (ovWindow !== "all" ? 1 : 0);
 
   const windowOptions = [
-    { v: "all",     label: "All Clients" },
-    { v: "overdue", label: "Overdue Only" },
-    { v: "30",      label: "Next 30 Days" },
-    { v: "60",      label: "Next 60 Days" },
-    { v: "90",      label: "Next 90 Days" },
-    { v: "120",     label: "Next 120 Days" },
+    { v: "all",            label: "All Clients" },
+    { v: "overdue",        label: "Overdue Only" },
+    { v: "30",             label: "Next 30 Days" },
+    { v: "60",             label: "Next 60 Days" },
+    { v: "90",             label: "Next 90 Days" },
+    { v: "120",            label: "Next 120 Days" },
+    { v: "completed_week", label: "✅ Completed This Week" },
   ];
 
   return (
@@ -12998,13 +13292,25 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                 </select>
               </label>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+              {/* Library picker */}
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
+                Pick from Library
+                <select value="" onChange={e => { if (e.target.value) setAddForm(p => ({ ...p, title: e.target.value })); }}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 12 }}>
+                  <option value="">📋 Select a task from library…</option>
+                  {(tasksDb||[])
+                    .filter(t => addForm.category === "All" || t.category === addForm.category ||
+                      (addForm.category === "Miscellaneous" && ["Miscellaneous","Ongoing"].includes(t.category)))
+                    .map(t => <option key={t.id} value={t.label}>{t.label} ({t.category})</option>)}
+                </select>
+              </label>
               {/* Title */}
               <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
                 Task Title *
                 <input type="text" value={addForm.title}
                   onChange={e => setAddForm(p => ({ ...p, title: e.target.value }))}
-                  placeholder="e.g. Send renewal summary to client"
+                  placeholder="or type custom title…"
                   onKeyDown={e => e.key === "Enter" && saveAddTask()}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12 }} />
               </label>
@@ -13074,7 +13380,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             </select>
           )}
           {[
-            { val: ovMarket,  set: setOvMarket,  opts: MARKET_SIZES,  placeholder: "All Markets" },
+            { val: ovMarket,  set: setOvMarket,  opts: [...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label),  placeholder: "All Markets" },
             { val: ovFunding, set: setOvFunding, opts: uniqueFunding,  placeholder: "All Funding" },
             { val: ovCarrier, set: setOvCarrier, opts: uniqueCarriers, placeholder: "All Carriers" },
             { val: ovSitus,   set: setOvSitus,   opts: uniqueSitus,    placeholder: "All Situs" },
