@@ -2566,42 +2566,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           {/* Employee Classes */}
           <CollapseHeader id="employeeClasses" title="Employee Classes" collapsed={collapsed} onToggle={toggleSection} />
           {!collapsed.employeeClasses && (() => {
-            // Only show benefit types that are active on this client
-            const activeBenefits = [];
-            BENEFITS_SCHEMA.forEach(cat => {
-              if (cat.id === "worksite") {
-                // Worksite children are stored individually — add each active child
-                cat.children.forEach(child => {
-                  if (!!(data.benefitActive || {})[child.id])
-                    activeBenefits.push({ ...child, children: [], _parentLabel: "Worksite" });
-                });
-              } else if (!!(data.benefitActive || {})[cat.id]) {
-                activeBenefits.push(cat);
-              }
-            });
-            // IDI lives outside BENEFITS_SCHEMA top-level — add if active
-            if (!!(data.benefitActive || {})["idi"] && !activeBenefits.find(e => e.id === "idi"))
-              activeBenefits.push({ id: "idi", label: "IDI", children: [] });
 
             function updateClass(idx, field, val) {
               setData(p => {
                 const cl = [...(p.employeeClasses || [])];
                 cl[idx] = { ...cl[idx], [field]: val };
-                return { ...p, employeeClasses: cl };
-              });
-            }
-
-            function updateClassBenefit(idx, catId, field, val) {
-              setData(p => {
-                const cl = [...(p.employeeClasses || [])];
-                const existing = cl[idx].classBenefits || {};
-                cl[idx] = {
-                  ...cl[idx],
-                  classBenefits: {
-                    ...existing,
-                    [catId]: { ...(existing[catId] || {}), [field]: val },
-                  },
-                };
                 return { ...p, employeeClasses: cl };
               });
             }
@@ -2652,83 +2621,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     </label>
                   </div>
 
-                  {/* Per-benefit checkboxes + details */}
-                  {activeBenefits.length > 0 && (() => {
-                    const benefitsOpen = !cls.benefitsCollapsed;
-                    const includedCount = activeBenefits.filter(cat => !!(cls.classBenefits || {})[cat.id]?.included).length;
-                    return (
-                    <div style={{ marginBottom: 10 }}>
-                      <div onClick={() => updateClass(idx, "benefitsCollapsed", benefitsOpen)}
-                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                          cursor: "pointer", userSelect: "none", marginBottom: benefitsOpen ? 8 : 0,
-                          padding: "4px 0" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "1px",
-                            textTransform: "uppercase" }}>Benefits for this Class</span>
-                          {includedCount > 0 && (
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                              background: "#dcfce7", color: "#166534" }}>{includedCount} included</span>
-                          )}
-                          {!benefitsOpen && includedCount === 0 && activeBenefits.length > 0 && (
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                              background: "#fef3c7", color: "#92400e" }}>⚠ None assigned</span>
-                          )}
-                        </div>
-                        <span style={{ fontSize: 12, color: "#94a3b8" }}>{benefitsOpen ? "▲" : "▼"}</span>
-                      </div>
-                      {benefitsOpen && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {activeBenefits.map(cat => {
-                          const cb = (cls.classBenefits || {})[cat.id] || {};
-                          const included = !!cb.included;
-                          return (
-                            <div key={cat.id} style={{
-                              background: included ? "#fff" : "#f8fafc",
-                              border: `1.5px solid ${included ? "#bfdbfe" : "#e2e8f0"}`,
-                              borderRadius: 8, padding: "8px 10px",
-                              transition: "all .12s",
-                            }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <input
-                                  type="checkbox"
-                                  id={`cb_${idx}_${cat.id}`}
-                                  checked={included}
-                                  onChange={e => updateClassBenefit(idx, cat.id, "included", e.target.checked)}
-                                  style={{ accentColor: "#3b82f6", width: 14, height: 14, flexShrink: 0 }}
-                                />
-                                <label htmlFor={`cb_${idx}_${cat.id}`} style={{
-                                  fontSize: 12, fontWeight: included ? 700 : 500,
-                                  color: included ? "#0f172a" : "#64748b",
-                                  cursor: "pointer", flex: 1,
-                                }}>{cat.label}</label>
-                              </div>
-                              {included && (
-                                <input
-                                  type="text"
-                                  value={cb.details || ""}
-                                  onChange={e => updateClassBenefit(idx, cat.id, "details", e.target.value)}
-                                  placeholder={
-                                    cat.id === "basic_life" || cat.id === "vol_life"
-                                      ? "e.g. 2x salary up to $200,000, GI $132,000 or Flat $25,000"
-                                      : cat.id.startsWith("medical")
-                                      ? "e.g. Same as standard plan or Class-specific deductible…"
-                                      : "Class-specific details, amounts, or exclusions…"
-                                  }
-                                  style={{ ...inputStyle, marginTop: 6, fontSize: 12, padding: "5px 10px" }}
-                                />
-                              )}
-                            </div>
-                          );
-                        })}
-                        {activeBenefits.length === 0 && (
-                          <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
-                            No active benefits on this client yet — add them in Benefits & Carriers first.
-                          </div>
-                        )}
-                      </div>}
-                    </div>
-                    );
-                  })()}
-
                   {/* Notes */}
                   <label style={{ ...labelStyle, marginTop: 0 }}>
                     Notes
@@ -2739,10 +2631,42 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit", fontSize: 12 }} />
                   </label>
 
+                  {/* Benefit plan assignment info */}
+                  {(() => {
+                    const plans = Object.entries(data.benefitPlans || {});
+                    const coveredBenefits = plans.filter(([, planArr]) =>
+                      (planArr || []).some(pl => (pl.eligibleClasses || []).includes(cls.id))
+                    ).map(([catId]) => catId);
+                    if (coveredBenefits.length === 0) return (
+                      <div style={{ fontSize: 11, color: "#92400e", fontWeight: 600,
+                        background: "#fef3c7", padding: "5px 10px", borderRadius: 7, marginBottom: 10 }}>
+                        ⚠ Not assigned to any benefit plans yet — go to the Benefits tab to assign.
+                      </div>
+                    );
+                    return (
+                      <div style={{ fontSize: 11, color: "#166534", fontWeight: 600,
+                        background: "#f0fdf4", padding: "5px 10px", borderRadius: 7, marginBottom: 10, border: "1px solid #86efac" }}>
+                        ✓ Assigned to plans in: {coveredBenefits.map(id => {
+                          const schema = BENEFITS_SCHEMA.find(s => s.id === id) ||
+                            BENEFITS_SCHEMA.flatMap(s => s.children||[]).find(c => c.id === id);
+                          return schema?.label || id;
+                        }).join(", ")}
+                      </div>
+                    );
+                  })()}
+
                   {/* Per-class eligibility rules — collapsed by default */}
-                  {activeBenefits.length > 0 && (() => {
+                  {(() => {
+                    const activeB = BENEFITS_SCHEMA.flatMap(cat =>
+                      cat.id === "worksite"
+                        ? cat.children.filter(c => !!(data.benefitActive||{})[c.id])
+                        : (!!(data.benefitActive||{})[cat.id] ? [cat] : [])
+                    );
+                    if (!!(data.benefitActive||{})["idi"] && !activeB.find(e => e.id === "idi"))
+                      activeB.push({ id: "idi", label: "IDI", children: [] });
+                    if (activeB.length === 0) return null;
                     const eligOpen = !!cls.eligibilityOpen;
-                    const hasAnyElig = activeBenefits.some(cat => {
+                    const hasAnyElig = activeB.some(cat => {
                       const ce = (cls.classEligibility || {})[cat.id] || {};
                       return ce.waitingPeriod || ce.effectiveDate || ce.termDate;
                     });
@@ -2766,7 +2690,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", marginBottom: 2 }}>
                               Leave blank to inherit from the benefit-level eligibility rules above.
                             </div>
-                            {activeBenefits.map(cat => {
+                            {activeB.map(cat => {
                               const ce = (cls.classEligibility || {})[cat.id] || {};
                               const isMedical = cat.id === "medical" || cat.id.startsWith("medical_");
                               const forced90 = isMedical && ce.waitingPeriod === "90 days";
@@ -3173,12 +3097,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         Eff: {effectiveDate.slice(5,7)}/{effectiveDate.slice(8,10)}/{effectiveDate.slice(0,4)}
                       </span>
                     )}
-                    {/* Class assignment badge — only if employee classes exist */}
+                    {/* Class assignment badge — reads from plan eligibleClasses */}
                     {isOffered && (data.employeeClasses || []).length > 0 && (() => {
-                      const assigned = (data.employeeClasses || []).filter(
-                        cls => !!(cls.classBenefits || {})[cat.id]?.included
-                      );
-                      if (assigned.length === 0) return (
+                      const plans = (data.benefitPlans || {})[cat.id] || [];
+                      const coveredIds = new Set(plans.flatMap(pl => pl.eligibleClasses || []));
+                      const assignedCount = (data.employeeClasses || []).filter(cls => coveredIds.has(cls.id)).length;
+                      if (assignedCount === 0) return (
                         <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px",
                           borderRadius: 99, background: "#fef3c7", color: "#92400e" }}>
                           ⚠ No class
@@ -3187,7 +3111,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       return (
                         <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px",
                           borderRadius: 99, background: "#dcfce7", color: "#166534" }}>
-                          {assigned.length} class{assigned.length > 1 ? "es" : ""}
+                          {assignedCount} class{assignedCount > 1 ? "es" : ""}
                         </span>
                       );
                     })()}
@@ -3472,9 +3396,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 placeholder="0"
                                 onChange={e => {
                                   const n = parseInt(e.target.value.replace(/\D/g,"")) || 0;
-                                  const blank = () => ({ name: "", type: "", groupNumber: "", carrierPlanNumber: "",
+                                  const blank = () => ({ id: generateId(), name: "", type: "", groupNumber: "", carrierPlanNumber: "",
                                     rates: { ee: "", es: "", ec: "", ff: "" },
-                                    enrolled: { ee: "", es: "", ec: "", ff: "" } });
+                                    enrolled: { ee: "", es: "", ec: "", ff: "" },
+                                    eligibleClasses: [] });
                                   if (n > plans.length) {
                                     setPlans([...plans, ...Array(n - plans.length).fill(null).map(blank)]);
                                   } else if (n < plans.length) {
@@ -3636,6 +3561,42 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                     })()}
                                   </div>
                                 )}
+                              {/* ── Eligible Classes ── */}
+                              {(data.employeeClasses || []).length > 0 && (
+                                <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 8, marginTop: 8 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b",
+                                    letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 6 }}>
+                                    Eligible Classes
+                                  </div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                    {(data.employeeClasses || []).map((cls, ci) => {
+                                      const eligClasses = pl.eligibleClasses || [];
+                                      const isEligible = eligClasses.includes(cls.id);
+                                      return (
+                                        <label key={cls.id || ci} style={{
+                                          display: "flex", alignItems: "center", gap: 5,
+                                          padding: "3px 10px", borderRadius: 99, cursor: "pointer",
+                                          fontSize: 11, fontWeight: isEligible ? 700 : 500,
+                                          background: isEligible ? "#dce8f2" : "#f8fafc",
+                                          border: `1.5px solid ${isEligible ? "#507c9c" : "#e2e8f0"}`,
+                                          color: isEligible ? "#2d4a6b" : "#64748b",
+                                          transition: "all .12s",
+                                        }}>
+                                          <input type="checkbox" checked={isEligible}
+                                            onChange={e => {
+                                              const newElig = e.target.checked
+                                                ? [...eligClasses, cls.id]
+                                                : eligClasses.filter(id => id !== cls.id);
+                                              updatePlan(idx, "eligibleClasses", newElig);
+                                            }}
+                                            style={{ accentColor: "#507c9c", width: 12, height: 12 }} />
+                                          {cls.name || `Class ${ci + 1}`}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                               </div>
                             ))}
                           </div>
@@ -4179,116 +4140,41 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         />
                       </div>
 
-                      {/* Employee Class — interactive two-way editing */}
+                      {/* ── Class coverage summary (set per plan above) ── */}
                       {(data.employeeClasses || []).length > 0 && (() => {
-                        const noneAssigned = (data.employeeClasses || []).every(
-                          cls => !(cls.classBenefits || {})[cat.id]?.included
-                        );
-                        function toggleClassBenefit(clsIdx, checked) {
-                          setData(p => {
-                            const cl = [...(p.employeeClasses || [])];
-                            cl[clsIdx] = {
-                              ...cl[clsIdx],
-                              classBenefits: {
-                                ...(cl[clsIdx].classBenefits || {}),
-                                [cat.id]: {
-                                  ...(cl[clsIdx].classBenefits?.[cat.id] || {}),
-                                  included: checked,
-                                },
-                              },
-                            };
-                            return { ...p, employeeClasses: cl };
-                          });
-                        }
-                        function setClassDetail(clsIdx, val) {
-                          setData(p => {
-                            const cl = [...(p.employeeClasses || [])];
-                            cl[clsIdx] = {
-                              ...cl[clsIdx],
-                              classBenefits: {
-                                ...(cl[clsIdx].classBenefits || {}),
-                                [cat.id]: {
-                                  ...(cl[clsIdx].classBenefits?.[cat.id] || {}),
-                                  details: val,
-                                },
-                              },
-                            };
-                            return { ...p, employeeClasses: cl };
-                          });
-                        }
-                        const bcClassOpen = !!collapsed["bcc_" + cat.id];
+                        const plans = (data.benefitPlans || {})[cat.id] || [];
+                        const coveredIds = new Set(plans.flatMap(pl => pl.eligibleClasses || []));
+                        const noneAssigned = coveredIds.size === 0;
                         return (
-                          <div style={{ marginTop: 10 }}>
-                            <div onClick={() => setCollapsed(p => ({ ...p, ["bcc_" + cat.id]: !p["bcc_" + cat.id] }))}
-                              style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                                cursor: "pointer", userSelect: "none",
-                                marginBottom: bcClassOpen ? 6 : 0, padding: "4px 0",
-                                borderTop: "1px solid #e2e8f0", paddingTop: 8 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b",
-                                  letterSpacing: ".8px", textTransform: "uppercase" }}>
-                                  Employee Classes
-                                </div>
-                                {noneAssigned && (
-                                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px",
-                                    borderRadius: 99, background: "#fef3c7", color: "#92400e" }}>
-                                    ⚠ No class assigned
-                                  </span>
-                                )}
-                                {!noneAssigned && (
-                                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px",
-                                    borderRadius: 99, background: "#dcfce7", color: "#166534" }}>
-                                    {(data.employeeClasses || []).filter(cls => !!(cls.classBenefits || {})[cat.id]?.included).length} assigned
-                                  </span>
-                                )}
-                              </div>
-                              <span style={{ fontSize: 12, color: "#94a3b8" }}>{bcClassOpen ? "▲" : "▼"}</span>
+                          <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 10, marginTop: 4 }}>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b",
+                              letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 6 }}>
+                              Class Coverage Summary
                             </div>
-                            {bcClassOpen && <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                              {(data.employeeClasses || []).map((cls, ci) => {
-                                const cb = (cls.classBenefits || {})[cat.id] || {};
-                                const included = !!cb.included;
-                                return (
-                                  <div key={ci} style={{
-                                    borderRadius: 8, padding: "7px 10px",
-                                    background: included ? "#f0f5fa" : "#f8fafc",
-                                    border: `1px solid ${included ? "#bfdbfe" : "#e2e8f0"}`,
-                                    transition: "all .12s",
-                                  }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                      <input
-                                        type="checkbox"
-                                        id={`bc_${cat.id}_${ci}`}
-                                        checked={included}
-                                        onChange={e => toggleClassBenefit(ci, e.target.checked)}
-                                        style={{ accentColor: "#3b82f6", width: 13, height: 13, flexShrink: 0 }}
-                                      />
-                                      <label htmlFor={`bc_${cat.id}_${ci}`} style={{
-                                        fontSize: 12, fontWeight: included ? 700 : 500,
-                                        color: included ? "#2d4a6b" : "#64748b",
-                                        cursor: "pointer", flex: 1,
-                                      }}>
-                                        {cls.name || `Class ${ci + 1}`}
-                                      </label>
-                                    </div>
-                                    {included && (
-                                      <input
-                                        type="text"
-                                        value={cb.details || ""}
-                                        onChange={e => setClassDetail(ci, e.target.value)}
-                                        placeholder={
-                                          cat.id === "basic_life" || cat.id === "vol_life"
-                                            ? "e.g. 2x salary up to $200,000, GI $132,000 or Flat $25,000"
-                                            : "Class-specific details, amounts, or exclusions…"
-                                        }
-                                        style={{ ...inputStyle, marginTop: 6, fontSize: 11,
-                                          padding: "4px 8px" }}
-                                      />
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>}
+                            {noneAssigned ? (
+                              <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600,
+                                background: "#fef3c7", padding: "2px 8px", borderRadius: 99 }}>
+                                ⚠ No classes assigned to any plan
+                              </span>
+                            ) : (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                                {(data.employeeClasses || []).map((cls, ci) => {
+                                  const covered = coveredIds.has(cls.id);
+                                  const planCount = plans.filter(pl => (pl.eligibleClasses || []).includes(cls.id)).length;
+                                  return covered ? (
+                                    <span key={cls.id || ci} style={{ fontSize: 11, fontWeight: 700,
+                                      padding: "2px 10px", borderRadius: 99,
+                                      background: "#dce8f2", color: "#2d4a6b",
+                                      border: "1.5px solid #507c9c" }}>
+                                      {cls.name || `Class ${ci+1}`}
+                                      <span style={{ opacity: 0.65, fontWeight: 500, marginLeft: 4 }}>
+                                        {planCount} plan{planCount !== 1 ? "s" : ""}
+                                      </span>
+                                    </span>
+                                  ) : null;
+                                })}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
