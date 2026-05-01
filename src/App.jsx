@@ -1611,6 +1611,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
   // Tab state
   const [activeTab, setActiveTab] = useState("info");
+  const [benefitCategoryTab, setBenefitCategoryTab] = useState("");
+  const [benefitLeafTab, setBenefitLeafTab] = useState("");
   const [taskTab, setTaskTab] = useState("preRenewal");
   const TABS = [
     { id: "info",        label: "Client Information" },
@@ -2869,24 +2871,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           <CollapseHeader id="benefitsSection" title="Benefits &amp; Carriers" collapsed={collapsed} onToggle={toggleSection} />
           {!collapsed.benefitsSection && (() => {
             const hasClasses = (data.employeeClasses || []).length > 0;
-            const [hideNoClass, setHideNoClass] = collapsed._hideNoClass !== undefined
-              ? [collapsed._hideNoClass, v => setCollapsed(p => ({ ...p, _hideNoClass: v }))]
-              : [false, v => setCollapsed(p => ({ ...p, _hideNoClass: v }))];
             return (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {/* Filter bar */}
-            {hasClasses && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
-                background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", marginBottom: 2 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
-                  fontSize: 12, fontWeight: 600, color: "#475569" }}>
-                  <input type="checkbox" checked={hideNoClass}
-                    onChange={e => setHideNoClass(e.target.checked)}
-                    style={{ accentColor: "#3b82f6", width: 13, height: 13 }} />
-                  Hide benefits with no class assigned
-                </label>
-              </div>
-            )}
             {/* ── Add Coverage button + checklist table ── */}
             {(() => {
               const activeCatIds = Object.keys(data.benefitActive || {}).filter(k => !!(data.benefitActive || {})[k]);
@@ -3060,12 +3046,78 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 }
               }
 
-              return allRenderableEntries.map(cat => {
-              if (hasClasses && collapsed._hideNoClass) {
-                const anyAssigned = (data.employeeClasses || []).some(
-                  cls => !!(cls.classBenefits || {})[cat.id]?.included
-                );
-                if (!anyAssigned) return null;
+              if (allRenderableEntries.length === 0) return null;
+
+              // ── Two-layer tab navigation ──────────────────────────────────
+              const SCHEMA_ID_TO_CATEGORY = {
+                "medical":"Core Health","dental":"Core Health","vision":"Core Health","telehealth":"Core Health",
+                "basic_life":"Life & AD&D","vol_life":"Life & AD&D","add":"Life & AD&D",
+                "std":"Income Protection","ltd":"Income Protection","idi":"Income Protection",
+                "nydbl_pfl":"Statutory Income",
+                "worksite_accident":"Worksite","worksite_cancer":"Worksite","worksite_ci":"Worksite","worksite_hospital":"Worksite",
+                "eap":"Wellness",
+                "identity_theft":"Lifestyle","prepaid_legal":"Lifestyle","pet_insurance":"Lifestyle",
+                "fsa":"Tax-Advantaged","hsa_funding":"Tax-Advantaged","hra":"Tax-Advantaged","commuter":"Tax-Advantaged",
+              };
+              const entriesWithCat = allRenderableEntries.map(e => ({
+                ...e, _category: SCHEMA_ID_TO_CATEGORY[e.id] || "Other"
+              }));
+              const CATEGORY_ORDER = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Tax-Advantaged","Other"];
+              const activeCategories = CATEGORY_ORDER.filter(cat => entriesWithCat.some(e => e._category === cat));
+              const selCategory = activeCategories.includes(benefitCategoryTab) ? benefitCategoryTab : (activeCategories[0] || "");
+              const benefitsInCategory = entriesWithCat.filter(e => e._category === selCategory);
+              const selBenefitId = benefitsInCategory.find(e => e.id === benefitLeafTab)?.id || (benefitsInCategory[0]?.id || "");
+
+              return (
+                <div>
+                  {/* Layer 1: Category tabs */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                    {activeCategories.map(cat => {
+                      const isActive = cat === selCategory;
+                      return (
+                        <button key={cat} type="button"
+                          onClick={() => { setBenefitCategoryTab(cat); setBenefitLeafTab(""); }}
+                          style={{ padding: "7px 18px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+                            border: isActive ? "2px solid #54652d" : "1.5px solid #7a8a3d",
+                            background: isActive ? "linear-gradient(135deg,#54652d,#7a8a3d)" : "#eef0e0",
+                            color: isActive ? "#fff" : "#54652d",
+                            cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>
+                          {cat}
+                          <span style={{ marginLeft: 5, fontSize: 10, opacity: 0.75 }}>
+                            ({entriesWithCat.filter(e => e._category === cat).length})
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Layer 2: Benefit tabs within selected category */}
+                  {benefitsInCategory.length > 1 && (
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap",
+                      borderBottom: "2px solid #3e5878", marginBottom: 12, paddingBottom: 0 }}>
+                      {benefitsInCategory.map(entry => {
+                        const isActive = entry.id === selBenefitId;
+                        return (
+                          <button key={entry.id} type="button"
+                            onClick={() => setBenefitLeafTab(entry.id)}
+                            style={{ padding: "5px 16px", borderRadius: "8px 8px 0 0", fontSize: 12, fontWeight: 700,
+                              border: "1.5px solid #507c9c",
+                              borderBottom: isActive ? "2px solid #fff" : "1.5px solid #507c9c",
+                              background: isActive ? "#fff" : "#dce8f2",
+                              color: isActive ? "#2d4a6b" : "#3e5878",
+                              cursor: "pointer", fontFamily: "inherit",
+                              marginBottom: isActive ? "-2px" : 0 }}>
+                            {entry.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Render only the selected benefit card */}
+                  {allRenderableEntries.filter(e => e.id === selBenefitId).map(cat => {
+              if (hasClasses) {
+                // Class assignment now handled at plan level — no filter needed
               }
               const leaves = cat.children.length > 0 ? cat.children : [{ id: cat.id, label: cat.label }];
               const isOffered = true;
@@ -4245,7 +4297,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   )}
                 </div>
               );
-            });})()}
+            })}
+                </div>
+              );
+            })()}
           </div>
           );
           })()}
