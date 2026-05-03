@@ -159,11 +159,18 @@ export async function deleteDDR(id) {
 export async function fetchMeetings() {
   const { data, error } = await supabase.from('meetings').select('*').order('created_at', { ascending: false })
   if (error) { console.error('fetchMeetings error:', error); return null }
-  return data
+  return data.map(row => row.data ? { ...row.data, id: row.id } : row)
 }
 
 export async function upsertMeeting(meeting) {
-  const { error } = await supabase.from('meetings').upsert(meeting)
+  const { error } = await supabase.from('meetings').upsert({
+    id: meeting.id,
+    meeting_id: meeting.id,
+    team: meeting.team || '',
+    date: meeting.date || null,
+    data: meeting,
+    updated_at: new Date().toISOString(),
+  })
   if (error) console.error('upsertMeeting error:', error)
 }
 
