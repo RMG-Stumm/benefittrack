@@ -180,6 +180,24 @@ function formatPhone(raw) {
   return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
 }
 
+// Calculate annual commission dollars for a graded scale.
+// tiers: [{ upTo: number|null, rate: number }] — upTo is the ceiling of that band in dollars, null = unlimited
+// annualPremium: total annual premium in dollars
+function calcGradedCommission(annualPremium, tiers) {
+  if (!tiers || !tiers.length || !annualPremium) return 0;
+  let commission = 0;
+  let prev = 0;
+  for (const tier of tiers) {
+    const ceiling = tier.upTo != null ? tier.upTo : Infinity;
+    const band = Math.min(annualPremium, ceiling) - prev;
+    if (band <= 0) break;
+    commission += band * ((tier.rate || 0) / 100);
+    prev = ceiling;
+    if (annualPremium <= ceiling) break;
+  }
+  return commission;
+}
+
 // Format a raw numeric string as currency: $1,234.56
 function formatCurrency(raw) {
   const clean = (raw || "").toString().replace(/[^0-9.]/g, "");
@@ -914,7 +932,7 @@ function carriersForBenefit(benefitId, carriersData) {
       dbCarriers = specific.length ? specific : carriersData.filter(c => c.category === "Ancillary").map(c => c.name);
     } else if (productLabel) {
       const specific = carriersData
-        .filter(c => c.category === "Ancillary" && (c.products || []).some(p => p.toLowerCase() === productLabel.toLowerCase()))
+        .filter(c => (c.category === "Ancillary" || c.category === "Medical") && (c.products || []).some(p => p.toLowerCase() === productLabel.toLowerCase()))
         .map(c => c.name);
       dbCarriers = specific.length ? specific : carriersData.filter(c => c.category === "Ancillary").map(c => c.name);
     } else {
@@ -1237,6 +1255,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   const [correcting, setCorrecting]       = useState(null);   // planYear.id being corrected
   const [correctionNote, setCorrectionNote]   = useState("");
   const [correctionEdits, setCorrectionEdits] = useState({});  // partial snapshot edits while correcting
+  const [isDirty, setIsDirty] = useState(false);               // true once any field has been changed
 
   function buildSnapshot() {
     return {
@@ -1368,13 +1387,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
     setCorrectionEdits({});
   }
 
-  const set = (key, val) => setData(p => ({ ...p, [key]: val }));
+  const set = (key, val) => { setIsDirty(true); setData(p => ({ ...p, [key]: val })); };
 
   // Re-apply DDR-based due dates whenever an anchor date changes
   function applyDDR(newData) {
     return applyDueDateRulesToClient(newData, tasksDb, dueDateRules);
   }
   function setWithDDR(key, val) {
+    setIsDirty(true);
     setData(p => applyDDR({ ...p, [key]: val }));
   }
 
@@ -1444,18 +1464,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           );
 
           if (match && match.amount) {
-            const existingComm = (p.benefitCommissions || {})[benefitId] || {};
-            // Only auto-fill if not already set
-            if (!existingComm.amount) {
-              const withComm = {
-                ...updated,
-                benefitCommissions: {
-                  ...(updated.benefitCommissions || {}),
-                  [benefitId]: { type: match.type, amount: match.amount },
-                },
-              };
-              return benefitId === "medical" ? applyPreRenewalRules(withComm) : withComm;
-            }
+            const withComm = {
+              ...updated,
+              benefitCommissions: {
+                ...(updated.benefitCommissions || {}),
+                [benefitId]: { type: match.type, amount: match.amount },
+              },
+            };
+            return benefitId === "medical" ? applyPreRenewalRules(withComm) : withComm;
           }
         }
       }
@@ -1690,7 +1706,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             }}>
               🗄 Archive Plan Year
             </button>
-            <button onClick={onClose} style={{
+            <button onClick={() => { if (isDirty && !window.confirm("You have unsaved changes. Leave without saving?")) return; onClose(); }} style={{
               background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, width: 32, height: 32,
               cursor: "pointer", fontSize: 18, color: "#fff", display: "flex",
               alignItems: "center", justifyContent: "center",
@@ -2050,12 +2066,22 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                       ))}
                                     </div>
                                   )}
-                                  {/* Employee classes for this benefit */}
-                                  {(py.employeeClasses || []).filter(cls => !!(cls.classBenefits || {})[cat.id]?.included).map((cls, ci) => (
-                                    <div key={ci} style={{ fontSize: 11, color: "#3e5878", marginTop: 3 }}>
-                                      <strong>{cls.name || `Class ${ci+1}`}:</strong> {(cls.classBenefits || {})[cat.id]?.details || "—"}
-                                    </div>
-                                  ))}
+                                  {/* Employee classes for this benefit — derived from plan eligibleClasses */}
+                                  {(() => {
+                                    const classMap = Object.fromEntries(
+                                      (py.employeeClasses || []).map(cls => [cls.id, cls.name || cls.id])
+                                    );
+                                    const eligibleClassIds = [
+                                      ...new Set(plans.flatMap(pl => pl.eligibleClasses || []))
+                                    ];
+                                    if (eligibleClassIds.length === 0) return null;
+                                    return (
+                                      <div style={{ fontSize: 11, color: "#3e5878", marginTop: 3 }}>
+                                        <strong>Classes:</strong>{" "}
+                                        {eligibleClassIds.map(id => classMap[id] || id).join(", ")}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                             })}
@@ -2597,7 +2623,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       style={{ ...inputStyle, marginTop: 0, flex: 1, marginRight: 10, fontWeight: 700, fontSize: 13 }}
                     />
                     <button type="button"
-                      onClick={() => setData(p => ({ ...p, employeeClasses: (p.employeeClasses||[]).filter((_,i) => i !== idx) }))}
+                      onClick={() => { if (!window.confirm("Remove this employee class?")) return; setData(p => ({ ...p, employeeClasses: (p.employeeClasses||[]).filter((_,i) => i !== idx) })); }}
                       style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                         cursor: "pointer", fontFamily: "inherit" }}>✕</button>
@@ -2776,7 +2802,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </div>
               ))}
               <button type="button" onClick={() => setData(p => ({
-                ...p, employeeClasses: [...(p.employeeClasses||[]), { id: generateId(), name: "", definition: "", eligible: "", classBenefits: {}, notes: "" }]
+                ...p, employeeClasses: [...(p.employeeClasses||[]), { id: generateId(), name: "", definition: "", eligible: "", notes: "" }]
               }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 border: "1.5px dashed #4a7fa5", background: "#f0f5fa", color: "#2d4a6b",
                 cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
@@ -3318,21 +3344,38 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </div>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           # Enrolled
-                          <IntegerInput
-                            value={(data.benefitEnrolled || {})[cat.id] || ""}
-                            onChange={v => {
-                              setData(p => {
-                                const updated = {
-                                  ...p,
-                                  benefitEnrolled: { ...(p.benefitEnrolled || {}), [cat.id]: v },
-                                  ...(cat.id === "medical" ? { medicalEnrolled: v } : {}),
-                                };
-                                return cat.id === "medical" ? applyPreRenewalRules(updated) : updated;
-                              });
-                            }}
-                            placeholder="# enrolled"
-                            style={{ ...inputStyle, marginTop: 3 }}
-                          />
+                          {(() => {
+                            const TIERS_E = ["ee","es","ec","ff"];
+                            const plansForCat = (data.benefitPlans || {})[cat.id] || [];
+                            const sumFromPlans = plansForCat.reduce((sum, pl) =>
+                              sum + TIERS_E.reduce((s, k) => s + (parseInt((pl.enrolled || {})[k]) || 0), 0), 0);
+                            const legacyVal = (data.benefitEnrolled || {})[cat.id] || "";
+                            if (sumFromPlans > 0) {
+                              return (
+                                <div style={{ ...inputStyle, marginTop: 3, background: "#f8fafc",
+                                  color: "#1e40af", fontWeight: 700, cursor: "default" }}>
+                                  {sumFromPlans} <span style={{ fontSize: 10, fontWeight: 400, color: "#64748b" }}>auto-sum from plans</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <IntegerInput
+                                value={legacyVal}
+                                onChange={v => {
+                                  setData(p => {
+                                    const updated = {
+                                      ...p,
+                                      benefitEnrolled: { ...(p.benefitEnrolled || {}), [cat.id]: v },
+                                      ...(cat.id === "medical" ? { medicalEnrolled: v } : {}),
+                                    };
+                                    return cat.id === "medical" ? applyPreRenewalRules(updated) : updated;
+                                  });
+                                }}
+                                placeholder="# enrolled"
+                                style={{ ...inputStyle, marginTop: 3 }}
+                              />
+                            );
+                          })()}
                         </label>
                       </div>
 
@@ -3475,7 +3518,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                   {/* Empty spacer for Monthly Total column */}
                                   <div />
                                   <button type="button"
-                                    onClick={() => setPlans(plans.filter((_, i) => i !== idx))}
+                                    onClick={() => { if (!window.confirm("Remove this plan?")) return; setPlans(plans.filter((_, i) => i !== idx)); }}
                                     style={{ padding: "6px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                                       border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                                       cursor: "pointer", fontFamily: "inherit", alignSelf: "end" }}>✕</button>
@@ -3630,43 +3673,114 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         const legacyEnrolled = parseInt((data.benefitEnrolled || {})[cat.id]) || 0;
                         const effectiveEnrolled = totalEnrolled || legacyEnrolled;
 
+                        // For Graded: live lookup of tiers from the carrier's commission rule
+                        let gradedTiers = null;
+                        if (commType === "Graded" && carriersData && currentCarrier) {
+                          const carrierObj = carriersData.find(c => c.name === currentCarrier);
+                          if (carrierObj) {
+                            const BENEFIT_ID_TO_NAME = {
+                              medical: "Medical", dental: "Dental", vision: "Vision",
+                              basic_life: "Basic Life/AD&D", vol_life: "Vol Life",
+                              std: "STD", ltd: "LTD", worksite: "Worksite",
+                              eap: "EAP", telehealth: "Telehealth", fsa: "FSA",
+                              hsa_funding: "HSA", hra: "HRA", nydbl_pfl: "NYDBL & PFL",
+                            };
+                            const benefitName = BENEFIT_ID_TO_NAME[cat.id] || cat.id;
+                            const market = data.marketSize || "";
+                            const funding = data.fundingMethod || "";
+                            const rules = carrierObj.commissionRules || [];
+                            const match = rules.find(r =>
+                              r.type === "Graded" &&
+                              (r.benefit === benefitName || r.benefit === "All") &&
+                              (r.segment === market || r.segment === "All") &&
+                              (r.fundingMethod === funding || r.fundingMethod === "All")
+                            );
+                            if (match?.tiers?.length) gradedTiers = match.tiers;
+                          }
+                        }
+
                         let monthlyRevenue = 0;
+                        let annualRevenue = 0;
                         if (commType === "PEPM") {
                           monthlyRevenue = commAmt * effectiveEnrolled;
-                        } else if (commType === "Flat %" || commType === "Graded") {
+                          annualRevenue = monthlyRevenue * 12;
+                        } else if (commType === "Flat %") {
                           monthlyRevenue = totalMonthlyPremium * (commAmt / 100);
+                          annualRevenue = monthlyRevenue * 12;
+                        } else if (commType === "Graded") {
+                          const annualPremium = totalMonthlyPremium * 12;
+                          if (gradedTiers) {
+                            annualRevenue = calcGradedCommission(annualPremium, gradedTiers);
+                          } else {
+                            // Fallback: treat commAmt as flat % if no tiers available
+                            annualRevenue = annualPremium * (commAmt / 100);
+                          }
+                          monthlyRevenue = annualRevenue / 12;
                         }
 
                         if (monthlyRevenue <= 0) return null;
-                        const annualRevenue = monthlyRevenue * 12;
+
+                        const fmt = v => v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+                        const annualPremium = totalMonthlyPremium * 12;
 
                         return (
                           <div style={{ background: "#f0fdf4", borderRadius: 8, border: "1.5px solid #86efac",
-                            padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 800, color: "#166534", letterSpacing: ".7px", textTransform: "uppercase", marginBottom: 2 }}>
-                                Estimated Revenue — {cat.label}
-                              </div>
-                              <div style={{ fontSize: 11, color: "#166534" }}>
-                                {commType === "PEPM"
-                                  ? `$${commAmt.toFixed(2)} PEPM × ${effectiveEnrolled} enrolled`
-                                  : `${commAmt}% of $${totalMonthlyPremium.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}/mo premium`}
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
-                              <div style={{ textAlign: "right" }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Monthly</div>
-                                <div style={{ fontSize: 16, fontWeight: 800, color: "#166534" }}>
-                                  ${monthlyRevenue.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+                            padding: "10px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 800, color: "#166534", letterSpacing: ".7px", textTransform: "uppercase", marginBottom: 2 }}>
+                                  Estimated Revenue — {cat.label}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#166534" }}>
+                                  {commType === "PEPM"
+                                    ? `$${commAmt.toFixed(2)} PEPM × ${effectiveEnrolled} enrolled`
+                                    : commType === "Graded"
+                                    ? `Graded scale on $${fmt(annualPremium)} annual premium`
+                                    : `${commAmt}% of $${fmt(totalMonthlyPremium)}/mo premium`}
                                 </div>
                               </div>
-                              <div style={{ textAlign: "right" }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Annual</div>
-                                <div style={{ fontSize: 16, fontWeight: 800, color: "#166534" }}>
-                                  ${annualRevenue.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+                              <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
+                                <div style={{ textAlign: "right" }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Monthly</div>
+                                  <div style={{ fontSize: 16, fontWeight: 800, color: "#166534" }}>${fmt(monthlyRevenue)}</div>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Annual</div>
+                                  <div style={{ fontSize: 16, fontWeight: 800, color: "#166534" }}>${fmt(annualRevenue)}</div>
                                 </div>
                               </div>
                             </div>
+                            {/* Graded tier breakdown */}
+                            {commType === "Graded" && gradedTiers && (
+                              <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #86efac" }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7, marginBottom: 4 }}>Tier Breakdown</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                  {(() => {
+                                    let prev = 0;
+                                    return gradedTiers.map((tier, ti) => {
+                                      const ceiling = tier.upTo != null ? tier.upTo : Infinity;
+                                      const band = Math.min(annualPremium, ceiling) - prev;
+                                      const tierComm = band > 0 ? band * ((parseFloat(tier.rate)||0) / 100) : 0;
+                                      prev = ceiling;
+                                      const label = tier.upTo != null
+                                        ? `$${(gradedTiers[ti-1]?.upTo||0).toLocaleString()}–$${tier.upTo.toLocaleString()}`
+                                        : `$${(gradedTiers[ti-1]?.upTo||0).toLocaleString()}+`;
+                                      return band > 0 ? (
+                                        <span key={ti} style={{ fontSize: 10, background: "#dcfce7", color: "#166534",
+                                          borderRadius: 5, padding: "2px 7px", border: "1px solid #86efac" }}>
+                                          {label} @ {tier.rate}% = ${fmt(tierComm)}
+                                        </span>
+                                      ) : null;
+                                    });
+                                  })()}
+                                </div>
+                              </div>
+                            )}
+                            {commType === "Graded" && !gradedTiers && (
+                              <div style={{ marginTop: 6, fontSize: 10, color: "#92400e", fontStyle: "italic" }}>
+                                No tier schedule found for this carrier — using {commAmt}% flat rate as fallback. Add tiers in the Carrier card.
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
@@ -4876,9 +4990,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         ex[idx] = { ...ex[idx], status: v };
                         return { ...p, preRenewal: { ...p.preRenewal, __extra: ex } };
                       })} />
-                      <button type="button" onClick={() => setData(p => ({
+                      <button type="button" onClick={() => { if (!window.confirm("Remove this task?")) return; setData(p => ({
                         ...p, preRenewal: { ...p.preRenewal, __extra: (p.preRenewal?.__extra||[]).filter((_,i)=>i!==idx) }
-                      }))} style={{ background: "#fee2e2", border: "none", borderRadius: 6, padding: "4px 8px",
+                      })); }} style={{ background: "#fee2e2", border: "none", borderRadius: 6, padding: "4px 8px",
                         cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700 }}>✕</button>
                     </div>
                     {!isNA && (
@@ -5245,7 +5359,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             cursor: "pointer", fontFamily: "inherit" }}>N/A</button>
                         <StatusSelect value={t.status} onChange={v => setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], status: v }; return { ...p, renewalTasks: rt }; })} />
                         <button type="button"
-                          onClick={() => setData(p => ({ ...p, renewalTasks: (p.renewalTasks||[]).filter((_,i) => i !== idx) }))}
+                          onClick={() => { if (!window.confirm("Remove this task?")) return; setData(p => ({ ...p, renewalTasks: (p.renewalTasks||[]).filter((_,i) => i !== idx) })); }}
                           style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                             border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                             cursor: "pointer", fontFamily: "inherit" }}>✕</button>
@@ -5779,7 +5893,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             cursor: "pointer", fontFamily: "inherit" }}>N/A</button>
                         <StatusSelect value={t.status} onChange={v => setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], status: v }; return { ...p, postOETasks: pt }; })} />
                         <button type="button"
-                          onClick={() => setData(p => ({ ...p, postOETasks: (p.postOETasks||[]).filter((_,i) => i !== idx) }))}
+                          onClick={() => { if (!window.confirm("Remove this task?")) return; setData(p => ({ ...p, postOETasks: (p.postOETasks||[]).filter((_,i) => i !== idx) })); }}
                           style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                             border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                             cursor: "pointer", fontFamily: "inherit" }}>✕</button>
@@ -6349,9 +6463,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           tasks[idx] = { ...tasks[idx], status: v };
                           return { ...p, miscTasks: tasks };
                         })} />
-                        {!isStd && <button type="button" onClick={() => setData(p => ({
+                        {!isStd && <button type="button" onClick={() => { if (!window.confirm("Remove this task?")) return; setData(p => ({
                           ...p, miscTasks: (p.miscTasks||[]).filter((_,i) => i !== idx)
-                        }))} style={{
+                        })); }} style={{
                           background: "#fee2e2", border: "none", borderRadius: 6, padding: "4px 8px",
                           cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700,
                         }}>✕</button>}
@@ -6640,7 +6754,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           display: "flex", justifyContent: "flex-end", gap: 10,
           background: "#f8fafc",
         }}>
-          <button onClick={onClose} style={btnOutline}>Cancel</button>
+          <button onClick={() => { if (isDirty && !window.confirm("You have unsaved changes. Leave without saving?")) return; onClose(); }} style={btnOutline}>Cancel</button>
           <SaveButton onSave={() => {
             // Flush any locally-typed "Other" carrier names into data before saving
             let finalData = { ...data };
@@ -6677,6 +6791,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               }
             });
             onSave(finalData);
+            setIsDirty(false);
           }} />
         </div>
       </div>
@@ -6782,7 +6897,7 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
             fontSize: 12, color: "#475569", cursor: "pointer", fontWeight: 600,
           }}>Edit</button>
           {canDelete && (
-            <button onClick={() => onDelete(client.id)} style={{
+            <button onClick={() => { if (!window.confirm(`Delete ${client.name}? This cannot be undone.`)) return; onDelete(client.id); }} style={{
               background: "#fee2e2", border: "none", borderRadius: 7, padding: "5px 10px",
               fontSize: 12, color: "#991b1b", cursor: "pointer", fontWeight: 600,
             }}>✕</button>
@@ -8353,7 +8468,7 @@ const DEFAULT_CARRIERS_DATA = [
       { role: "Sales Representative", name: "Erin Manning",     email: "ManningE1@aetna.com",   phone: "",               market: "ACA",       employerType: "Any", fundingType: "Any", notes: "2-100 Sales Associate. Email both Kevin and Erin on RFPs & CC quoting box." },
     ] },
     { id: "c_bcbsil",  name: "BCBSIL",  type: "National", category: "Medical",
-    segments: ["ACA","Mid-Market","Large"], products: ["Medical"],
+    segments: ["ACA","Mid-Market","Large"], products: ["Medical","Dental","Vision"],
     funding: ["Fully Insured","Level-Funded","Self-Funded"],
     states: ["IL"],
     notes: "Blue Balance Funded (Level-Funded): ACA small groups — min 5 enrolled, max 150 enrolled. Mid-Market — 50+ total employees. Plan families: BluePrint PPO, Blue Choice Options, Blue Choice Select PPO, BlueEdge HSA, BlueEdge Select HSA. Stop loss run-out period: 60 months. Credit possible if actual claims < claims funding. BPA required for bundled discount. BlueView exhibits available. Blue Insights reporting available. Effective Jan 1 – Dec 31, 2026.",
@@ -8369,7 +8484,8 @@ const DEFAULT_CARRIERS_DATA = [
       { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Fully Insured",  type: "Flat %",  amount: "5",  notes: "Standard MM – Flat % (eff. 10/1/25)" },
       { benefit: "Medical", segment: "ACA",        fundingMethod: "Level-Funded",   type: "PEPM",    amount: "40", notes: "Blue Balance Funded ACA PEPM (eff. 1/1/26)" },
       { benefit: "Medical", segment: "Mid-Market", fundingMethod: "Level-Funded",   type: "PEPM",    amount: "40", notes: "Blue Balance Funded MM PEPM (eff. 10/1/25)" },
-      { benefit: "Dental",  segment: "All",        fundingMethod: "All",            type: "Graded",  amount: "8",  notes: "Graded by Annual Premium Volume & Group Size. OED/AD 2-3 lives: 2% flat all tiers. OED/AD 4-150 lives: $1-$50K → 8%; $50,001-$100K → 4.25%; $100,001-$150K → 4%; $150,001+ → 3.75%" },
+      { benefit: "Dental",  segment: "All",        fundingMethod: "All",            type: "Graded",  amount: "8",  notes: "Graded by Annual Premium Volume & Group Size. OED/AD 2-3 lives: 2% flat all tiers. OED/AD 4-150 lives: $1-$50K → 8%; $50,001-$100K → 4.25%; $100,001-$150K → 4%; $150,001+ → 3.75%",
+        tiers: [{ upTo: 50000, rate: 8 }, { upTo: 100000, rate: 4.25 }, { upTo: 150000, rate: 4 }, { upTo: null, rate: 3.75 }] },
       { benefit: "Vision",  segment: "All",        fundingMethod: "All",            type: "Flat %",  amount: "10", notes: "" },
     ],
     planLimits: [], benefitDetails: "",
@@ -8920,6 +9036,9 @@ useEffect(() => {
             contacts:        (defaults.contacts       || []).length > 0 ? defaults.contacts       : (c.contacts       || []),
             commissionRules: (defaults.commissionRules|| []).length > 0 ? defaults.commissionRules: (c.commissionRules|| []),
             planLimits:      (c.planLimits && c.planLimits.length > 0)   ? c.planLimits            : (defaults.planLimits|| []),
+            // Always sync products and segments from defaults so carrier dropdown filtering stays current
+            products:        (defaults.products || []).length > 0 ? defaults.products : (c.products || []),
+            segments:        (defaults.segments || []).length > 0 ? defaults.segments : (c.segments || []),
           };
         });
         setCarriersDataRaw(merged);
@@ -12346,7 +12465,7 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                         background: isEditing ? "#dce8f0" : "#f8fafc",
                         color: isEditing ? "#2d4a6b" : "#475569",
                         cursor: "pointer", fontFamily: "inherit" }}>{isEditing ? "Close" : "Edit"}</button>}
-                    <button type="button" onClick={() => deleteCarrier(carrier.id)}
+                    <button type="button" onClick={() => { if (!window.confirm(`Delete ${carrier.name}? This cannot be undone.`)) return; deleteCarrier(carrier.id); }}
                       style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
                         border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
                         cursor: "pointer", fontFamily: "inherit",
@@ -12515,7 +12634,8 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                 </div>
               )}
               {(editData.commissionRules || []).map((rule, ri) => (
-                <div key={ri} style={{ display: "grid", gridTemplateColumns: "1fr 90px 110px 70px 80px 1fr auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <React.Fragment key={ri}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 110px 70px 80px 1fr auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
                   {/* Benefit */}
                   <select value={rule.benefit || "Medical"}
                     onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],benefit:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
@@ -12559,6 +12679,64 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                     style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
                       background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
                 </div>
+                {/* Graded tier editor — shown inline below the rule row */}
+                {rule.type === "Graded" && (
+                  <div style={{ marginLeft: 12, marginBottom: 8, padding: "8px 12px", background: "#fffbeb",
+                    border: "1px solid #fde68a", borderRadius: 7 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>
+                      Graded Tiers — Annual Premium Bands
+                    </div>
+                    {(rule.tiers || []).map((tier, ti) => (
+                      <div key={ti} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, color: "#64748b", width: 60, flexShrink: 0 }}>
+                          {ti === 0 ? "$0 –" : `$${(rule.tiers[ti-1].upTo||0).toLocaleString()} –`}
+                        </span>
+                        <input type="text" inputMode="numeric"
+                          value={tier.upTo != null ? tier.upTo : ""}
+                          placeholder={ti === (rule.tiers||[]).length - 1 ? "∞ (top tier)" : "ceiling $"}
+                          onChange={e => {
+                            const r=[...(editData.commissionRules||[])];
+                            const t=[...(r[ri].tiers||[])];
+                            const val = e.target.value.replace(/[^0-9]/g,"");
+                            t[ti]={...t[ti], upTo: val === "" ? null : Number(val)};
+                            r[ri]={...r[ri],tiers:t};
+                            setEditData(p=>({...p,commissionRules:r}));
+                          }}
+                          style={{ ...inputStyle, marginTop:0, fontSize:11, padding:"3px 6px", width:110, textAlign:"right" }} />
+                        <span style={{ fontSize: 11, color: "#64748b" }}>→</span>
+                        <input type="text" inputMode="numeric"
+                          value={tier.rate != null ? tier.rate : ""}
+                          placeholder="%"
+                          onChange={e => {
+                            const r=[...(editData.commissionRules||[])];
+                            const t=[...(r[ri].tiers||[])];
+                            t[ti]={...t[ti], rate: e.target.value.replace(/[^0-9.]/g,"")};
+                            r[ri]={...r[ri],tiers:t};
+                            setEditData(p=>({...p,commissionRules:r}));
+                          }}
+                          style={{ ...inputStyle, marginTop:0, fontSize:11, padding:"3px 6px", width:70, textAlign:"right" }} />
+                        <span style={{ fontSize: 11, color: "#64748b" }}>%</span>
+                        <button type="button" onClick={() => {
+                          const r=[...(editData.commissionRules||[])];
+                          r[ri]={...r[ri], tiers:(r[ri].tiers||[]).filter((_,i)=>i!==ti)};
+                          setEditData(p=>({...p,commissionRules:r}));
+                        }} style={{ fontSize:11, color:"#991b1b", background:"#fee2e2", border:"none",
+                          borderRadius:4, padding:"2px 6px", cursor:"pointer" }}>✕</button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => {
+                      const r=[...(editData.commissionRules||[])];
+                      const existing = r[ri].tiers || [];
+                      // New tier: set previous last tier's upTo if it was null, then add new open-ended tier
+                      const updated = existing.map((t,i) => i === existing.length-1 && t.upTo == null ? {...t, upTo: 0} : t);
+                      r[ri]={...r[ri], tiers:[...updated, { upTo: null, rate: "" }]};
+                      setEditData(p=>({...p,commissionRules:r}));
+                    }} style={{ fontSize:11, fontWeight:700, color:"#92400e", background:"#fef3c7",
+                      border:"1px solid #fde68a", borderRadius:5, padding:"3px 10px", cursor:"pointer",
+                      fontFamily:"inherit", marginTop:2 }}>+ Add Tier</button>
+                  </div>
+                )}
+                </React.Fragment>
               ))}
             </div>
 
