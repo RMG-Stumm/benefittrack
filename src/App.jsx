@@ -1186,7 +1186,7 @@ function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove 
   );
 }
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, transactionTypesLibrary }) {
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, transactionTypesLibrary, initialTaskTab, initialTaskId }) {
   // Derive sorted label arrays from libraries (fall back to hardcoded defaults if library empty)
   const marketOptions   = (marketsLibrary||[]).length  ? [...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
   const fundingOptions  = (fundingLibrary||[]).length  ? [...(fundingLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : FUNDING_METHODS;
@@ -1260,6 +1260,20 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   const [correctionNote, setCorrectionNote]   = useState("");
   const [correctionEdits, setCorrectionEdits] = useState({});  // partial snapshot edits while correcting
   const [isDirty, setIsDirty] = useState(false);               // true once any field has been changed
+
+  // Deep-link: scroll to and highlight the target task after modal renders
+  React.useEffect(() => {
+    if (!initialTaskId) return;
+    const el = document.getElementById(`task-row-${initialTaskId}`);
+    if (el) {
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.style.transition = "background 0.3s";
+        el.style.background = "#fef9c3";
+        setTimeout(() => { el.style.background = ""; }, 2500);
+      }, 350); // allow modal to finish rendering
+    }
+  }, [initialTaskId]);
 
   function buildSnapshot() {
     return {
@@ -1630,10 +1644,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   function toggleSection(id) { setCollapsed(p => ({ ...p, [id]: !p[id] })); }
 
   // Tab state
-  const [activeTab, setActiveTab] = useState("info");
+  const [activeTab, setActiveTab] = useState(initialTaskTab ? "tasks" : "info");
   const [benefitCategoryTab, setBenefitCategoryTab] = useState("");
   const [benefitLeafTab, setBenefitLeafTab] = useState("");
-  const [taskTab, setTaskTab] = useState("preRenewal");
+  const [taskTab, setTaskTab] = useState(initialTaskTab || "preRenewal");
   const TABS = [
     { id: "info",        label: "Client Information" },
     { id: "eligibility", label: "Eligibility" },
@@ -4839,7 +4853,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 const isNA = task.status === "N/A";
                 const isDone = task.status === "Complete";
                 return (
-                  <div key={t.id} style={{
+                  <div key={t.id} id={`task-row-${t.id}`} style={{
                     background: isNA ? "#f8fafc" : isDone ? "#f0fdf4" : "#f8fafc",
                     borderRadius: 10, padding: "10px 14px", opacity: isNA ? 0.6 : 1,
                     border: `1.5px solid ${isDone ? "#86efac" : isNA ? "#e2e8f0" : task.status === "In Progress" ? "#fde68a" : "#e2e8f0"}`,
@@ -5864,7 +5878,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       const task = getOETask(t.id, tasksDb);
                       const isDone = task.status === "Complete";
                       return (
-                        <div key={t.id} style={{
+                        <div key={t.id} id={`task-row-${t.id}`} style={{
                           background: isDone ? "#f0fdf4" : "#f8fafc", borderRadius: 10, padding: "10px 14px",
                           border: `1.5px solid ${isDone ? "#86efac" : task.status === "In Progress" ? "#fde68a" : "#e2e8f0"}`,
                         }}>
@@ -6287,7 +6301,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   const isDone = task.status === "Complete";
                   const borderColor = isDone ? "#86efac" : isNA ? "#e2e8f0" : task.status === "In Progress" ? "#fde68a" : "#e2e8f0";
                   return (
-                    <div key={t.id} style={{
+                    <div key={t.id} id={`task-row-${t.id}`} style={{
                       background: isNA ? "#f8fafc" : isDone ? "#f0fdf4" : "#f8fafc",
                       borderRadius: 10, padding: "10px 14px",
                       border: `1.5px solid ${borderColor}`,
@@ -6462,254 +6476,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </div>
             </div>
 
-          {/* Ongoing Tasks */}
-          {(() => {
-            // Derive which Ongoing tasks apply to this client based on carrier/market filters
-            const medCarrier = (data.benefitCarriers || {}).medical || (data.carriers || [])[0] || "";
-            const medEnrolled = Number((data.benefitEnrolled || {}).medical) || 0;
-            const medPlans    = (data.benefitPlans || {}).medical || [];
-            const hasHMO = medPlans.some(p => p.type && p.type.toUpperCase().includes("HMO"));
-            const hasPPO = medPlans.some(p => p.type && p.type.toUpperCase().includes("PPO"));
-
-            // Evaluate custom eligibility rules beyond carrier/market/funding filters
-            function passesEligibilityRule(t) {
-              if (!t.eligibilityRule) return true;
-              if (t.eligibilityRule === "blue_insights") {
-                // Requires: ≥50 total medical enrolled AND at least one HMO or PPO plan
-                return medEnrolled >= 50 && (hasHMO || hasPPO);
-              }
-              return true;
-            }
-
-            const applicableOngoing = (tasksDb || []).filter(t => {
-              if (t.category !== "Ongoing") return false;
-              if (t.markets && t.markets.length > 0 && !t.markets.includes(data.marketSize)) return false;
-              if (t.carriers && t.carriers.length > 0 && !t.carriers.includes(medCarrier)) return false;
-              if (t.funding  && t.funding.length  > 0 && !t.funding.includes(data.fundingMethod)) return false;
-              if (!passesEligibilityRule(t)) return false;
-              return true;
-            });
-            if (applicableOngoing.length === 0 && !((data.ongoingTasks || {}).__extra?.length)) return (
-              <>
-                <CollapseHeader id="ongoing" title="Ongoing Tasks" accent="#54652d" collapsed={collapsed} onToggle={toggleSection} />
-                {!collapsed.ongoing && (
-                  <div>
-                    <button type="button" onClick={() => setData(p => ({
-                      ...p, ongoingTasks: {
-                        ...(p.ongoingTasks || {}),
-                        __extra: [...((p.ongoingTasks || {}).__extra || []), { title: "", status: "Not Started", assignee: "", recurrence: "Monthly", lastCompleted: "", nextDue: "", notes: "" }]
-                      }
-                    }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                      border: "1.5px dashed #67e8f9", background: "#f0fbff", color: "#0c4a6e",
-                      cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
-                      + Add Ongoing Task
-                    </button>
-                  </div>
-                )}
-              </>
-            );
-
-            function advanceDate(dateStr, recurrence) {
-              if (!dateStr) return "";
-              const d = new Date(dateStr + "T12:00:00");
-              if (recurrence === "Monthly")   d.setMonth(d.getMonth() + 1);
-              else if (recurrence === "Quarterly") d.setMonth(d.getMonth() + 3);
-              else if (recurrence === "Annually")  d.setFullYear(d.getFullYear() + 1);
-              return d.toISOString().split("T")[0];
-            }
-
-            function setOngoing(taskId, field, val) {
-              setData(p => ({
-                ...p,
-                ongoingTasks: {
-                  ...(p.ongoingTasks || {}),
-                  [taskId]: { ...(p.ongoingTasks?.[taskId] || {}), [field]: val },
-                },
-              }));
-            }
-
-            function completeOngoing(taskId, completedDate, recurrence) {
-              const next = advanceDate(completedDate, recurrence);
-              setData(p => ({
-                ...p,
-                ongoingTasks: {
-                  ...(p.ongoingTasks || {}),
-                  [taskId]: {
-                    ...(p.ongoingTasks?.[taskId] || {}),
-                    status: "Not Started",
-                    lastCompleted: completedDate,
-                    nextDue: next,
-                  },
-                },
-              }));
-            }
-
-            return (
-              <>
-                <CollapseHeader id="ongoing" title="Ongoing Tasks" accent="#54652d" collapsed={collapsed} onToggle={toggleSection} />
-                {!collapsed.ongoing && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {applicableOngoing.map(taskDef => {
-                      const stored = (data.ongoingTasks || {})[taskDef.id] || {};
-                      const status     = stored.status     || "Not Started";
-                      const assignee   = stored.assignee   || resolveAssignee(taskDef.defaultAssignee || "", data.team) || "";
-                      const lastComp   = stored.lastCompleted || "";
-                      const nextDue    = stored.nextDue    || "";
-                      const notes      = stored.notes      || "";
-                      const recurrence = taskDef.recurrence || "Monthly";
-                      const sc         = STATUS_STYLES[status] || STATUS_STYLES["Not Started"];
-                      const isDue = nextDue && new Date(nextDue + "T12:00:00") <= new Date();
-
-                      return (
-                        <div key={taskDef.id} style={{
-                          background: "#f0fbff", borderRadius: 10, padding: "12px 14px",
-                          border: `1.5px solid ${isDue ? "#67e8f9" : "#bae6fd"}`,
-                        }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <span style={{ fontSize: 13, fontWeight: 700, color: "#0c4a6e" }}>
-                                {taskDef.label}
-                              </span>
-                              <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                                background: "#e0f2fe", color: "#0369a1" }}>
-                                {recurrence}
-                              </span>
-                              {isDue && (
-                                <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                                  background: "#fef3c7", color: "#92400e" }}>⏰ Due</span>
-                              )}
-                            </div>
-                            <StatusSelect value={status} onChange={v => setOngoing(taskDef.id, "status", v)} />
-                          </div>
-
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                            <label style={{ ...labelStyle, marginTop: 0 }}>
-                              Assignee
-                              <select value={assignee}
-                                onChange={e => setOngoing(taskDef.id, "assignee", e.target.value)}
-                                style={{ ...inputStyle, marginTop: 3, fontSize: 12 }}>
-                                <option value="">— Select —</option>
-                                {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
-                              </select>
-                            </label>
-                            <label style={{ ...labelStyle, marginTop: 0 }}>
-                              Last Completed
-                              <input type="date" value={lastComp}
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  if (v) completeOngoing(taskDef.id, v, recurrence);
-                                  else setOngoing(taskDef.id, "lastCompleted", "");
-                                }}
-                                style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
-                            </label>
-                            <label style={{ ...labelStyle, marginTop: 0 }}>
-                              Next Due
-                              <input type="date" value={nextDue}
-                                onChange={e => setOngoing(taskDef.id, "nextDue", e.target.value)}
-                                style={{ ...inputStyle, marginTop: 3, fontSize: 12,
-                                  background: isDue ? "#fff7ed" : undefined }} />
-                            </label>
-                          </div>
-
-                          <label style={{ ...labelStyle, marginTop: 8 }}>
-                            Notes
-                            <input type="text" value={notes}
-                              onChange={e => setOngoing(taskDef.id, "notes", e.target.value)}
-                              placeholder="Notes…"
-                              style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
-                          </label>
-                        </div>
-                      );
-                    })}
-
-                    {/* Manual / extra ongoing tasks */}
-                    {((data.ongoingTasks || {}).__extra || []).map((t, idx) => {
-                      const isDue = t.nextDue && new Date(t.nextDue + "T12:00:00") <= new Date();
-                      function setExtraOngoing(field, val) {
-                        setData(p => {
-                          const ex = [...((p.ongoingTasks || {}).__extra || [])];
-                          ex[idx] = { ...ex[idx], [field]: val };
-                          return { ...p, ongoingTasks: { ...(p.ongoingTasks || {}), __extra: ex } };
-                        });
-                      }
-                      return (
-                        <div key={"ong_extra_"+idx} style={{
-                          background: "#f0fbff", borderRadius: 10, padding: "12px 14px",
-                          border: `1.5px solid ${isDue ? "#67e8f9" : "#bae6fd"}`,
-                        }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                            <input value={t.title || ""} onChange={e => setExtraOngoing("title", e.target.value)}
-                              placeholder="Task name..."
-                              style={{ ...inputStyle, marginTop: 0, flex: 1, fontWeight: 600, fontSize: 13 }} />
-                            <select value={t.recurrence || "Monthly"} onChange={e => setExtraOngoing("recurrence", e.target.value)}
-                              style={{ ...inputStyle, marginTop: 0, width: 120, fontSize: 12 }}>
-                              {["Monthly","Quarterly","Annually"].map(r => <option key={r} value={r}>{r}</option>)}
-                            </select>
-                            <StatusSelect value={t.status || "Not Started"} onChange={v => setExtraOngoing("status", v)} />
-                            <button type="button" onClick={() => setData(p => ({
-                              ...p, ongoingTasks: { ...(p.ongoingTasks || {}), __extra: ((p.ongoingTasks || {}).__extra || []).filter((_,i) => i !== idx) }
-                            }))} style={{ background: "#fee2e2", border: "none", borderRadius: 6, padding: "4px 8px",
-                              cursor: "pointer", fontSize: 12, color: "#991b1b", fontWeight: 700 }}>✕</button>
-                          </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                            <label style={{ ...labelStyle, marginTop: 0 }}>
-                              Assignee
-                              <select value={t.assignee || ""} onChange={e => setExtraOngoing("assignee", e.target.value)}
-                                style={{ ...inputStyle, marginTop: 3, fontSize: 12 }}>
-                                <option value="">— Select —</option>
-                                {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
-                              </select>
-                            </label>
-                            <label style={{ ...labelStyle, marginTop: 0 }}>
-                              Last Completed
-                              <input type="date" value={t.lastCompleted || ""} onChange={e => {
-                                const v = e.target.value;
-                                if (!v) { setExtraOngoing("lastCompleted", ""); return; }
-                                const d = new Date(v + "T12:00:00");
-                                const rec = t.recurrence || "Monthly";
-                                if (rec === "Monthly")   d.setMonth(d.getMonth() + 1);
-                                else if (rec === "Quarterly") d.setMonth(d.getMonth() + 3);
-                                else if (rec === "Annually")  d.setFullYear(d.getFullYear() + 1);
-                                const next = d.toISOString().split("T")[0];
-                                setData(p => {
-                                  const ex = [...((p.ongoingTasks || {}).__extra || [])];
-                                  ex[idx] = { ...ex[idx], lastCompleted: v, nextDue: next, status: "Not Started" };
-                                  return { ...p, ongoingTasks: { ...(p.ongoingTasks || {}), __extra: ex } };
-                                });
-                              }} style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
-                            </label>
-                            <label style={{ ...labelStyle, marginTop: 0 }}>
-                              Next Due
-                              <input type="date" value={t.nextDue || ""} onChange={e => setExtraOngoing("nextDue", e.target.value)}
-                                style={{ ...inputStyle, marginTop: 3, fontSize: 12, background: isDue ? "#fff7ed" : undefined }} />
-                            </label>
-                          </div>
-                          <label style={{ ...labelStyle, marginTop: 8 }}>
-                            Notes
-                            <input type="text" value={t.notes || ""} onChange={e => setExtraOngoing("notes", e.target.value)}
-                              placeholder="Notes…" style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
-                          </label>
-                        </div>
-                      );
-                    })}
-
-                    <button type="button" onClick={() => setData(p => ({
-                      ...p, ongoingTasks: {
-                        ...(p.ongoingTasks || {}),
-                        __extra: [...((p.ongoingTasks || {}).__extra || []), { title: "", status: "Not Started", assignee: "", recurrence: "Monthly", lastCompleted: "", nextDue: "", notes: "" }]
-                      }
-                    }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                      border: "1.5px dashed #67e8f9", background: "#f0fbff", color: "#0c4a6e",
-                      cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 4 }}>
-                      + Add Ongoing Task
-                    </button>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-
           </div>)} {/* end compliance tab */}
+
 
           {/* Miscellaneous */}
           {taskTab === "misc" && (<div>
@@ -7767,6 +7535,27 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
   const isMultiTeam = (userTeams || []).length > 1;
   const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams || []).length > 0;
   const canRecord = !isAC; // ACs can view but not record/edit meetings
+
+  // Map task group → ClientModal taskTab ID
+  function groupToTaskTab(group) {
+    if (!group) return "misc";
+    if (group === "preRenewal") return "preRenewal";
+    if (group === "compliance") return "compliance";
+    if (group === "renewalTasks" || group === "renewalMeeting" || group === "renewalTasksAuto") return "renewal";
+    if (group === "openEnrollment") return "oe";
+    if (group === "postOETasks" || group === "postOEFixed") return "postOE";
+    if (group === "transactions") return "transactions";
+    return "misc";
+  }
+
+  // Build URL to deep-link into a client modal at a specific task
+  function buildClientTaskUrl(clientId, group, taskId) {
+    const params = new URLSearchParams();
+    params.set("clientId", clientId);
+    params.set("taskTab", groupToTaskTab(group));
+    if (taskId) params.set("taskId", taskId);
+    return `${window.location.pathname}?${params.toString()}`;
+  }
   const [showForm, setShowForm]     = useState(false);
   const [editId, setEditId]         = useState(null);
   const [filterTeam, setFilterTeam] = useState(isRestricted && !isMultiTeam ? (userTeamId || "All") : "All");
@@ -8097,11 +7886,14 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                               )}
                               {onOpenClient && (
                                 <button type="button"
-                                  onClick={e => { e.stopPropagation(); onOpenClient(clients.find(cl => String(cl.id) === String(clientId))); }}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    window.open(buildClientTaskUrl(clientId, t.group, t.taskId || t.arrayIndex), "_blank");
+                                  }}
                                   style={{ fontSize: 10, fontWeight: 700, padding: "2px 9px", borderRadius: 6,
                                     border: "1.5px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8",
                                     cursor: "pointer", fontFamily: "inherit", flexShrink: 0, whiteSpace: "nowrap" }}>
-                                  Open Client →
+                                  Open Client ↗
                                 </button>
                               )}
                             </div>
@@ -8316,11 +8108,11 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                                     <span><span style={{ color: "#64748b", fontWeight: 600 }}>{r.clientName} · </span>{r.label}</span>
                                     {onOpenClient && (
                                       <button type="button"
-                                        onClick={() => onOpenClient(clients.find(cl => String(cl.id) === String(r.clientId)))}
+                                        onClick={() => window.open(buildClientTaskUrl(r.clientId, r.group, r.taskId || r.arrayIndex), "_blank")}
                                         style={{ fontSize: 10, fontWeight: 700, padding: "1px 8px", borderRadius: 6,
                                           border: "1.5px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8",
                                           cursor: "pointer", fontFamily: "inherit" }}>
-                                        Open Client →
+                                        Open Client ↗
                                       </button>
                                     )}
                                   </div>
@@ -9351,7 +9143,6 @@ useEffect(() => {
     }
     loadAll();
   }, []);
-  // Load SheetJS for spreadsheet parsing
   React.useEffect(() => {
     if (window.XLSX) return;
     const s = document.createElement("script");
@@ -9361,6 +9152,8 @@ useEffect(() => {
   }, []);
    const [clients, setClientsRaw] = useState([]);
    const [modal, setModal] = useState(null); // null | client object
+  const [deepLinkTaskTab, setDeepLinkTaskTab]   = useState(null);
+  const [deepLinkTaskId,  setDeepLinkTaskId]    = useState(null);
   const [search, setSearch] = useState("");
   const [filterTeam, setFilterTeam] = useState("All");
   const [filterMarket, setFilterMarket] = useState("All");
@@ -9385,6 +9178,25 @@ useEffect(() => {
   }
 
   const userTeamId = currentUser?.team || null;
+
+  // ── Deep-link: open client modal at specific task from URL params ──
+  // Params: ?clientId=X&taskTab=Y&taskId=Z
+  // Written by "Open Client ↗" in meetings view; opens in a new tab
+  React.useEffect(() => {
+    if (!clients.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const clientId = params.get("clientId");
+    const taskTab  = params.get("taskTab");
+    const taskId   = params.get("taskId");
+    if (!clientId) return;
+    const client = clients.find(c => String(c.id) === String(clientId));
+    if (!client) return;
+    if (taskTab) setDeepLinkTaskTab(taskTab);
+    if (taskId)  setDeepLinkTaskId(taskId);
+    setModal(client);
+    // Clean the URL so refreshing doesn't re-open the modal
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [clients]);
 
 
   // Called after a standard task template is saved — re-syncs all clients immediately
@@ -9777,8 +9589,15 @@ useEffect(() => {
             .filter(c => c._days !== null && c._days >= 0 && c._days <= 120)
             .sort((a,b) => a._days - b._days);
           const myUpcoming30 = myUpcoming.filter(c => c._days <= 30);
+          const myRecentlyRenewed = myClients
+            .map(c => ({ ...c, _days: daysUntil(c.renewalDate) }))
+            .filter(c => c._days !== null && c._days < 0 && c._days >= -60)
+            .sort((a,b) => b._days - a._days); // most recent first
 
-          const myAllTasks = myClients.flatMap(c =>
+          const myAllTasks = myClients.filter(c => {
+            const days = daysUntil(c.renewalDate);
+            return days === null || (days >= 0 && days <= 90) || days < 0;
+          }).flatMap(c =>
             collectOpenTasks(c, null, tasksData).map(t => ({ ...t, clientId:c.id, clientName:c.name, clientObj:c }))
           );
           const myTasks = isLead ? myAllTasks : myAllTasks.filter(t => (t.assignee||"") === currentUser.name);
@@ -10037,9 +9856,10 @@ useEffect(() => {
 
               {/* Stat tiles */}
               {isLead && (
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:20}}>
                   <StatTile label="Renewing in 30 days" value={myUpcoming30.length} type="danger" onClick={() => changeView("renewals")} />
                   <StatTile label="Renewing in 120 days" value={myUpcoming.length} type="warning" onClick={() => changeView("renewals")} />
+                  <StatTile label="Renewed last 60 days" value={myRecentlyRenewed.length} type="default" onClick={() => navToTasks({window:"recently_renewed"})} />
                   <StatTile label="Open tasks" value={myAllTasks.length} type="info" onClick={() => navToTasks({})} />
                   <StatTile label="Completed this week" value={completedThisWeek} type="success" onClick={() => navToTasks({window:"completed_week"})} />
                 </div>
@@ -10682,7 +10502,7 @@ useEffect(() => {
 
       {modal && (() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
-        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} transactionTypesLibrary={transactionTypesLibrary} />;
+        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => { setModal(null); setDeepLinkTaskTab(null); setDeepLinkTaskId(null); }} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} transactionTypesLibrary={transactionTypesLibrary} initialTaskTab={deepLinkTaskTab} initialTaskId={deepLinkTaskId} />;
       })()}
 
       {/* Team Edit/Add Modal */}
@@ -13483,7 +13303,8 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
 function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, marketsLibrary, fundingLibrary, onBack }) {
-  const isRestricted = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (userTeams||[]).length > 0;
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const isRestricted = currentUser && !isLead && (userTeams||[]).length > 0;
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -13495,10 +13316,10 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const [ovSitus,    setOvSitus]    = useState("All");
   const [ovFunding,  setOvFunding]  = useState("All");
   const [ovCat,      setOvCat]      = useState("All");
-  const [ovAssignee, setOvAssignee] = useState(dashNav?.assignee || "All");
+  const [ovAssignee, setOvAssignee] = useState(dashNav?.assignee || (!isLead && currentUser?.name ? currentUser.name : "All"));
   const [ovStatus,   setOvStatus]   = useState("All");
   const [ovSort,     setOvSort]     = useState("renewal");
-  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "all");   // "all" | "30" | "60" | "90" | "120" | "overdue" | "completed_week"
+  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "90");
   const [expanded,   setExpanded]   = useState({});
   function toggleExpand(id) { setExpanded(p => ({ ...p, [id]: !p[id] })); }
 
@@ -13527,6 +13348,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         // Window filter (skip for completed_week mode)
         if (ovWindow !== "completed_week") {
           if (ovWindow === "overdue") { if (_days === null || _days >= 0) return null; }
+          else if (ovWindow === "recently_renewed") { if (_days === null || _days >= 0 || _days < -60) return null; }
           else if (ovWindow !== "all") {
             const n = Number(ovWindow);
             if (_days === null || _days < 0 || _days > n) return null;
@@ -13545,20 +13367,41 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         const isCompletedWeekMode = ovWindow === "completed_week";
         let tasks;
         if (isCompletedWeekMode) {
-          // Collect ALL tasks (including completed) and filter for completed this week
-          const allT = [];
-          const addT = t => { if (t && typeof t === "object") allT.push(t); };
-          PRERENEWAL_TASKS.forEach(def => { if (!(def.acaOnly && c.marketSize !== "ACA")) addT(c.preRenewal?.[def.id]); });
-          addT(c.renewalMeeting);
-          Object.values(c.renewalTasksAuto || {}).forEach(addT);
-          (c.renewalTasks || []).forEach(addT);
-          Object.values(c.compliance || {}).forEach(addT);
-          Object.values(c.postOEFixed || {}).forEach(addT);
-          (c.postOETasks || []).forEach(addT);
-          (c.miscTasks || []).forEach(addT);
-          (c.transactions || []).forEach(addT);
+          // Use collectOpenTasks but with a modified version that includes completed tasks
+          // We collect all task groups with labels, then filter to completed this week
           const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7); weekAgo.setHours(0,0,0,0);
-          tasks = allT.filter(t => t.status === "Complete" && t.completedDate && new Date(t.completedDate + "T12:00:00") >= weekAgo);
+          const allLabeled = [];
+          const pushAll = (label, category, raw, group, taskId, arrayIndex) => {
+            if (!raw || typeof raw !== "object") return;
+            const t = { status: "Not Started", assignee: "", dueDate: "", ...raw };
+            allLabeled.push({ label, category, group, taskId, arrayIndex, ...t });
+          };
+          PRERENEWAL_TASKS.forEach(def => {
+            if (def.acaOnly && c.marketSize !== "ACA") return;
+            pushAll(getLabelForTask(def.id, tasksDb, def.label), "Pre-Renewal", c.preRenewal?.[def.id], "preRenewal", def.id);
+          });
+          pushAll("Schedule Renewal Meeting", "Renewal", c.renewalMeeting, "renewalMeeting", "renewalMeeting");
+          Object.entries(c.renewalTasksAuto || {}).forEach(([key, t]) => {
+            const autoLabel = t.title || (key.startsWith("bps_") ? "Prepare and Submit BPS — " + key.replace("bps_","") : key.startsWith("pcr_") ? "Submit Plan Change Request — " + key.replace("pcr_","") : key.startsWith("ncp_") ? "New Carrier Paperwork — " + key.replace("ncp_","") : key.startsWith("tl_") ? "Termination Letter — " + key.replace("tl_","") : key === "bpa_medical" ? "Prepare and Submit BPA — Medical" : key);
+            pushAll(autoLabel, "Renewal", t, "renewalTasksAuto", key);
+          });
+          (c.renewalTasks || []).forEach((t, i) => pushAll(t.title || "Unnamed", "Renewal", t, "renewalTasks", null, i));
+          COMPLIANCE_TASKS.forEach(def => pushAll(getLabelForTask(def.id, tasksDb, def.label), "Compliance", c.compliance?.[def.id], "compliance", def.id));
+          [
+            { id: "elections_received",   label: "Elections Received?" },
+            { id: "oe_changes_processed", label: "OE Changes Processed?" },
+            { id: "new_carrier_census",   label: "New Carrier Submission Census Created?" },
+            { id: "carrier_bill_audited", label: "Carrier Bill Audited?" },
+            { id: "lineup_updated",       label: "Lineup Updated?" },
+            { id: "oe_wrapup_email",      label: "OE Wrap-Up Email Sent?" },
+          ].forEach(def => pushAll(def.label, "Post-OE", (c.postOEFixed || {})[def.id], "postOEFixed", def.id));
+          (c.postOETasks || []).forEach((t, i) => pushAll(t.title || "Unnamed", "Post-OE", t, "postOETasks", null, i));
+          (c.miscTasks || []).forEach((t, i) => pushAll(t.title || "Unnamed", "Miscellaneous", t, "miscTasks", null, i));
+          (c.transactions || []).forEach((t, i) => {
+            const title = t.memberName && t.changeType ? `${t.memberName} – ${t.changeType}` : t.memberName || t.changeType || t.label || "Unnamed Transaction";
+            pushAll(title, "Transactions", t, "transactions", null, i);
+          });
+          tasks = allLabeled.filter(t => t.status === "Complete" && t.completedDate && new Date(t.completedDate + "T12:00:00") >= weekAgo);
         } else {
           tasks = collectOpenTasks(c, ovCat !== "All" ? ovCat : null, tasksDb);
         }
@@ -13594,17 +13437,21 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
     "In Progress":  { bg: "#fef9c3", text: "#854d0e" },
   };
 
-  const activeFilters = [ovTeam,ovMarket,ovCarrier,ovSitus,ovFunding,ovCat,ovAssignee,ovStatus]
-    .filter(v => v !== "All").length + (ovWindow !== "all" ? 1 : 0);
+  const defaultAssignee = !isLead && currentUser?.name ? currentUser.name : "All";
+  const activeFilters = [ovTeam,ovMarket,ovCarrier,ovSitus,ovFunding,ovCat,ovStatus]
+    .filter(v => v !== "All").length
+    + (ovAssignee !== defaultAssignee ? 1 : 0)
+    + (ovWindow !== "90" ? 1 : 0);
 
   const windowOptions = [
-    { v: "all",            label: "All Clients" },
-    { v: "overdue",        label: "Overdue Only" },
-    { v: "30",             label: "Next 30 Days" },
-    { v: "60",             label: "Next 60 Days" },
-    { v: "90",             label: "Next 90 Days" },
-    { v: "120",            label: "Next 120 Days" },
-    { v: "completed_week", label: "✅ Completed This Week" },
+    { v: "all",              label: "All Clients" },
+    { v: "overdue",          label: "🚨 Overdue Only" },
+    { v: "recently_renewed", label: "Last 60 Days" },
+    { v: "30",               label: "Next 30 Days" },
+    { v: "60",               label: "Next 60 Days" },
+    { v: "90",               label: "Next 90 Days" },
+    { v: "120",              label: "Next 120 Days" },
+    { v: "completed_week",   label: "✅ Completed This Week" },
   ];
 
   return (
@@ -13624,7 +13471,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             {activeFilters > 0 && (
               <button onClick={() => {
                 setOvTeam(isRestricted ? userTeamId : "All"); setOvMarket("All"); setOvCarrier("All"); setOvSitus("All");
-                setOvFunding("All"); setOvCat("All"); setOvAssignee("All"); setOvStatus("All"); setOvWindow("all");
+                setOvFunding("All"); setOvCat("All"); setOvAssignee(!isLead && currentUser?.name ? currentUser.name : "All"); setOvStatus("All"); setOvWindow("90");
               }} style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
                 background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
                 Clear {activeFilters} filter{activeFilters > 1 ? "s" : ""}
@@ -13654,17 +13501,45 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         </div>
       </div>
 
+      {/* My Tasks / All Tasks toggle */}
+      {currentUser?.name && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase" }}>View:</span>
+          {[
+            { v: currentUser.name, label: "👤 My Tasks" },
+            { v: "All",            label: "🌐 All Tasks" },
+          ].map(({ v, label }) => (
+            <button key={v} type="button" onClick={() => setOvAssignee(v)} style={{
+              padding: "4px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+              border: `1.5px solid ${ovAssignee === v ? "#6366f1" : "#e2e8f0"}`,
+              background: ovAssignee === v ? "#eef2ff" : "#fff",
+              color: ovAssignee === v ? "#4338ca" : "#64748b",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>{label}</button>
+          ))}
+        </div>
+      )}
+
       {/* Window filter pills */}
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-        {windowOptions.map(({ v, label }) => (
-          <button key={v} type="button" onClick={() => setOvWindow(v)} style={{
-            padding: "4px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-            border: `1.5px solid ${ovWindow === v ? (v === "overdue" ? "#fca5a5" : "#4a7fa5") : "#e2e8f0"}`,
-            background: ovWindow === v ? (v === "overdue" ? "#fee2e2" : "#dce8f0") : "#fff",
-            color: ovWindow === v ? (v === "overdue" ? "#991b1b" : "#2d4a6b") : "#64748b",
-            cursor: "pointer", fontFamily: "inherit",
-          }}>{label}</button>
-        ))}
+        {windowOptions.map(({ v, label }) => {
+          const active = ovWindow === v;
+          const pillTheme = {
+            overdue:          { border: "#fca5a5", bg: "#fee2e2", color: "#991b1b" },
+            recently_renewed: { border: "#99d4cf", bg: "#e0f5f3", color: "#0f766e" },
+            completed_week:   { border: "#86efac", bg: "#f0fdf4", color: "#15803d" },
+          };
+          const theme = active ? (pillTheme[v] || { border: "#4a7fa5", bg: "#dce8f0", color: "#2d4a6b" }) : { border: "#e2e8f0", bg: "#fff", color: "#64748b" };
+          return (
+            <button key={v} type="button" onClick={() => setOvWindow(v)} style={{
+              padding: "4px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+              border: `1.5px solid ${theme.border}`,
+              background: theme.bg,
+              color: theme.color,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>{label}</button>
+          );
+        })}
       </div>
       </div>
 
@@ -13871,7 +13746,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             const team = TEAMS[c.team];
             const badge = renewalBadge(c.renewalDate);
             const isOverdue = c._days !== null && c._days < 0;
-            const isOpen = expanded[c.id] !== false; // default expanded
+            const isOpen = expanded[c.id] === true; // collapsed by default
             const byCategory = {};
             c._openTasks.forEach(t => {
               if (!byCategory[t.category]) byCategory[t.category] = [];
