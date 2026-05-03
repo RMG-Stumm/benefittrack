@@ -220,7 +220,7 @@ function stripNumeric(formatted) {
 }
 
 // Reusable currency input — displays formatted, stores raw
-function CurrencyInput({ value, onChange, placeholder, style, prefix = "$" }) {
+function CurrencyInput({ value, onChange, placeholder, style, prefix = "$", decimals = 2 }) {
   const [focused, setFocused] = React.useState(false);
   const [raw, setRaw] = React.useState(value != null && value !== "" ? String(value) : "");
 
@@ -234,7 +234,7 @@ function CurrencyInput({ value, onChange, placeholder, style, prefix = "$" }) {
   const displayValue = focused
     ? raw
     : raw && !isNaN(parseFloat(raw))
-      ? parseFloat(raw).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      ? parseFloat(raw).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
       : raw;
 
   return (
@@ -255,7 +255,7 @@ function CurrencyInput({ value, onChange, placeholder, style, prefix = "$" }) {
           setFocused(false);
           const n = parseFloat(raw);
           if (!isNaN(n)) {
-            const fixed = n.toFixed(2);
+            const fixed = n.toFixed(decimals);
             setRaw(fixed);
             onChange(fixed);
           } else if (raw === "") {
@@ -397,11 +397,12 @@ const BENEFITS_SCHEMA = [
 ];
 
 const COMPLIANCE_TASKS = [
-  { id: "aca_filing",  label: "ACA Filing",                   dueFn: "aca" },
-  { id: "rxdc",        label: "RxDC Filing",                  dueFn: "rxdc" },
-  { id: "medicare_d",  label: "Medicare Part D Disclosure",   dueFn: "medicare" },
-  { id: "pcori",       label: "PCORI Filing",                 dueFn: "pcori" },
-  { id: "form5500",    label: "5500 Filing",                  dueFn: "form5500" },
+  { id: "aca_filing",  label: "ACA Filing",                      dueFn: "aca" },
+  { id: "rxdc",        label: "RxDC Filing",                     dueFn: "rxdc" },
+  { id: "medicare_d",  label: "Medicare Part D Disclosure",      dueFn: "medicare" },
+  { id: "pcori",       label: "PCORI Filing",                    dueFn: "pcori" },
+  { id: "form5500",    label: "5500 Filing",                     dueFn: "form5500" },
+  { id: "gag_clause",  label: "Gag Clause Attestation",          dueFn: "gag_clause" },
 ];
 
 const PRERENEWAL_TASKS = [
@@ -782,7 +783,10 @@ function complianceDueDates(renewalDate) {
   form5500Date.setMonth(form5500Date.getMonth() + 7);
   const form5500 = prevBizDay(fmt(new Date(form5500Date.getFullYear(), form5500Date.getMonth() + 1, 0)));
 
-  return { aca, rxdc, medicare, pcori, form5500 };
+  // Gag Clause Attestation: December 31 of the plan year
+  const gag_clause = nextBizDay(fmt(new Date(planYear, 11, 31)));
+
+  return { aca, rxdc, medicare, pcori, form5500, gag_clause };
 }
 
 function newClient(tasksDb) {
@@ -1182,7 +1186,7 @@ function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove 
   );
 }
 
-function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary }) {
+function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, transactionTypesLibrary }) {
   // Derive sorted label arrays from libraries (fall back to hardcoded defaults if library empty)
   const marketOptions   = (marketsLibrary||[]).length  ? [...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
   const fundingOptions  = (fundingLibrary||[]).length  ? [...(fundingLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : FUNDING_METHODS;
@@ -1314,7 +1318,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
       // Recalculate compliance due dates
       const newCompDates = complianceDueDates(newRenewalDate);
-      const dueFnMap = { aca_filing:"aca", rxdc:"rxdc", medicare_d:"medicare", pcori:"pcori", form5500:"form5500" };
+      const dueFnMap = { aca_filing:"aca", rxdc:"rxdc", medicare_d:"medicare", pcori:"pcori", form5500:"form5500", gag_clause:"gag_clause" };
       const newCompliance = {};
       Object.entries(data.compliance || {}).forEach(([taskId, existing]) => {
         const base = (typeof existing === "object" && existing)
@@ -1599,7 +1603,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   function autoFillDueDates() {
     if (!data.renewalDate) return;
     const dates = complianceDueDates(data.renewalDate);
-    const dueFnMap = { aca_filing:"aca", rxdc:"rxdc", medicare_d:"medicare", pcori:"pcori", form5500:"form5500" };
+    const dueFnMap = { aca_filing:"aca", rxdc:"rxdc", medicare_d:"medicare", pcori:"pcori", form5500:"form5500", gag_clause:"gag_clause" };
     setData(p => {
       const newCompliance = { ...p.compliance };
       Object.entries(dueFnMap).forEach(([taskId, key]) => {
@@ -3347,8 +3351,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           {(() => {
                             const TIERS_E = ["ee","es","ec","ff"];
                             const plansForCat = (data.benefitPlans || {})[cat.id] || [];
-                            const sumFromPlans = plansForCat.reduce((sum, pl) =>
-                              sum + TIERS_E.reduce((s, k) => s + (parseInt((pl.enrolled || {})[k]) || 0), 0), 0);
+                            const isUnitRateE  = ["basic_life","std","ltd"].includes(cat.id);
+                            const isAgeBandedE = cat.id === "worksite_ci" || cat.id === "vol_life";
+                            const sumFromPlans = plansForCat.reduce((sum, pl) => {
+                              if (isUnitRateE)  return sum + (parseInt(pl.enrolled) || 0);
+                              if (isAgeBandedE) return sum + (pl.ageBands || []).reduce((s, b) => s + (parseInt(b.enrolled) || 0), 0);
+                              return sum + TIERS_E.reduce((s, k) => s + (parseInt((pl.enrolled || {})[k]) || 0), 0);
+                            }, 0);
                             const legacyVal = (data.benefitEnrolled || {})[cat.id] || "";
                             if (sumFromPlans > 0) {
                               return (
@@ -3383,15 +3392,63 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       {(() => {
                         const plans = (data.benefitPlans || {})[cat.id] || [];
                         const isBCBSIL = currentCarrier === "BCBSIL" || currentCarrier === "BCBS ?";
-                        // Benefits that get rate/PEPM + enrollment tier rows
-                        const needsRates = ["medical","dental","vision","worksite"].includes(cat.id)
+
+                        // ── Rate mode classification ──────────────────────────────
+                        // tiered-composite: rate × enrolled per coverage tier
+                        const isTiered = ["medical","dental","vision","worksite_accident","worksite_hospital","identity_theft"].includes(cat.id)
                           || cat.id.startsWith("medical_");
-                        const TIERS = [
-                          { key: "ee", label: "EE" },
+                        // unit-rate: rate per $unit × total volume
+                        const isUnitRate = ["basic_life","std","ltd"].includes(cat.id);
+                        // age-banded: rate per $1,000 per age band
+                        const isAgeBanded = cat.id === "worksite_ci" || cat.id === "vol_life";
+                        // legacy worksite catch-all (cancer stays as-is for now)
+                        const needsRates = isTiered || isUnitRate || isAgeBanded
+                          || (cat.id === "worksite" && !isAgeBanded);
+
+                        // ── Unit-rate config per benefit ──────────────────────────
+                        const UNIT_CONFIG = {
+                          basic_life: { unitSize: 1000, unitLabel: "per $1,000",  volumeLabel: "Total Insured Volume ($)", maxLabel: "Max Benefit ($)" },
+                          std:        { unitSize: 10,   unitLabel: "per $10",     volumeLabel: "Total Weekly Benefit Vol ($)", maxLabel: "Max Weekly Benefit ($)" },
+                          ltd:        { unitSize: 100,  unitLabel: "per $100",    volumeLabel: "Total Monthly Covered Payroll ($)", maxLabel: "Max Monthly Benefit ($)" },
+                        };
+                        const unitCfg = UNIT_CONFIG[cat.id] || null;
+
+                        // ── Tier mode (tiered-composite only) ────────────────────
+                        const DEFAULT_TIER_MODE = {
+                          medical: "4tier", dental: "4tier", vision: "4tier",
+                          worksite_accident: "4tier", worksite_hospital: "4tier",
+                          identity_theft: "2tier",
+                        };
+                        const rawTierMode = (data.benefitTierMode || {})[cat.id]
+                          || (cat.id.startsWith("medical_") ? "4tier" : DEFAULT_TIER_MODE[cat.id] || "4tier");
+                        const setTierMode = (mode) => setData(p => ({
+                          ...p, benefitTierMode: { ...(p.benefitTierMode || {}), [cat.id]: mode },
+                        }));
+                        const ALL_TIERS_4 = [
+                          { key: "ee", label: "EE Only" },
                           { key: "es", label: "EE + Spouse" },
                           { key: "ec", label: "EE + Child(ren)" },
                           { key: "ff", label: "Family" },
                         ];
+                        const ALL_TIERS_3 = [
+                          { key: "ee", label: "EE Only" },
+                          { key: "es", label: "EE + 1" },
+                          { key: "ff", label: "Family" },
+                        ];
+                        const ALL_TIERS_2 = [
+                          { key: "ee", label: "EE Only" },
+                          { key: "ff", label: "Family" },
+                        ];
+                        const TIERS = rawTierMode === "2tier" ? ALL_TIERS_2
+                          : rawTierMode === "3tier" ? ALL_TIERS_3
+                          : ALL_TIERS_4;
+
+                        // ── Age band config ───────────────────────────────────────
+                        const AGE_BANDS = ["<25","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70+"];
+                        const CI_BANDS  = AGE_BANDS; // same bands for CI
+                        const CI_FACE   = 10000; // $10,000 per participant (CI only)
+
+                        // ── Plan helpers ──────────────────────────────────────────
                         const setPlans = (newPlans) => setData(p => ({
                           ...p,
                           benefitPlans: { ...(p.benefitPlans || {}), [cat.id]: newPlans },
@@ -3439,10 +3496,16 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 placeholder="0"
                                 onChange={e => {
                                   const n = parseInt(e.target.value.replace(/\D/g,"")) || 0;
-                                  const blank = () => ({ id: generateId(), name: "", type: "", groupNumber: "", carrierPlanNumber: "",
-                                    rates: { ee: "", es: "", ec: "", ff: "" },
-                                    enrolled: { ee: "", es: "", ec: "", ff: "" },
-                                    eligibleClasses: [] });
+                                  const blank = () => {
+                                    const base = { id: generateId(), name: "", type: "", groupNumber: "", carrierPlanNumber: "", eligibleClasses: [] };
+                                    if (isUnitRate) return { ...base, unitRate: "", volume: "", maxBenefit: "", enrolled: "" };
+                                    if (isAgeBanded) return { ...base, ageBands: AGE_BANDS.map(b => ({
+                                      band: b, rate: "", enrolled: "",
+                                      // vol_life uses volume per band; CI derives it from enrolled × $10K
+                                      ...(cat.id === "vol_life" ? { volume: "" } : {}),
+                                    })) };
+                                    return { ...base, rates: { ee: "", es: "", ec: "", ff: "" }, enrolled: { ee: "", es: "", ec: "", ff: "" } };
+                                  };
                                   if (n > plans.length) {
                                     setPlans([...plans, ...Array(n - plans.length).fill(null).map(blank)]);
                                   } else if (n < plans.length) {
@@ -3460,6 +3523,28 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 </span>
                               )}
                             </div>
+
+                            {/* Tier mode picker — tiered-composite benefits only */}
+                            {isTiered && plans.length > 0 && (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                                <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase" }}>
+                                  Coverage Tiers
+                                </span>
+                                {[
+                                  { key: "4tier", label: "4-Tier (EE / Spouse / Child / Family)" },
+                                  { key: "3tier", label: "3-Tier (EE / EE+1 / Family)" },
+                                  { key: "2tier", label: "2-Tier (EE / Family)" },
+                                ].map(opt => (
+                                  <button key={opt.key} type="button" onClick={() => setTierMode(opt.key)} style={{
+                                    fontSize: 11, fontWeight: rawTierMode === opt.key ? 700 : 500,
+                                    padding: "3px 10px", borderRadius: 7, cursor: "pointer",
+                                    fontFamily: "inherit", border: `1.5px solid ${rawTierMode === opt.key ? "#3b82f6" : "#e2e8f0"}`,
+                                    background: rawTierMode === opt.key ? "#eff6ff" : "#fff",
+                                    color: rawTierMode === opt.key ? "#1d4ed8" : "#64748b",
+                                  }}>{opt.label}</button>
+                                ))}
+                              </div>
+                            )}
 
                             {plans.map((pl, idx) => (
                               <div key={idx} style={{ background: "#fff", borderRadius: 8,
@@ -3524,10 +3609,179 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                       cursor: "pointer", fontFamily: "inherit", alignSelf: "end" }}>✕</button>
                                 </div>
 
-                                {/* Per-plan rate + enrollment tiers */}
+                                {/* Per-plan rate grid — branches by rate mode */}
                                 {needsRates && (
                                   <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 8, marginTop: 4 }}>
-                                    {/* Column headers — same grid as plan header above */}
+
+                                  {/* ── UNIT-RATE (Life, STD, LTD) ── */}
+                                  {isUnitRate && unitCfg && (() => {
+                                    const unitRate = parseFloat(pl.unitRate) || 0;
+                                    const volume   = parseFloat(pl.volume)   || 0;
+                                    const monthly  = cat.id === "std"
+                                      ? volume * unitRate / unitCfg.unitSize
+                                      : volume * unitRate / unitCfg.unitSize;
+                                    const annual   = monthly * 12;
+                                    const fmt = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    return (
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+                                          <label style={{ ...labelStyle, fontSize: 11 }}>
+                                            Rate ({unitCfg.unitLabel})
+                                            <CurrencyInput value={pl.unitRate || ""}
+                                              onChange={v => updatePlan(idx, "unitRate", v)}
+                                              placeholder="0.000"
+                                              decimals={3}
+                                              style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                                          </label>
+                                          <label style={{ ...labelStyle, fontSize: 11 }}>
+                                            {unitCfg.volumeLabel}
+                                            <CurrencyInput value={pl.volume || ""}
+                                              onChange={v => updatePlan(idx, "volume", v)}
+                                              placeholder="0"
+                                              style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                                          </label>
+                                          <label style={{ ...labelStyle, fontSize: 11 }}>
+                                            {unitCfg.maxLabel}
+                                            <CurrencyInput value={pl.maxBenefit || ""}
+                                              onChange={v => updatePlan(idx, "maxBenefit", v)}
+                                              placeholder="0"
+                                              style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                                          </label>
+                                          <label style={{ ...labelStyle, fontSize: 11 }}>
+                                            # Enrolled
+                                            <IntegerInput value={pl.enrolled || ""}
+                                              onChange={v => updatePlan(idx, "enrolled", v)}
+                                              placeholder="0"
+                                              style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                                          </label>
+                                        </div>
+                                        {(unitRate > 0 && volume > 0) && (
+                                          <div style={{ display: "flex", gap: 12, background: "#f0fdf4",
+                                            border: "1.5px solid #86efac", borderRadius: 7, padding: "8px 12px",
+                                            alignItems: "center" }}>
+                                            <div style={{ fontSize: 11, color: "#166534" }}>
+                                              {fmt(volume)} ÷ {unitCfg.unitSize} × {fmt(unitRate)} / {unitCfg.unitLabel.replace("per ","")}
+                                            </div>
+                                            <div style={{ marginLeft: "auto", display: "flex", gap: 16 }}>
+                                              <div style={{ textAlign: "right" }}>
+                                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Monthly</div>
+                                                <div style={{ fontSize: 14, fontWeight: 800, color: "#166534" }}>{fmt(monthly)}</div>
+                                              </div>
+                                              <div style={{ textAlign: "right" }}>
+                                                <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", opacity: .7 }}>Annual</div>
+                                                <div style={{ fontSize: 14, fontWeight: 800, color: "#166534" }}>{fmt(annual)}</div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* ── AGE-BANDED (CI and Vol Life) ── */}
+                                  {isAgeBanded && (() => {
+                                    const isVolLife = cat.id === "vol_life";
+                                    const bands = pl.ageBands || AGE_BANDS.map(b => ({
+                                      band: b, rate: "", enrolled: "",
+                                      ...(isVolLife ? { volume: "" } : {}),
+                                    }));
+                                    const updateBand = (bi, field, val) => {
+                                      const newBands = bands.map((b, i) => i === bi ? { ...b, [field]: val } : b);
+                                      updatePlan(idx, "ageBands", newBands);
+                                    };
+                                    const totalEnrolled = bands.reduce((s, b) => s + (parseInt(b.enrolled) || 0), 0);
+                                    const totalVolume   = bands.reduce((s, b) => {
+                                      if (isVolLife) return s + (parseFloat(b.volume) || 0);
+                                      return s + ((parseInt(b.enrolled) || 0) * CI_FACE);
+                                    }, 0);
+                                    const totalMonthly  = bands.reduce((s, b) => {
+                                      const rate   = parseFloat(b.rate) || 0;
+                                      const volume = isVolLife
+                                        ? (parseFloat(b.volume) || 0)
+                                        : (parseInt(b.enrolled) || 0) * CI_FACE;
+                                      return s + (volume / 1000 * rate);
+                                    }, 0);
+                                    const fmt = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    const cols = isVolLife ? "80px 1fr 1fr 1fr 1fr" : "80px 1fr 1fr 1fr";
+                                    const headers = isVolLife
+                                      ? ["Age Band","# Enrolled","Volume ($)","Rate / $1,000","Monthly Total"]
+                                      : ["Age Band","# Enrolled","Rate / $1,000","Monthly Total"];
+                                    return (
+                                      <div>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b",
+                                          letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 6 }}>
+                                          {isVolLife ? "Age-Banded Rates — Vol Life/AD&D" : "Age-Banded Rates — $10,000 face per participant"}
+                                        </div>
+                                        <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, marginBottom: 4 }}>
+                                          {headers.map((h,i) => (
+                                            <div key={i} style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
+                                              letterSpacing: ".5px", textTransform: "uppercase",
+                                              textAlign: i === 0 ? "left" : "center" }}>{h}</div>
+                                          ))}
+                                        </div>
+                                        {bands.map((b, bi) => {
+                                          const enrolled = parseInt(b.enrolled) || 0;
+                                          const rate     = parseFloat(b.rate)   || 0;
+                                          const volume   = isVolLife
+                                            ? (parseFloat(b.volume) || 0)
+                                            : enrolled * CI_FACE;
+                                          const monthly  = volume / 1000 * rate;
+                                          return (
+                                            <div key={bi} style={{ display: "grid", gridTemplateColumns: cols,
+                                              gap: 6, marginBottom: 4, alignItems: "center" }}>
+                                              <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{b.band}</div>
+                                              <IntegerInput value={b.enrolled || ""}
+                                                onChange={v => updateBand(bi, "enrolled", v)}
+                                                placeholder="0"
+                                                style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "center" }} />
+                                              {isVolLife && (
+                                                <CurrencyInput value={b.volume || ""}
+                                                  onChange={v => updateBand(bi, "volume", v)}
+                                                  placeholder="0"
+                                                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px" }} />
+                                              )}
+                                              <CurrencyInput value={b.rate || ""}
+                                                onChange={v => updateBand(bi, "rate", v)}
+                                                placeholder="0.000"
+                                                decimals={3}
+                                                style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "right" }} />
+                                              <div style={{ fontSize: 12, fontWeight: 700, textAlign: "center",
+                                                color: monthly > 0 ? "#166534" : "#94a3b8",
+                                                background: monthly > 0 ? "#f0fdf4" : "#f8fafc",
+                                                border: `1.5px solid ${monthly > 0 ? "#86efac" : "#e2e8f0"}`,
+                                                borderRadius: 7, padding: "5px 8px" }}>
+                                                {monthly > 0 ? fmt(monthly) : "—"}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                        {(totalEnrolled > 0 || totalVolume > 0) && (
+                                          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6,
+                                            paddingTop: 6, borderTop: "1.5px solid #e2e8f0", marginTop: 3 }}>
+                                            <div style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Total</div>
+                                            <div style={{ fontSize: 12, fontWeight: 700, color: "#1e40af", textAlign: "center" }}>
+                                              {totalEnrolled > 0 ? `${totalEnrolled} enrolled` : "—"}
+                                            </div>
+                                            {isVolLife && (
+                                              <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", textAlign: "center" }}>
+                                                {totalVolume > 0 ? fmt(totalVolume) : "—"}
+                                              </div>
+                                            )}
+                                            <div />
+                                            <div style={{ fontSize: 12, fontWeight: 800, color: "#166534", textAlign: "center",
+                                              background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 7, padding: "5px 8px" }}>
+                                              {fmt(totalMonthly)} / mo
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* ── TIERED COMPOSITE (medical, dental, vision, PA, HI, ID theft) ── */}
+                                  {isTiered && (
+                                    <div>
+                                    {/* Column headers */}
                                     <div style={{ display: "grid",
                                       gridTemplateColumns: isBCBSIL ? "140px 1fr 1fr 1fr 1fr auto" : "140px 1fr 1fr 1fr auto",
                                       gap: 8, marginBottom: 6 }}>
@@ -3539,7 +3793,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                           visibility: i === (isBCBSIL ? 5 : 4) ? "hidden" : "visible" }}>{h}</div>
                                       ))}
                                     </div>
-                                    {/* One row per tier — same grid */}
+                                    {/* One row per active tier */}
                                     {TIERS.map(({ key, label }) => {
                                       const rate = Number((pl.rates || {})[key]) || 0;
                                       const enrolled = Number((pl.enrolled || {})[key]) || 0;
@@ -3549,19 +3803,16 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                           gridTemplateColumns: isBCBSIL ? "140px 1fr 1fr 1fr 1fr auto" : "140px 1fr 1fr 1fr auto",
                                           gap: 8, marginBottom: 5, alignItems: "center" }}>
                                           <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</div>
-                                          {/* # Enrolled */}
                                           <IntegerInput
                                             value={(pl.enrolled || {})[key] || ""}
                                             onChange={v => updatePlanEnrolled(idx, key, v)}
                                             placeholder="0"
                                             style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", textAlign: "center", width: "100%" }} />
-                                          {/* Rate / PEPM */}
                                           <CurrencyInput
                                             value={(pl.rates || {})[key] || ""}
                                             onChange={v => updatePlanRate(idx, key, v)}
                                             placeholder="0.00"
                                             style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px", flex: 1, textAlign: "right" }} />
-                                          {/* Monthly Total */}
                                           <div style={{ fontSize: 12, fontWeight: 700,
                                             color: monthlyTotal > 0 ? "#166534" : "#94a3b8",
                                             textAlign: "center",
@@ -3573,7 +3824,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                               ? "$" + monthlyTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                               : "—"}
                                           </div>
-                                          {/* Spacer for ✕ column */}
                                           {!isBCBSIL && <div />}
                                         </div>
                                       );
@@ -3602,6 +3852,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                         </div>
                                       );
                                     })()}
+                                    </div>
+                                  )}
+
                                   </div>
                                 )}
                               {/* ── Eligible Classes ── */}
@@ -3656,8 +3909,27 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
                         const TIERS_REV = ["ee","es","ec","ff"];
 
-                        // Calculate total monthly premium across all plans
+                        // Calculate total monthly premium — branches by rate mode
+                        const isUnitRateRev   = ["basic_life","std","ltd"].includes(cat.id);
+                        const isAgeBandedRev  = cat.id === "worksite_ci" || cat.id === "vol_life";
+                        const UNIT_SIZE_REV   = { basic_life: 1000, std: 10, ltd: 100 };
+
                         const totalMonthlyPremium = plans.reduce((planSum, pl) => {
+                          if (isUnitRateRev) {
+                            const unitRate = parseFloat(pl.unitRate) || 0;
+                            const volume   = parseFloat(pl.volume)   || 0;
+                            const unitSize = UNIT_SIZE_REV[cat.id] || 1000;
+                            return planSum + (volume * unitRate / unitSize);
+                          }
+                          if (isAgeBandedRev) {
+                            return planSum + (pl.ageBands || []).reduce((s, b) => {
+                              const rate   = parseFloat(b.rate) || 0;
+                              const volume = cat.id === "vol_life"
+                                ? (parseFloat(b.volume) || 0)
+                                : (parseInt(b.enrolled) || 0) * 10000;
+                              return s + (volume / 1000 * rate);
+                            }, 0);
+                          }
                           return planSum + TIERS_REV.reduce((tierSum, key) => {
                             const rate = parseFloat((pl.rates || {})[key]) || 0;
                             const enrolled = parseInt((pl.enrolled || {})[key]) || 0;
@@ -3665,9 +3937,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           }, 0);
                         }, 0);
 
-                        // Total enrolled across all plans and tiers
-                        const totalEnrolled = plans.reduce((sum, pl) =>
-                          sum + TIERS_REV.reduce((s, k) => s + (parseInt((pl.enrolled || {})[k]) || 0), 0), 0);
+                        // Total enrolled across all plans
+                        const totalEnrolled = plans.reduce((sum, pl) => {
+                          if (isUnitRateRev) return sum + (parseInt(pl.enrolled) || 0);
+                          if (isAgeBandedRev) return sum + (pl.ageBands || []).reduce((s, b) => s + (parseInt(b.enrolled) || 0), 0);
+                          return sum + TIERS_REV.reduce((s, k) => s + (parseInt((pl.enrolled || {})[k]) || 0), 0);
+                        }, 0);
 
                         // Fall back to legacy benefitEnrolled if no per-plan data
                         const legacyEnrolled = parseInt((data.benefitEnrolled || {})[cat.id]) || 0;
@@ -5655,14 +5930,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isNA ? 0 : 8 }}>
                             <input value={t.title||""} onChange={e => setData(p => {
                               const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],title:e.target.value};
-                              return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                              return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                             })} placeholder="Task name..." style={{ ...inputStyle, marginTop: 0, flex: 1, fontWeight: 600 }} />
                             <StatusSelect value={t.status||"Not Started"} onChange={v => setData(p => {
                               const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],status:v};
-                              return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                              return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                             })} />
                             <button type="button" onClick={() => setData(p => ({
-                              ...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:(p.openEnrollment?.tasks?.__extra||[]).filter((_,i)=>i!==idx)}}
+                              ...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:(p.openEnrollment?.tasks?.__extra||[]).filter((_,i)=>i!==idx)}}
                             }))} style={{ background:"#fee2e2",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:12,color:"#991b1b",fontWeight:700 }}>✕</button>
                           </div>
                           {!isNA && (
@@ -5671,7 +5946,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <label style={{ ...labelStyle, marginTop: 0 }}>Assignee
                                 <select value={t.assignee||""} onChange={e => setData(p => {
                                   const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],assignee:e.target.value};
-                                  return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                  return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} style={{ ...inputStyle, marginTop: 3 }}>
                                   <option value="">— Unassigned —</option>
                                   {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
@@ -5680,19 +5955,19 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
                                 <input type="date" value={t.dueDate||""} onChange={e => setData(p => {
                                   const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
-                                  return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                  return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
                                 <input type="date" value={t.completedDate||""} onChange={e => {
                                   const val=e.target.value;
-                                  setData(p => { const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}}; });
+                                  setData(p => { const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}}; });
                                 }} style={{ ...inputStyle, marginTop: 3, background:t.completedDate?"#f0fdf4":"#fff", borderColor:t.completedDate?"#86efac":undefined }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Notes
                                 <input type="text" value={t.notes||""} onChange={e => setData(p => {
                                   const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],notes:e.target.value};
-                                  return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                  return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                             </div>
@@ -5702,22 +5977,22 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               onAdd={() => setData(p => {
                                 const ex=[...(p.openEnrollment?.tasks?.__extra||[])];
                                 ex[idx]={...ex[idx],followUps:[...(ex[idx].followUps||[]),{id:Date.now(),date:new Date().toISOString().split("T")[0],note:""}]};
-                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                               })}
                               onChangeDate={(fi, v) => setData(p => {
                                 const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
                                 fus[fi]={...fus[fi],date:v}; ex[idx]={...ex[idx],followUps:fus};
-                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                               })}
                               onChangeNote={(fi, v) => setData(p => {
                                 const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; const fus=[...(ex[idx].followUps||[])];
                                 fus[fi]={...fus[fi],note:v}; ex[idx]={...ex[idx],followUps:fus};
-                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                               })}
                               onRemove={(fi) => setData(p => {
                                 const ex=[...(p.openEnrollment?.tasks?.__extra||[])];
                                 ex[idx]={...ex[idx],followUps:(ex[idx].followUps||[]).filter((_,i)=>i!==fi)};
-                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...p.openEnrollment.tasks,__extra:ex}}};
+                                return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                               })}
                             />
                             </>
@@ -5728,13 +6003,29 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                   </div>
                 </div>
               )}
-              <button type="button" onClick={() => setData(p => ({
-                ...p, openEnrollment: { ...p.openEnrollment, tasks: { ...p.openEnrollment.tasks, __extra: [...(p.openEnrollment?.tasks?.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } }
-              }))} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                border: "1.5px dashed #93c5fd", background: "#dce8f2", color: "#3e5878",
-                cursor: "pointer", fontFamily: "inherit", width: "100%", marginTop: 8 }}>
-                + Add OE Task
-              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <select onChange={e => {
+                  const label = e.target.value; if (!label) return;
+                  setData(p => {
+                    const oe = p.openEnrollment || {};
+                    const tasks = oe.tasks || {};
+                    return { ...p, openEnrollment: { ...oe, tasks: { ...tasks, __extra: [...(tasks.__extra||[]), { title: label, status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } } };
+                  });
+                  e.target.value = "";
+                }} style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1.5px dashed #507c9c", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit" }}>
+                  <option value="">📋 Pick from library…</option>
+                  {(tasksDb||[]).filter(t => t.category === "Open Enrollment").map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  <option value="" disabled>──────────</option>
+                  <option value="__custom__">+ Custom task</option>
+                </select>
+                <button type="button" onClick={() => setData(p => {
+                  const oe = p.openEnrollment || {};
+                  const tasks = oe.tasks || {};
+                  return { ...p, openEnrollment: { ...oe, tasks: { ...tasks, __extra: [...(tasks.__extra||[]), { title:"", status:"Not Started", assignee:"", dueDate:"", completedDate:"", followUps:[] }] } } };
+                })} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1.5px dashed #507c9c", background: "#dce8f2", color: "#3e5878", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  + Blank
+                </button>
+              </div>
             </div>
 
           </div>)} {/* end oe tab */}
@@ -6645,7 +6936,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,changeType:e.target.value,label:[t.memberName,e.target.value].filter(Boolean).join(' – ')}:t) }))}
                         style={{ ...inputStyle, marginTop: 3 }}>
                         <option value="">— Select —</option>
-                        {["New Enrollment","Termination","Qualifying Event","Dependent Add","Dependent Remove","Address Change","Plan Change","Beneficiary Change","COBRA","Other"].map(o=><option key={o}>{o}</option>)}
+                        {([...(transactionTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)).map(o=><option key={o}>{o}</option>)}
                       </select>
                     </label>
                     <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -8196,6 +8487,15 @@ function applyDataFixes(c) {
 
   fixed.compliance = comp;
 
+  // Backfill gag_clause for existing clients that predate its addition
+  if (!fixed.compliance.gag_clause) {
+    const dates = complianceDueDates(fixed.renewalDate);
+    fixed.compliance = {
+      ...fixed.compliance,
+      gag_clause: { status: "Not Started", assignee: "", dueDate: dates.gag_clause || "", completedDate: "" },
+    };
+  }
+
   // Medicare Part D: recalculate due date if stored date is in the past
   // (Oct 15 before the plan year starts — should always be in the future or current year)
   try {
@@ -8347,8 +8647,9 @@ const DEFAULT_TASKS_DATA = [
   { id: "t_aca_filing",  label: "ACA Filing",                category: "Compliance",    markets: ["ACA","Mid-Market","Large"], defaultAssignee: "",    dueDateRule: "aca",      order: 10 },
   { id: "t_rxdc",        label: "RxDC Filing",               category: "Compliance",    markets: ["ACA","Mid-Market","Large"], defaultAssignee: "",    dueDateRule: "rxdc",     order: 20 },
   { id: "t_medicare_d",  label: "Medicare Part D Disclosure", category: "Compliance",   markets: ["ACA","Mid-Market","Large"], defaultAssignee: "",    dueDateRule: "medicare", order: 30 },
-  { id: "t_pcori",       label: "PCORI Filing",              category: "Compliance",    markets: ["Mid-Market","Large"],      defaultAssignee: "",    dueDateRule: "pcori",    order: 40 },
-  { id: "t_form5500",    label: "5500 Filing",               category: "Compliance",    markets: ["ACA","Mid-Market","Large"], defaultAssignee: "",    dueDateRule: "form5500", order: 50 },
+  { id: "t_pcori",       label: "PCORI Filing",              category: "Compliance",    markets: ["Mid-Market","Large"],      defaultAssignee: "",    dueDateRule: "pcori",     order: 40 },
+  { id: "t_form5500",    label: "5500 Filing",               category: "Compliance",    markets: ["ACA","Mid-Market","Large"], defaultAssignee: "",    dueDateRule: "form5500",  order: 50 },
+  { id: "t_gag_clause",  label: "Gag Clause Attestation",    category: "Compliance",    markets: [],                          defaultAssignee: "",    dueDateRule: "gag_clause", order: 60, notes: "Applies to all group health plans. Carrier handling varies — verify submission process with carrier before filing." },
   // ── Pre-Renewal ─────────────────────────────────────────────────────────
   { id: "t_renewal_dl",    label: "Renewal Download",         category: "Pre-Renewal",   markets: ["ACA","Mid-Market","Large"], defaultAssignee: "Account Coordinator", dueDateRule: "renewal_minus_90", order: 10 },
   { id: "t_bills_dl",      label: "Bills Download",           category: "Pre-Renewal",   markets: ["ACA","Mid-Market","Large"], defaultAssignee: "Account Coordinator", dueDateRule: "renewal_minus_90", order: 20 },
@@ -9314,6 +9615,16 @@ useEffect(() => {
     try { const s = JSON.parse(localStorage.getItem("benefittrack_situs_v1") || "[]"); return s.length ? s : DEFAULT_STATES; } catch { return DEFAULT_STATES; }
   });
   function setSitusLibrary(updater) { setSitusLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_situs_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
+  // Transaction Types library
+  const DEFAULT_TXN_TYPES = [
+    "New Enrollment","Termination","Qualifying Event","Dependent Add","Dependent Remove",
+    "Address Change","Plan Change","Beneficiary Change","COBRA","Other",
+  ].map((label, i) => ({ id: "txnt_" + i, label, order: i * 10, builtin: true }));
+  const [transactionTypesLibrary, setTransactionTypesLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_txn_types_v1") || "[]"); return s.length ? s : DEFAULT_TXN_TYPES; } catch { return DEFAULT_TXN_TYPES; }
+  });
+  function setTransactionTypesLibrary(updater) { setTransactionTypesLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_txn_types_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
 
   function setCarriersData(updater) {
     setCarriersDataRaw(prev => {
@@ -10337,6 +10648,8 @@ useEffect(() => {
             onSaveEmployerTypes={setEmployerTypesLibrary}
             situsLibrary={situsLibrary}
             onSaveSitus={setSitusLibrary}
+            transactionTypesLibrary={transactionTypesLibrary}
+            onSaveTransactionTypes={setTransactionTypesLibrary}
             benefitsDb={benefitsDb}
             onSaveBenefitsDb={setBenefitsDb}
             tasks={tasksData}
@@ -10369,7 +10682,7 @@ useEffect(() => {
 
       {modal && (() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
-        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} />;
+        return <ClientModal client={liveClient} onSave={saveClient} onClose={() => setModal(null)} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} transactionTypesLibrary={transactionTypesLibrary} />;
       })()}
 
       {/* Team Edit/Add Modal */}
@@ -10954,7 +11267,7 @@ const LIB_FOOTER = {
 };
 
 // ── AdminView ─────────────────────────────────────────────────────────────────
-function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
+function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
   const [adminTab, setAdminTab] = useState("plans");
 
   const tabs = [
@@ -10967,17 +11280,18 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
     { id: "funding",       label: "💰 Funding" },
     { id: "employerTypes", label: "🏢 Employer Types" },
     { id: "situs",         label: "📍 Situs" },
+    { id: "txnTypes",      label: "🔄 Transaction Types" },
     { id: "benefitsDb",    label: "💊 Benefits DB" },
     { id: "carriers",      label: "🏢 Carriers" },
   ];
 
   const tileStyle = (active) => ({
-    padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+    padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
     cursor: "pointer", border: "none", fontFamily: "inherit",
     background: active ? "#fff" : "transparent",
     color: active ? "#1d4ed8" : "#64748b",
     boxShadow: active ? "0 1px 4px rgba(0,0,0,.1)" : "none",
-    transition: "all .15s",
+    transition: "all .15s", whiteSpace: "nowrap",
   });
 
   // Merge hardcoded DDR_ANCHORS with user-defined anchor events library
@@ -10989,21 +11303,28 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 0" }}>
-      {/* Header */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>⚙️ Admin</div>
-        <div style={{ fontSize: 13, color: "#64748b" }}>Manage libraries, reference data, and system configuration.</div>
-      </div>
+      {/* Sticky header + tab bar */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 50,
+        background: "#f8fafc", paddingBottom: 16,
+        borderBottom: "1px solid #e2e8f0", marginBottom: 28,
+      }}>
+        {/* Header */}
+        <div style={{ marginBottom: 12, paddingTop: 4 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>⚙️ Admin</div>
+          <div style={{ fontSize: 13, color: "#64748b" }}>Manage libraries, reference data, and system configuration.</div>
+        </div>
 
-      {/* Tab bar */}
-      <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 2, marginBottom: 28, width: "fit-content" }}>
-        {tabs.map(t => (
-          <button key={t.id}
-            onClick={() => t.id === "carriers" ? onNavigateCarriers() : setAdminTab(t.id)}
-            style={tileStyle(adminTab === t.id && t.id !== "carriers")}>
-            {t.label}
-          </button>
-        ))}
+        {/* Tab bar */}
+        <div style={{ display: "flex", flexWrap: "wrap", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 2 }}>
+          {tabs.map(t => (
+            <button key={t.id}
+              onClick={() => t.id === "carriers" ? onNavigateCarriers() : setAdminTab(t.id)}
+              style={tileStyle(adminTab === t.id && t.id !== "carriers")}>
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {adminTab === "plans" && (
@@ -11032,6 +11353,9 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
       )}
       {adminTab === "situs" && (
         <SimpleLibraryView title="Situs States" items={situsLibrary} onSave={onSaveSitus} currentUser={currentUser} hasAbbr={true} description="States available as group situs options for clients." />
+      )}
+      {adminTab === "txnTypes" && (
+        <SimpleLibraryView title="Transaction Types" items={transactionTypesLibrary} onSave={onSaveTransactionTypes} currentUser={currentUser} hasAbbr={false} description="Types of enrollment transactions available when logging member changes." />
       )}
       {adminTab === "benefitsDb" && (
         <BenefitsDbView benefitsDb={benefitsDb} onSave={onSaveBenefitsDb} currentUser={currentUser} />
@@ -11527,7 +11851,7 @@ function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients,
             );
           })}
         </div>
-        {canEdit && activeCategory !== "Compliance" && (
+        {canEdit && (
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" onClick={() => { if (confirm("Reset all tasks to built-in defaults?")) { onSave(DEFAULT_TASKS_DATA); cancelEdit(); } }}
               style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:700, border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", cursor:"pointer", fontFamily:"inherit" }}>
@@ -13784,7 +14108,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {canEdit && activeCategory !== "Compliance" && (<>
+          {canEdit && (<>
           <button type="button" onClick={() => {
             if (confirm("Reset all tasks to built-in defaults? Your customizations will be lost.")) {
               onSave(DEFAULT_TASKS_DATA);
@@ -14038,7 +14362,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {/* Reorder buttons */}
-                  {canEdit && activeCategory !== "Compliance" && <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                  {canEdit && <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
                     <button type="button" onClick={() => moveTask(task.id, -1)} disabled={idx === 0}
                       style={{ padding: "1px 5px", fontSize: 10, border: "1px solid #e2e8f0",
                         borderRadius: 4, background: "#f8fafc", color: "#94a3b8", cursor: idx === 0 ? "default" : "pointer",
@@ -14077,7 +14401,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
 
                   {/* Actions */}
                   <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    {(canEdit && activeCategory !== "Compliance") ? (
+                    {(canEdit) ? (
                       <>
                         <button type="button" onClick={() => isEditing ? (setEditingId(null), setEditData(null)) : startEdit(task)}
                           style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
