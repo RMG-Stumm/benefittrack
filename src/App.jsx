@@ -6339,9 +6339,18 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Due Date
-                            <input type="date" value={task.dueDate}
-                              onChange={e => setTask("compliance", t.id, "dueDate", e.target.value)}
-                              style={{ ...inputStyle, marginTop: 3 }} />
+                            {t.dueFn ? (
+                              <div style={{ ...inputStyle, marginTop: 3, background: "#f8fafc",
+                                color: task.dueDate ? "#0f172a" : "#94a3b8",
+                                display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: 11 }}>📅</span>
+                                {task.dueDate ? formatDate(task.dueDate) : "—"}
+                              </div>
+                            ) : (
+                              <input type="date" value={task.dueDate}
+                                onChange={e => setTask("compliance", t.id, "dueDate", e.target.value)}
+                                style={{ ...inputStyle, marginTop: 3 }} />
+                            )}
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Date Completed
@@ -8412,6 +8421,7 @@ const DEFAULT_DUE_DATE_RULES = [
   { id: "medicare",     label: "Medicare Part D: Oct 15 before plan year",   anchor: "renewal",       direction: "before", days: null, builtin: true },
   { id: "pcori",        label: "PCORI: July 31 after plan year",             anchor: "plan_year_end", direction: "after", days: null, builtin: true },
   { id: "form5500",     label: "5500: End of 7th month after plan year",     anchor: "plan_year_end", direction: "after", days: null, builtin: true },
+  { id: "gag_clause",   label: "Gag Clause: December 31 of plan year",       anchor: "plan_year_end", direction: "after", days: null, builtin: true },
   { id: "txn_plus_3",    label: "3 business days after transaction request",   anchor: "transaction_request", direction: "after", days: 3,    builtin: true },
 ];
 
@@ -9136,8 +9146,28 @@ useEffect(() => {
         });
         setCarriersDataRaw(merged);
       }
-      if (tasks)    setTasksDataRaw(tasks);
-      if (ddr)      setDueDateRulesRaw(ddr.map((r, i) => r.order != null ? r : { ...r, order: i }));
+      if (tasks) {
+        // Backfill any DEFAULT_TASKS_DATA entries missing from Supabase
+        // so new built-in tasks (like gag_clause) appear without a manual reset
+        const taskIds = new Set(tasks.map(t => t.id));
+        const missing = DEFAULT_TASKS_DATA.filter(d => !taskIds.has(d.id));
+        if (missing.length > 0) {
+          missing.forEach(t => upsertTask(t));
+          setTasksDataRaw([...tasks, ...missing]);
+        } else {
+          setTasksDataRaw(tasks);
+        }
+      }
+      if (ddr) {
+        const ddrIds = new Set(ddr.map(r => r.id));
+        const missingDdr = DEFAULT_DUE_DATE_RULES.filter(r => !ddrIds.has(r.id));
+        if (missingDdr.length > 0) {
+          missingDdr.forEach(r => upsertDDR(r));
+          setDueDateRulesRaw([...ddr.map((r, i) => r.order != null ? r : { ...r, order: i }), ...missingDdr]);
+        } else {
+          setDueDateRulesRaw(ddr.map((r, i) => r.order != null ? r : { ...r, order: i }));
+        }
+      }
       if (meetings) setMeetingsRaw(meetings);
       if (teams)    setTeams(teams);
     }
@@ -13428,7 +13458,6 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
     "Post-OE":         { bg: "#e8efd5", text: "#3d4f20" },
     "Compliance":      { bg: "#eef0e0", text: "#7a8a3d" },
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878" },
-    "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878" },
     "Ongoing":         { bg: "#d8e6d0", text: "#54652d" },
     "Transactions":    { bg: "#fce7f3", text: "#9d174d" },  };
   const statusDot = { "Not Started": "#94a3b8", "In Progress": "#eab308" };
@@ -13960,7 +13989,6 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
     "Open Enrollment": { bg: "#dde7c7", text: "#54652d", border: "#7a8a3d" },
     "Post-OE":         { bg: "#e8efd5", text: "#3d4f20", border: "#54652d" },
     "Compliance":      { bg: "#eef0e0", text: "#7a8a3d", border: "#7a8a3d" },
-    "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
     "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
     "Ongoing":         { bg: "#d8e6d0", text: "#54652d", border: "#7a8a3d" },
     "Transactions":    { bg: "#fce7f3", text: "#9d174d", border: "#f472b6" },
