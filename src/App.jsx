@@ -1,6 +1,40 @@
+
+// DebouncedInput — holds local state, fires onChange only on blur
+// Prevents cursor-jump on every keystroke in plan fields
+function DebouncedInput({ value, onChange, placeholder, type = "text", style, inputMode }) {
+  const [local, setLocal] = React.useState(value ?? "");
+  React.useEffect(() => { setLocal(value ?? ""); }, [value]);
+  return (
+    <input
+      type={type}
+      inputMode={inputMode}
+      value={local}
+      placeholder={placeholder}
+      style={style}
+      onChange={e => setLocal(e.target.value)}
+      onBlur={e => { if (e.target.value !== value) onChange(e.target.value); }}
+    />
+  );
+}
+
+function DebouncedTextarea({ value, onChange, placeholder, rows = 3, style }) {
+  const [local, setLocal] = React.useState(value ?? "");
+  React.useEffect(() => { setLocal(value ?? ""); }, [value]);
+  return (
+    <textarea
+      value={local}
+      placeholder={placeholder}
+      rows={rows}
+      style={style}
+      onChange={e => setLocal(e.target.value)}
+      onBlur={e => { if (e.target.value !== value) onChange(e.target.value); }}
+    />
+  );
+}
+
 import React from "react";
 import { useState, useMemo, useEffect } from "react";
-import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB, insertAuditLog, fetchAuditLogs } from './db.js';
+import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB, insertAuditLog, fetchAuditLogs, fetchUserProfile, fetchRenewals, fetchRenewalStages, upsertRenewal } from './db.js';
 import { supabase } from './supabase.js';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
@@ -325,8 +359,9 @@ function generateId() {
 }
 
 const BENEFITS_SCHEMA = [
+  // ── Core Health ──────────────────────────────────────────────────────────────
   {
-    id: "medical", label: "Medical",
+    id: "medical", label: "Medical", group: "core",
     children: [
       { id: "medical_ppo", label: "PPO" },
       { id: "medical_hmo", label: "HMO" },
@@ -334,66 +369,73 @@ const BENEFITS_SCHEMA = [
     ],
   },
   {
-    id: "dental", label: "Dental",
+    id: "dental", label: "Dental", group: "core",
     children: [
       { id: "dental_ppo_contributory", label: "PPO – Contributory" },
-      { id: "dental_ppo_voluntary", label: "PPO – Voluntary" },
+      { id: "dental_ppo_voluntary",    label: "PPO – Voluntary" },
       { id: "dental_dmo_contributory", label: "DMO – Contributory" },
-      { id: "dental_dmo_voluntary", label: "DMO – Voluntary" },
+      { id: "dental_dmo_voluntary",    label: "DMO – Voluntary" },
     ],
   },
   {
-    id: "vision", label: "Vision",
+    id: "vision", label: "Vision", group: "core",
     children: [
       { id: "vision_contributory", label: "Contributory" },
-      { id: "vision_voluntary", label: "Voluntary" },
+      { id: "vision_voluntary",    label: "Voluntary" },
     ],
   },
-  { id: "basic_life", label: "Basic Life/AD&D", children: [] },
-  { id: "vol_life", label: "Voluntary Life/AD&D", children: [] },
+  // ── Life & AD&D ──────────────────────────────────────────────────────────────
+  { id: "basic_life", label: "Basic Life/AD&D",      group: "life", children: [] },
+  { id: "vol_life",   label: "Voluntary Life/AD&D",  group: "life", children: [] },
+  // ── Income Protection ────────────────────────────────────────────────────────
   {
-    id: "std", label: "Short Term Disability (STD)",
+    id: "std", label: "Short Term Disability (STD)", group: "income",
     children: [
-      { id: "std_employer", label: "Employer-Paid" },
-      { id: "std_voluntary", label: "Voluntary" },
+      { id: "std_employer",     label: "Employer-Paid" },
+      { id: "std_voluntary",    label: "Voluntary" },
       { id: "std_contributory", label: "Contributory" },
     ],
   },
-  { id: "nydbl_pfl", label: "NYDBL & PFL", children: [] },
   {
-    id: "ltd", label: "Long Term Disability (LTD)",
+    id: "ltd", label: "Long Term Disability (LTD)", group: "income",
     children: [
-      { id: "ltd_employer", label: "Employer-Paid" },
-      { id: "ltd_voluntary", label: "Voluntary" },
+      { id: "ltd_employer",     label: "Employer-Paid" },
+      { id: "ltd_voluntary",    label: "Voluntary" },
       { id: "ltd_contributory", label: "Contributory" },
     ],
   },
-  { id: "idi", label: "IDI", children: [] },
-  {
-    id: "worksite", label: "Worksite Benefits",
-    children: [
-      { id: "worksite_ci", label: "Critical Illness" },
-      { id: "worksite_cancer", label: "Cancer" },
-      { id: "worksite_accident", label: "Personal Accident" },
-      { id: "worksite_hospital", label: "Hospital Indemnity" },
-    ],
-  },
-  {
-    id: "fsa", label: "FSA",
-    children: [
-      { id: "fsa_health", label: "Health FSA" },
-      { id: "fsa_limited", label: "Limited Purpose FSA" },
-      { id: "fsa_dependent", label: "Dependent Care FSA" },
-      { id: "fsa_transport", label: "Transportation FSA" },
-    ],
-  },
-  { id: "hsa_funding", label: "HSA Funding", children: [] },
-  { id: "hra", label: "HRA", children: [] },
-  { id: "eap", label: "EAP", children: [] },
-  { id: "telehealth", label: "Telehealth", children: [] },
-  { id: "identity_theft", label: "Identity Theft", children: [] },
-  { id: "prepaid_legal", label: "Prepaid Legal", children: [] },
-  { id: "pet_insurance", label: "Pet Insurance", children: [] },
+  { id: "nydbl_pfl", label: "NYDBL & PFL", group: "income", children: [] },
+  { id: "idi",       label: "IDI",          group: "income", children: [] },
+  // ── Worksite ─────────────────────────────────────────────────────────────────
+  { id: "worksite_ci",       label: "Critical Illness",   group: "worksite", children: [] },
+  { id: "worksite_cancer",   label: "Cancer",             group: "worksite", children: [] },
+  { id: "worksite_accident", label: "Personal Accident",  group: "worksite", children: [] },
+  { id: "worksite_hospital", label: "Hospital Indemnity", group: "worksite", children: [] },
+  // ── Spending Accounts ────────────────────────────────────────────────────────
+  { id: "fsa_health",    label: "Health FSA",           group: "spending", children: [] },
+  { id: "fsa_limited",   label: "Limited Purpose FSA",  group: "spending", children: [] },
+  { id: "fsa_dependent", label: "Dependent Care FSA",   group: "spending", children: [] },
+  { id: "fsa_transport", label: "Transportation FSA",   group: "spending", children: [] },
+  { id: "parking",       label: "Parking",              group: "spending", children: [] },
+  { id: "commuter",      label: "Commuter",             group: "spending", children: [] },
+  { id: "hsa_funding",   label: "HSA Funding",          group: "spending", children: [] },
+  { id: "hra",           label: "HRA",                  group: "spending", children: [] },
+  // ── Supplemental ─────────────────────────────────────────────────────────────
+  { id: "eap",            label: "EAP",            group: "supplemental", children: [] },
+  { id: "telehealth",     label: "Telehealth",     group: "supplemental", children: [] },
+  { id: "identity_theft", label: "Identity Theft", group: "supplemental", children: [] },
+  { id: "prepaid_legal",  label: "Prepaid Legal",  group: "supplemental", children: [] },
+  { id: "pet_insurance",  label: "Pet Insurance",  group: "supplemental", children: [] },
+];
+
+// Benefit group definitions for sub-navigation
+const BENEFIT_GROUPS = [
+  { id: "core",        label: "Core Health",       icon: "♥", color: "#4b7896" },
+  { id: "life",        label: "Life & AD&D",        icon: "◈", color: "#7B8C3F" },
+  { id: "income",      label: "Income Protection",  icon: "⚡", color: "#b45309" },
+  { id: "worksite",    label: "Worksite",           icon: "+", color: "#7c3aed" },
+  { id: "spending",    label: "Spending Accounts",  icon: "$", color: "#0f766e" },
+  { id: "supplemental",label: "Supplemental",       icon: "◎", color: "#64748b" },
 ];
 
 const COMPLIANCE_TASKS = [
@@ -2909,7 +2951,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               });
 
               const categoryOrder = ["Core Health","Life & AD&D","Income Protection",
-                "Statutory Income","Worksite","Wellness","Lifestyle","Tax-Advantaged"];
+                "Statutory Income","Worksite","Wellness","Lifestyle","Spending Accounts"];
 
               return (
                 <div style={{ marginBottom: 8 }}>
@@ -3025,12 +3067,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 "worksite_accident":"Worksite","worksite_cancer":"Worksite","worksite_ci":"Worksite","worksite_hospital":"Worksite",
                 "eap":"Wellness",
                 "identity_theft":"Lifestyle","prepaid_legal":"Lifestyle","pet_insurance":"Lifestyle",
-                "fsa":"Tax-Advantaged","hsa_funding":"Tax-Advantaged","hra":"Tax-Advantaged","commuter":"Tax-Advantaged",
+                "fsa":"Spending Accounts","hsa_funding":"Spending Accounts","hra":"Spending Accounts","commuter":"Spending Accounts",
               };
               const entriesWithCat = allRenderableEntries.map(e => ({
                 ...e, _category: SCHEMA_ID_TO_CATEGORY[e.id] || "Other"
               }));
-              const CATEGORY_ORDER = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Tax-Advantaged","Other"];
+              const CATEGORY_ORDER = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Spending Accounts","Other"];
               const activeCategories = CATEGORY_ORDER.filter(cat => entriesWithCat.some(e => e._category === cat));
               const selCategory = activeCategories.includes(benefitCategoryTab) ? benefitCategoryTab : (activeCategories[0] || "");
               const benefitsInCategory = entriesWithCat.filter(e => e._category === selCategory);
@@ -6907,11 +6949,14 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
   const legacyCarriers = (!activeCategories.length && client.carriers && client.carriers.length)
     ? client.carriers : [];
 
+  // Team color shading — India=light blue, Juliet=light green, fallback=white
+  const teamBg = team ? team.color : "#ffffff";
+
   return (
     <div style={{
-      background: "#fff",
-      border: `1.5px solid ${team.border}`,
-      borderTop: `4px solid ${team.border}`,
+      background: teamBg || "#ffffff",
+      border: `1.5px solid ${team ? team.border : "#e2e8f0"}`,
+      borderTop: `4px solid ${team ? team.border : "#e2e8f0"}`,
       borderRadius: 14,
       padding: 20,
       display: "flex", flexDirection: "column", gap: 14,
@@ -7047,16 +7092,29 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
               </div>
             </div>
           )}
-          {(client.benefitEnrolled || {}).medical && (
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#3e5878", lineHeight: 1 }}>
-                {Number((client.benefitEnrolled || {}).medical).toLocaleString()}
+          {(() => {
+            // Auto-sum from medical plans first, fall back to legacy medicalEnrolled field
+            const medPlans = (client.benefitPlans || {}).medical || [];
+            const fromPlans = medPlans.length > 0
+              ? medPlans.reduce((s, pl) => {
+                  const enr = pl.enrolled || {};
+                  if (pl.ageBands?.length > 0) return s + pl.ageBands.reduce((ss,b) => ss + (parseInt(b.enrolled)||0), 0);
+                  return s + ["ee","es","ec","ff"].reduce((ss,k) => ss + (parseInt(enr[k])||0), 0);
+                }, 0)
+              : null;
+            const displayVal = fromPlans !== null ? fromPlans : (client.medicalEnrolled || (client.benefitEnrolled || {}).medical || null);
+            if (!displayVal && displayVal !== 0) return null;
+            return (
+              <div style={{ flex: 1, textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#3e5878", lineHeight: 1 }}>
+                  {Number(displayVal).toLocaleString()}
+                </div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase", marginTop: 2 }}>
+                  Enrolled in Medical
+                </div>
               </div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase", marginTop: 2 }}>
-                Enrolled in Medical
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -9017,103 +9075,209 @@ function persistCarriersData_DEPRECATED(list) {
   try { localStorage.setItem(CARRIERS_STORAGE_KEY, JSON.stringify(list)); } catch(e) {}
 }
 
-function PinScreen({ onSuccess }) {
-  const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [users, setUsers] = useState([]);
+  const [resetSent, setResetSent] = useState(false);
+  const [showReset, setShowReset] = useState(false);
 
-  useEffect(() => {
-    supabase.from('users').select('*').then(({ data }) => {
-      if (data) setUsers(data);
-    });
-  }, []);
-
-  async function handleSubmit() {
-    if (!name || !pin) { setError("Please select your name and enter your PIN."); return; }
+  async function handleSignIn() {
+    if (!email || !password) { setError("Please enter your email and password."); return; }
     setLoading(true);
     setError("");
-    const user = users.find(u => u.name === name);
-    if (!user) { setError("User not found."); setLoading(false); return; }
-    if (String(user.pin) !== String(pin)) { setError("Incorrect PIN. Please try again."); setPin(""); setLoading(false); return; }
-    onSuccess({ name: user.name, role: user.role, team: user.team });
+    try {
+      const result = await Promise.race([
+        supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10000)),
+      ]);
+      if (result.error) {
+        setError("Incorrect email or password. Please try again.");
+        setLoading(false);
+      }
+      // On success, onAuthStateChange in App() fires automatically
+    } catch(e) {
+      if (e.message === "timeout") {
+        setError("Sign-in is taking too long. Check your connection and try again.");
+      } else {
+        setError("Sign-in failed. Please try again.");
+      }
+      setLoading(false);
+    }
   }
 
-  const uniqueNames = [...new Set(users.map(u => u.name))].sort();
+  async function handlePasswordReset() {
+    if (!email) { setError("Enter your email address first."); return; }
+    setLoading(true);
+    setError("");
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      email.trim().toLowerCase(),
+      { redirectTo: "https://benefittrack.netlify.app" }
+    );
+    setLoading(false);
+    if (resetError) {
+      setError("Could not send reset email. Check the address and try again.");
+    } else {
+      setResetSent(true);
+      setShowReset(false);
+    }
+  }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "40px 48px", maxWidth: 400, width: "100%", boxShadow: "0 25px 60px rgba(0,0,0,.12)", textAlign: "center" }}>
-       <img src="/shield.png" style={{ height: 56, width: "auto", marginBottom: 16 }} alt="logo" />
-        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 24, color: "#0f172a", marginBottom: 4 }}>BOB</div>
-        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 32 }}>Sign in to continue</div>
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "'DM Sans', system-ui, sans-serif",
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: "48px 52px",
+        maxWidth: 420, width: "100%",
+        boxShadow: "0 32px 80px rgba(0,0,0,.25)",
+        textAlign: "center",
+      }}>
+        <img src="/shield.png" style={{ height: 60, width: "auto", marginBottom: 20 }} alt="BenefitTrack" />
+        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 26, color: "#0f172a", marginBottom: 4 }}>BOB</div>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 36 }}>Sign in to your account</div>
 
         <div style={{ textAlign: "left", marginBottom: 16 }}>
-          <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 6 }}>Your Name</label>
-          <select value={name} onChange={e => setName(e.target.value)} style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8, fontSize: 14, fontFamily: "inherit", background: "#fff" }}>
-            <option value="">— Select your name —</option>
-            {uniqueNames.map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </div>
-
-        <div style={{ textAlign: "left", marginBottom: 24 }}>
-          <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 6 }}>PIN</label>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 6 }}>Email Address</label>
           <input
-            type="password"
-            value={pin}
-            onChange={e => setPin(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleSubmit()}
-            placeholder="Enter your PIN"
-            maxLength={8}
-            style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #e2e8f0", borderRadius: 8, fontSize: 18, fontFamily: "inherit", letterSpacing: 8, textAlign: "center", boxSizing: "border-box" }}
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleSignIn()}
+            placeholder="you@stumm.com"
+            autoComplete="email"
+            style={{ width: "100%", padding: "11px 14px", border: "1.5px solid #e2e8f0", borderRadius: 9, fontSize: 14, fontFamily: "inherit", background: "#fff", boxSizing: "border-box" }}
           />
         </div>
 
-        {error && <div style={{ color: "#dc2626", fontSize: 13, fontWeight: 600, marginBottom: 16 }}>{error}</div>}
+        <div style={{ textAlign: "left", marginBottom: 28 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 6 }}>Password</label>
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleSignIn()}
+            placeholder="Enter your password"
+            autoComplete="current-password"
+            style={{ width: "100%", padding: "11px 14px", border: "1.5px solid #e2e8f0", borderRadius: 9, fontSize: 14, fontFamily: "inherit", background: "#fff", boxSizing: "border-box" }}
+          />
+        </div>
 
-        <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 9, border: "none", background: "linear-gradient(135deg,#3e5878,#507c9c)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
-          {loading ? "Checking..." : "Sign In"}
+        {error && <div style={{ color: "#dc2626", fontSize: 13, fontWeight: 600, marginBottom: 16, padding: "10px 14px", background: "#fee2e2", borderRadius: 8 }}>{error}</div>}
+        {resetSent && <div style={{ color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 16, padding: "10px 14px", background: "#dcfce7", borderRadius: 8 }}>Password reset email sent — check your inbox.</div>}
+
+        <button onClick={handleSignIn} disabled={loading} style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: loading ? "#94a3b8" : "linear-gradient(135deg,#1e3a5f,#3e5878)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
+          {loading ? "Signing in…" : "Sign In"}
         </button>
+
+        {!showReset ? (
+          <button onClick={() => { setShowReset(true); setError(""); setResetSent(false); }} style={{ marginTop: 16, background: "none", border: "none", color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+            Forgot your password?
+          </button>
+        ) : (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Enter your email above, then click below to receive a reset link.</div>
+            <button onClick={handlePasswordReset} disabled={loading} style={{ padding: "9px 20px", borderRadius: 8, border: "1.5px solid #3e5878", background: "#fff", color: "#3e5878", fontSize: 13, fontWeight: 700, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
+              {loading ? "Sending…" : "Send Reset Email"}
+            </button>
+            <button onClick={() => setShowReset(false)} style={{ marginLeft: 8, padding: "9px 16px", borderRadius: 8, border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#64748b", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => {
-  try { return JSON.parse(sessionStorage.getItem("bt_user")) || null; }
-  catch { return null; }
-});
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-useEffect(() => {
-  if (!currentUser) return;
-  let timer;
-  const reset = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      setCurrentUser(null);
-      sessionStorage.removeItem("bt_user");
-    }, 30 * 60 * 1000);
-  };
-  const events = ["mousemove","mousedown","keydown","touchstart","scroll"];
-  events.forEach(e => window.addEventListener(e, reset));
-  reset();
-  return () => {
-    clearTimeout(timer);
-    events.forEach(e => window.removeEventListener(e, reset));
-  };
-}, [currentUser]);
+  useEffect(() => {
+    let initialized = false;
+
+    async function initAuth(session) {
+      if (initialized) return;
+      initialized = true;
+      try {
+        if (session?.user) {
+          // 4-second hard timeout on profile fetch
+          const profile = await Promise.race([
+            fetchUserProfile(session.user.id),
+            new Promise(res => setTimeout(() => res(null), 4000)),
+          ]);
+          setCurrentUser(profile || {
+            id: session.user.id,
+            name: session.user.email?.split('@')[0] || 'User',
+            email: session.user.email,
+            role: 'Account Coordinator',
+            team: '', teams: [],
+          });
+        }
+      } catch(e) {
+        console.error('Auth init error:', e);
+      } finally {
+        setAuthLoading(false);
+      }
+    }
+
+    // Hard 5-second safety net — never show Loading forever
+    const safetyTimer = setTimeout(() => setAuthLoading(false), 5000);
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(safetyTimer);
+      initAuth(session);
+    }).catch(() => { clearTimeout(safetyTimer); setAuthLoading(false); });
+
+    // Only handle subsequent changes (login/logout), not the initial load
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'INITIAL_SESSION') return; // skip — handled by getSession above
+        try {
+          if (session?.user) {
+            const profile = await fetchUserProfile(session.user.id);
+            setCurrentUser(profile || {
+              id: session.user.id,
+              name: session.user.email?.split('@')[0] || 'User',
+              email: session.user.email,
+              role: 'Account Coordinator',
+              team: '', teams: [],
+            });
+          } else {
+            setCurrentUser(null);
+          }
+        } catch(e) {
+          setCurrentUser(null);
+        } finally {
+          setAuthLoading(false);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
   // ── Supabase data loading ──
   useEffect(() => {
     async function loadAll() {
-      const [clients, carriers, tasks, ddr, meetings, teams] = await Promise.all([
-        fetchClients(),
-        fetchCarriers(),
-        fetchTasks(),
-        fetchDDR(),
-        fetchMeetings(),
-        fetchTeams(),
+      const safe = (p, fallback = null) => Promise.race([
+        p.catch(e => { console.error('fetch error:', e); return fallback; }),
+        new Promise(res => setTimeout(() => res(fallback), 12000)),
+      ]);
+      const [clients, carriers, tasks, ddr, meetings, teams, renewalsData, stagesData] = await Promise.all([
+        safe(fetchClients(), []),
+        safe(fetchCarriers(), []),
+        safe(fetchTasks(), []),
+        safe(fetchDDR(), []),
+        safe(fetchMeetings(), []),
+        safe(fetchTeams(), []),
+        safe(fetchRenewals(), []),
+        safe(fetchRenewalStages(), []),
       ]);
       if (clients) {
         const fixed = clients.map(applyDataFixes);
@@ -9170,6 +9334,8 @@ useEffect(() => {
       }
       if (meetings) setMeetingsRaw(meetings);
       if (teams)    setTeams(teams);
+      if (renewalsData) setRenewals(renewalsData);
+      if (stagesData)   setRenewalStages(stagesData);
     }
     loadAll();
   }, []);
@@ -9181,7 +9347,11 @@ useEffect(() => {
     document.head.appendChild(s);
   }, []);
    const [clients, setClientsRaw] = useState([]);
-   const [modal, setModal] = useState(null); // null | client object
+  const [renewals, setRenewals] = useState([]);
+  const [renewalStages, setRenewalStages] = useState([]);
+  const [modal, setModal] = useState(null); // null | client object — kept for compatibility
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [prevView, setPrevView] = useState("clients");
   const [deepLinkTaskTab, setDeepLinkTaskTab]   = useState(null);
   const [deepLinkTaskId,  setDeepLinkTaskId]    = useState(null);
   const [search, setSearch] = useState("");
@@ -9196,6 +9366,19 @@ useEffect(() => {
   function toggleSort(field) {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortField(field); setSortDir("asc"); }
+  }
+
+  // Open client full-page profile
+  function openClient(client) {
+    if (!client) return;
+    setPrevView(view);
+    setSelectedClient(client);
+    changeView("client");
+  }
+
+  function closeClient() {
+    setSelectedClient(null);
+    changeView(prevView || "clients");
   }
 
   // Wrap setClients so every change is persisted to localStorage automatically
@@ -9223,8 +9406,7 @@ useEffect(() => {
     if (!client) return;
     if (taskTab) setDeepLinkTaskTab(taskTab);
     if (taskId)  setDeepLinkTaskId(taskId);
-    setModal(client);
-    // Clean the URL so refreshing doesn't re-open the modal
+    openClient(client);
     window.history.replaceState({}, "", window.location.pathname);
   }, [clients]);
 
@@ -9432,6 +9614,22 @@ useEffect(() => {
     });
   }
   // Markets library
+  const [salespersonsLibrary, setSalespersonsLibraryRaw] = useState(() => {
+    try { const s = localStorage.getItem("benefittrack_salespersons_v1"); return s ? JSON.parse(s) : [
+      { id:"sp_si",       label:"SI",       order:10 },
+      { id:"sp_lock",     label:"Lock",     order:20 },
+      { id:"sp_amanda",   label:"Amanda",   order:30 },
+      { id:"sp_anthony",  label:"Anthony",  order:40 },
+      { id:"sp_holly",    label:"Holly",    order:50 },
+      { id:"sp_jaclyn",   label:"Jaclyn",   order:60 },
+      { id:"sp_jonathon", label:"Jonathon", order:70 },
+      { id:"sp_rob",      label:"Rob",      order:80 },
+      { id:"sp_steve",    label:"Steve",    order:90 },
+      { id:"sp_bdt",      label:"BDT",      order:100 },
+    ]; } catch(e) { return []; }
+  });
+  function setSalespersonsLibrary(updater) { setSalespersonsLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_salespersons_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
   const [marketsLibrary, setMarketsLibraryRaw] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem("benefittrack_markets_v1") || "[]"); return s.length ? s : MARKET_SIZES.map((label, i) => ({ id: "mkt_"+i, label, order: i, builtin: true })); } catch { return MARKET_SIZES.map((label, i) => ({ id: "mkt_"+i, label, order: i, builtin: true })); }
   });
@@ -9534,66 +9732,127 @@ useEffect(() => {
       .sort((a, b) => a._days - b._days); // most overdue first
   }, [clients]);
 
-  if (!currentUser) {
-  return <PinScreen onSuccess={user => { setCurrentUser(user); sessionStorage.setItem("bt_user", JSON.stringify(user)); }} />;
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc", fontFamily: "'DM Sans', system-ui, sans-serif", fontSize: 14, color: "#64748b" }}>
+        Loading…
+      </div>
+    );
   }
+  if (!currentUser) return <LoginScreen />;
+
+  // ── BOB Design System ────────────────────────────────────────────────────
+  const BOB = {
+    sidebarBg:     "#2b3a4a",
+    sidebarBorder: "#3a4f62",
+    navActive:     "#4b7896",
+    navActiveBg:   "rgba(75,120,150,0.18)",
+    navText:       "#a8bfcc",
+    navTextActive: "#e8f2f8",
+    accent:        "#78873c",
+    accentLight:   "#e8edcc",
+    topbarBg:      "#ffffff",
+    topbarBorder:  "#e8eef2",
+    contentBg:     "#f4f7f9",
+    textPrimary:   "#1a2733",
+    textSecondary: "#5a7080",
+  };
+
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+
+  const NAV_ITEMS = [
+    { id: "dashboard",    label: "Dashboard",    icon: "⊞" },
+    { id: "clients",      label: "Clients",       icon: "◫" },
+    { id: "renewals",     label: "Renewals",      icon: "↻" },
+    { id: "compliance",   label: "Compliance",    icon: "✓" },
+    { id: "transactions", label: "Transactions",  icon: "⇄" },
+    { id: "tasks",        label: "Tasks",         icon: "▣" },
+    { id: "meetings",     label: "Meetings",      icon: "◈" },
+    ...(isLead ? [{ id: "reports", label: "Reports", icon: "▤" }] : []),
+    ...(isLead ? [{ id: "admin",   label: "Admin",   icon: "⚙" }] : []),
+  ];
+
+  const userInitial = (currentUser.name || "?")[0].toUpperCase();
+  const userTeamLabel = currentUser.teams?.length > 0
+    ? currentUser.teams.map(t => t.teamId).join(" & ")
+    : currentUser.team || "";
 
   return (
-    <div style={{
-      minHeight: "100vh", background: "#f8fafc",
-      fontFamily: "'DM Sans', system-ui, sans-serif",
-    }}>
+    <div style={{ minHeight: "100vh", display: "flex", fontFamily: "'DM Sans', system-ui, sans-serif", background: BOB.contentBg }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #f1f5f9; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #c8d8e4; border-radius: 99px; }
         select, input, textarea { outline: none; }
-        select:focus, input:focus, textarea:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+        select:focus, input:focus, textarea:focus { border-color: #4b7896 !important; box-shadow: 0 0 0 3px rgba(75,120,150,.15); }
         .stat-tile { transition: box-shadow .15s, transform .15s; }
         .stat-tile:hover { box-shadow: 0 6px 20px rgba(0,0,0,.1) !important; transform: translateY(-1px); }
+        .bob-nav-item:hover { background: rgba(255,255,255,0.07) !important; }
       `}</style>
 
-      {/* Top bar */}
-      <div style={{
-        background: "#fff", borderBottom: "1px solid #e2e8f0",
-        padding: "0 32px", height: 64,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        position: "sticky", top: 0, zIndex: 50,
-        boxShadow: "0 1px 3px rgba(0,0,0,.06)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-         <img src="/shield.png" style={{ height: 44, width: "auto" }} alt="logo" /> 
+      {/* ── SIDEBAR ── */}
+      <div style={{ width: 220, flexShrink: 0, background: BOB.sidebarBg, borderRight: `1px solid ${BOB.sidebarBorder}`, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 100 }}>
+        {/* Logo */}
+        <div style={{ padding: "18px 18px 14px", borderBottom: `1px solid ${BOB.sidebarBorder}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <img src="/shield.png" style={{ height: 36, width: "auto", flexShrink: 0 }} alt="BOB" />
           <div>
-            <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 18, color: "#0f172a", lineHeight: 1 }}>
-              BOB
-            </div>
-            <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500 }}>Client Renewal Management</div>
-           <div style={{ fontSize: 11, color: "#507c9c", marginTop: 2, fontWeight: 600 }}>👤 {currentUser.name}</div> 
+            <div style={{ fontFamily: "'Playfair Display', Georgia, serif", fontWeight: 800, fontSize: 19, color: "#ffffff", lineHeight: 1, letterSpacing: "-0.3px" }}>BOB</div>
+            <div style={{ fontSize: 9, color: BOB.navText, fontWeight: 600, letterSpacing: "0.9px", textTransform: "uppercase", marginTop: 2 }}>Benefit Operations</div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Nav tabs */}
-          <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 9, padding: 3, gap: 2 }}>
-            {[["dashboard","🏠 Dashboard"],["clients","👥 All Clients"],["renewals","⏰ Renewals"],["meetings","📋 Meetings"],["teams","🤝 Teams"],...(["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) ? [["reports","📊 Reports"]] : []),...(["VP","Lead","Team Lead"].includes(currentUser?.role?.trim()) ? [["admin","⚙️ Admin"]] : [])].map(([v, label]) => (
-              <button key={v} onClick={() => changeView(v)} style={{
-                background: view === v ? "#fff" : "transparent",
-                border: "none", borderRadius: 7, padding: "6px 14px",
-                fontSize: 12, fontWeight: 700, cursor: "pointer",
-                color: view === v ? "#1d4ed8" : "#64748b",
-                boxShadow: view === v ? "0 1px 4px rgba(0,0,0,.1)" : "none",
-                transition: "all .15s",
-              }}>{label}</button>
-            ))}
+
+        {/* Nav */}
+        <nav style={{ flex: 1, padding: "10px 8px", overflowY: "auto" }}>
+          {NAV_ITEMS.map(item => {
+            const active = view === item.id;
+            return (
+              <button key={item.id} className="bob-nav-item" onClick={() => changeView(item.id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "8px 11px", borderRadius: 7, marginBottom: 1, border: "none", cursor: "pointer", textAlign: "left", background: active ? BOB.navActiveBg : "transparent", borderLeft: `3px solid ${active ? BOB.navActive : "transparent"}`, color: active ? BOB.navTextActive : BOB.navText, fontFamily: "inherit", fontWeight: active ? 700 : 500, fontSize: 13, transition: "all .12s" }}>
+                <span style={{ fontSize: 14, width: 18, textAlign: "center", flexShrink: 0, color: active ? BOB.navActive : BOB.navText, opacity: active ? 1 : 0.65 }}>{item.icon}</span>
+                {item.label}
+                {active && <span style={{ marginLeft: "auto", width: 5, height: 5, borderRadius: "50%", background: BOB.navActive, flexShrink: 0 }} />}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* User block */}
+        <div style={{ padding: "12px 14px", borderTop: `1px solid ${BOB.sidebarBorder}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0, background: BOB.navActive, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff" }}>{userInitial}</div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#e8f2f8", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.name}</div>
+              <div style={{ fontSize: 10, color: BOB.navText, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.role}</div>
+            </div>
           </div>
-<div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => { setCurrentUser(null); sessionStorage.removeItem("bt_user"); }} style={{ ...btnOutline, fontSize: 12, padding: "7px 14px" }}>Sign Out</button>
-          </div>
+          <button onClick={async () => { await supabase.auth.signOut(); }} style={{ width: "100%", padding: "6px 0", borderRadius: 6, border: `1px solid ${BOB.sidebarBorder}`, background: "rgba(255,255,255,0.05)", color: BOB.navText, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+            Sign Out
+          </button>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 32px 28px" }}>
+      {/* ── MAIN AREA ── */}
+      <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+
+        {/* Top bar */}
+        <div style={{ background: BOB.topbarBg, borderBottom: `1px solid ${BOB.topbarBorder}`, padding: "0 28px", height: 54, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 4px rgba(43,58,74,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: BOB.textPrimary, letterSpacing: "-0.3px" }}>
+              {view === "client" ? (selectedClient?.name || "Client") : (NAV_ITEMS.find(n => n.id === view)?.label || "BOB")}
+            </div>
+
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ fontSize: 12, color: BOB.textSecondary, fontWeight: 500 }}>
+              {new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+            </div>
+
+          </div>
+        </div>
+
+        {/* Page content */}
+        <div style={{ flex: 1, padding: view === "client" ? "0" : "22px 28px 32px" }}>
 
 
 
@@ -9795,7 +10054,7 @@ useEffect(() => {
               <div style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer",transition:"background .1s",background:tc?tc.bg:"transparent"}}
                 onMouseEnter={e=>e.currentTarget.style.background=tc?tc.border+"40":"#f0f5fa"}
                 onMouseLeave={e=>e.currentTarget.style.background=tc?tc.bg:"transparent"}
-                onClick={() => setModal(task.clientObj)}>
+                onClick={() => openClient(task.clientObj)}>
                 {tc && <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:tc.dot,flexShrink:0}}></div>}
                 {showAvatar && <Avatar name={task.assignee} />}
                 <div style={{flex:1,minWidth:0}}>
@@ -9821,7 +10080,7 @@ useEffect(() => {
               <div style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s",background: tc ? tc.bg : "transparent"}}
                 onMouseEnter={e=>e.currentTarget.style.background=tc?tc.border+"40":"#f0f5fa"}
                 onMouseLeave={e=>e.currentTarget.style.background=tc?tc.bg:"transparent"}
-                onClick={() => setModal(c)}>
+                onClick={() => openClient(c)}>
                 {tc && <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:tc.dot,flexShrink:0}}></div>}
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:13,color:tc?tc.accent:"#0f172a"}}>{c.name}</div>
@@ -9836,14 +10095,9 @@ useEffect(() => {
           }
 
           function StatTile({label, value, type, sub, onClick, icon}) {
-            const palette = {
-              danger:  {bg:"#fff1f2",border:"#fecdd3",val:"#be123c",lbl:"#9f1239"},
-              warning: {bg:"#fffbeb",border:"#fde68a",val:"#b45309",lbl:"#92400e"},
-              success: {bg:"#f0fdf4",border:"#bbf7d0",val:"#15803d",lbl:"#166534"},
-              info:    {bg:"#eff6ff",border:"#bfdbfe",val:"#1d4ed8",lbl:"#1e40af"},
-              default: {bg:"#f8fafc",border:"#e2e8f0",val:"#3e5878",lbl:"#507c9c"},
-            };
-            const p = palette[type||"default"];
+            // All tiles use uniform olive from shield logo
+            const tileTheme = {bg:"#eef2d8", border:"#c8d48a", val:"#7B8C3F", lbl:"#55652B"};
+            const p = tileTheme;
             return (
               <div onClick={onClick}
                 style={{background:p.bg,borderRadius:12,padding:"16px 18px",border:"1px solid "+p.border,cursor:onClick?"pointer":"default",transition:"all .15s",position:"relative",overflow:"hidden"}}
@@ -9872,15 +10126,9 @@ useEffect(() => {
                     {greeting}, {currentUser.name}
                   </div>
                   <div style={{fontSize:12,color:"rgba(255,255,255,.75)",marginTop:6,fontWeight:500}}>
-                    {todayStr}
-                    {myTeamLabel && <span style={{marginLeft:10,padding:"2px 10px",borderRadius:20,background:"rgba(255,255,255,.15)",color:"#fff",fontWeight:600}}>{myTeamLabel}</span>}
-                    {myClients.length > 0 && <span style={{marginLeft:8,color:"rgba(255,255,255,.6)"}}>{myClients.length} clients</span>}
+                    {myTeamLabel && <span style={{marginRight:10,padding:"2px 10px",borderRadius:20,background:"rgba(255,255,255,.15)",color:"#fff",fontWeight:600}}>{myTeamLabel}</span>}
+                    {myClients.length > 0 && <span style={{color:"rgba(255,255,255,.7)"}}>{myClients.length} clients</span>}
                   </div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginBottom:2}}>Today's date</div>
-                  <div style={{fontSize:22,fontWeight:800,color:"#fff",lineHeight:1}}>{new Date().getDate()}</div>
-                  <div style={{fontSize:11,color:"rgba(255,255,255,.7)"}}>{new Date().toLocaleDateString("en-US",{month:"short",year:"numeric"})}</div>
                 </div>
               </div>
 
@@ -10007,6 +10255,11 @@ useEffect(() => {
                 </div>
               )}
 
+              {/* ── Book of Business Panel (Lead/VP only) ── */}
+              {isLead && (
+                <DashboardBOBPanel clients={myClients} teams={teams} />
+              )}
+
               {(isAE||isAM) && (
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -10020,7 +10273,7 @@ useEffect(() => {
                       <Panel title="Follow-ups due" accent="#b45309">
                         {myFollowUps.map((fu,i) => (
                           <div key={i} style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s"}}
-                            {...rowHover} onClick={() => setModal(fu.clientObj)}>
+                            {...rowHover} onClick={() => openClient(fu.clientObj)}>
                             <div style={{flex:1}}>
                               <div style={{fontWeight:700,fontSize:13,color:"#0f172a"}}>{fu.note||"Follow-up"}</div>
                               <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{fu.clientName}</div>
@@ -10071,7 +10324,7 @@ useEffect(() => {
                             <div key={i} style={{padding:"10px 16px",borderBottom:"1px solid #f4f6f8",display:"flex",alignItems:"center",gap:10,cursor:"pointer",transition:"background .1s",background:fuTc?fuTc.bg:"transparent"}}
                               onMouseEnter={e=>e.currentTarget.style.background=fuTc?fuTc.border+"40":"#f0f5fa"}
                               onMouseLeave={e=>e.currentTarget.style.background=fuTc?fuTc.bg:"transparent"}
-                              onClick={() => setModal(fu.clientObj)}>
+                              onClick={() => openClient(fu.clientObj)}>
                               {fuTc && <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:fuTc.dot,flexShrink:0}}></div>}
                               <div style={{flex:1}}>
                                 <div style={{fontWeight:700,fontSize:13,color:fuTc?fuTc.accent:"#0f172a"}}>{fu.note||"Follow-up"}</div>
@@ -10094,117 +10347,25 @@ useEffect(() => {
         })()}
 
         {/* ── RENEWALS VIEW ── */}
-        {view === "renewals" && (() => {
-          const allCarriersR = [...new Set(clients.map(c =>
-            (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || ""
-          ).filter(Boolean))].sort();
-          const allSitusR   = [...new Set(clients.map(c => c.groupSitus || "").filter(Boolean))].sort();
-          const allFundingR = [...new Set(clients.map(c => c.fundingMethod || "").filter(Boolean))].sort();
-
-          const teamRestricted3 = currentUser && !["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && userTeams.length > 0;
-          const renewalsFiltered = upcoming120.filter(c => {
-            if (teamRestricted3 && !userTeams.includes(c.team)) return false;
-            if (dashFilter.team    !== "All" && c.team !== dashFilter.team) return false;
-            if (dashFilter.market  !== "All" && c.marketSize !== dashFilter.market) return false;
-            if (dashFilter.funding !== "All" && c.fundingMethod !== dashFilter.funding) return false;
-            if (dashFilter.situs   !== "All" && (c.groupSitus || "") !== dashFilter.situs) return false;
-            if (dashFilter.carrier !== "All") {
-              const mc = (c.benefitCarriers || {}).medical || (c.carriers || [])[0] || "";
-              if (mc !== dashFilter.carrier) return false;
-            }
-            return true;
-          });
-
-          const activeRFilters = Object.values(dashFilter).filter(v => v !== "All").length;
-
-          return (
-          <div>
-            <div style={{
-              position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
-              borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12,
-              marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,.06)",
-            }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
-              <div>
-                <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
-                  Upcoming Renewals
-                </div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                  Next 120 days — {renewalsFiltered.length} of {upcoming120.length} client{upcoming120.length !== 1 ? "s" : ""}
-                  {activeRFilters > 0 && (
-                    <button onClick={() => setDashFilter({ team: "All", market:"All",carrier:"All",situs:"All",funding:"All" })}
-                      style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
-                        background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
-                      Clear {activeRFilters} filter{activeRFilters > 1 ? "s" : ""}
-                    </button>
-                  )}
-                </div>
-              </div>
-              <button onClick={() => changeView("dashboard")} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
-            </div>
-
-            {/* Filter bar */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              {["Team Lead","VP","Lead"].includes(currentUser?.role?.trim()) && (
-                <select value={dashFilter.team} onChange={e => setDashF("team", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                    background: dashFilter.team !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Teams</option>
-                  {Object.entries(TEAMS).map(([key, t]) => (
-                    <option key={key} value={key}>Team {t.label}</option>
-                  ))}
-                </select>
-              )}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <select value={dashFilter.market} onChange={e => setDashF("market", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 130px",
-                    background: dashFilter.market !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Markets</option>
-                  {[...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <select value={dashFilter.funding} onChange={e => setDashF("funding", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                    background: dashFilter.funding !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Funding</option>
-                  {allFundingR.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-                <select value={dashFilter.carrier} onChange={e => setDashF("carrier", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 140px",
-                    background: dashFilter.carrier !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Carriers</option>
-                  {allCarriersR.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={dashFilter.situs} onChange={e => setDashF("situs", e.target.value)}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 10px", flex: "0 0 135px",
-                    background: dashFilter.situs !== "All" ? "#dce8f0" : undefined }}>
-                  <option value="All">All Situs</option>
-                  {allSitusR.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            </div>
-            </div>{/* end sticky */}
-
-            {renewalsFiltered.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", padding: "48px 20px", textAlign: "center", color: "#94a3b8" }}>
-                <div style={{ fontSize: 36, marginBottom: 10 }}>🎉</div>
-                <div style={{ fontWeight: 700, fontSize: 16, color: "#64748b" }}>
-                  No renewals in the next 120 days{activeRFilters > 0 ? " matching these filters" : ""}
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 18 }}>
-                {renewalsFiltered.map(c => (
-                  <ClientCard key={c.id} client={c} onEdit={setModal} onDelete={deleteClient} tasksDb={tasksData} currentUser={currentUser} />
-                ))}
-              </div>
-            )}
-          </div>
-          );
-        })()}
+        {view === "renewals" && (
+          <RenewalsKanban
+            clients={clients}
+            teams={teams}
+            currentUser={currentUser}
+            userTeams={userTeams}
+            onOpenClient={openClient}
+            renewals={renewals}
+            stages={renewalStages}
+            onUpdateRenewal={r => {
+              setRenewals(prev => prev.map(x => x.id === r.id ? r : x));
+              upsertRenewal(r);
+            }}
+          />
+        )}
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={setModal} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
+          <OpenTasksView clients={clients} onOpenClient={openClient} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
         )}
 
 
@@ -10367,7 +10528,7 @@ useEffect(() => {
                               const ws = wb.Sheets[wb.SheetNames[0]];
                               const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
                               const client = parseClientSpreadsheet(raw, tasksData);
-                              setModal(client);
+                              openClient(client);
                             } catch(err) {
                               alert("Could not parse spreadsheet: " + err.message);
                             }
@@ -10448,7 +10609,7 @@ useEffect(() => {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 18 }}>
                 {filtered.map(c => (
-                  <ClientCard key={c.id} client={c} onEdit={setModal} onDelete={deleteClient} tasksDb={tasksData} currentUser={currentUser} />
+                  <ClientCard key={c.id} client={c} onEdit={openClient} onDelete={deleteClient} tasksDb={tasksData} currentUser={currentUser} />
                 ))}
               </div>
             )}
@@ -10465,7 +10626,7 @@ useEffect(() => {
             teams={teams}
             onUpdateClient={saveClient}
             tasksDb={tasksData}
-            onOpenClient={setModal}
+            onOpenClient={openClient}
             currentUser={currentUser}
             userTeamId={userTeamId}
             userTeams={userTeams}
@@ -10490,6 +10651,8 @@ useEffect(() => {
             onSaveAnchorEvents={setAnchorEventsLibrary}
             taskTypesLibrary={taskTypesLibrary}
             onSaveTaskTypes={setTaskTypesLibrary}
+            salespersonsLibrary={salespersonsLibrary}
+            onSaveSalespersons={setSalespersonsLibrary}
             marketsLibrary={marketsLibrary}
             onSaveMarkets={setMarketsLibrary}
             fundingLibrary={fundingLibrary}
@@ -10528,12 +10691,32 @@ useEffect(() => {
         )}
 
 
-      </div>
+        </div>
 
       {modal && (() => {
         const liveClient = clients.find(c => c.id === modal.id) || modal;
         return <ClientModal client={liveClient} onSave={saveClient} onClose={() => { setModal(null); setDeepLinkTaskTab(null); setDeepLinkTaskId(null); }} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} transactionTypesLibrary={transactionTypesLibrary} initialTaskTab={deepLinkTaskTab} initialTaskId={deepLinkTaskId} />;
       })()}
+
+      {/* Full-page client profile */}
+      {view === "client" && selectedClient && (
+        <ClientProfile
+          client={clients.find(c => c.id === selectedClient.id) || selectedClient}
+          onSave={saveClient}
+          onClose={closeClient}
+          tasksDb={tasksData}
+          carriersData={carriersData}
+          dueDateRules={dueDateRules}
+          currentUser={currentUser}
+          teams={teams}
+          renewals={renewals}
+          renewalStages={renewalStages}
+          onUpdateRenewal={r => {
+            setRenewals(prev => prev.map(x => x.id === r.id ? r : x));
+            upsertRenewal(r);
+          }}
+        />
+      )}
 
       {/* Team Edit/Add Modal */}
       {teamModal && (
@@ -10581,6 +10764,8 @@ useEffect(() => {
           currentUser={currentUser}
         />
       )}
+
+      </div>
     </div>
   );
 }
@@ -10997,7 +11182,7 @@ function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
 }
 
 // ── Benefits constants ────────────────────────────────────────────────────────
-const BENEFITS_DB_CATEGORIES = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Tax-Advantaged"];
+const BENEFITS_DB_CATEGORIES = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Spending Accounts"];
 
 const BENEFITS_DB_OPTIONS = {
   planDesign: {
@@ -11008,7 +11193,7 @@ const BENEFITS_DB_OPTIONS = {
     "Worksite":           ["Fixed Schedule of Benefits","Condition/Treatment-Based Payouts","Lump Sum by Diagnosis","Per Diem / Admission Benefits"],
     "Wellness":           ["Embedded","Stand-alone"],
     "Lifestyle":          ["Embedded","Stand-alone","Reimbursement Model"],
-    "Tax-Advantaged":     ["Health FSA","Limited Purpose FSA","Dependent Care FSA","HSA (paired w/ HDHP)","HRA (ICHRA / QSEHRA / Integrated)","Transit / Parking (Sec. 132(f))"],
+    "Spending Accounts":     ["Health FSA","Limited Purpose FSA","Dependent Care FSA","HSA (paired w/ HDHP)","HRA (ICHRA / QSEHRA / Integrated)","Transit / Parking (Sec. 132(f))"],
   },
   variant: {
     "Core Health":        ["Medical","Dental","Vision","Rx","Behavioral Health"],
@@ -11018,7 +11203,7 @@ const BENEFITS_DB_OPTIONS = {
     "Worksite":           ["Accident","Critical Illness","Cancer","Hospital Indemnity"],
     "Wellness":           ["EAP","Telehealth","Wellness Program"],
     "Lifestyle":          ["Pet Insurance","Identity Theft Protection","Legal Services (Prepaid)","Financial Wellness","Commuter Benefits"],
-    "Tax-Advantaged":     ["Health FSA","Limited Purpose FSA","Dependent Care FSA","HSA","HRA","ICHRA","QSEHRA","Transit","Parking"],
+    "Spending Accounts":     ["Health FSA","Limited Purpose FSA","Dependent Care FSA","HSA","HRA","ICHRA","QSEHRA","Transit","Parking"],
   },
   fundingMethod:    ["Fully Insured","Level-Funded","Self-Insured","State","Trust/Custodial","Self-Insured (Unfunded)","Unfunded"],
   billingMethod:    ["Composite","Age-Based","Age-Banded","Composite/Age-Based","Composite/Age-Banded","Age-Issued/Age-Attained","N/A"],
@@ -11048,10 +11233,10 @@ const BENEFITS_DB_SEED = [
   { id:"bds_17", benefit:"Identity Theft",    category:"Lifestyle",         planDesign:"Embedded / Stand-alone",                 variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"125 (if pre-tax)", erisa:"Yes", ndtApplicability:"Yes (125)",                       notes:"" },
   { id:"bds_18", benefit:"Prepaid Legal",     category:"Lifestyle",         planDesign:"Embedded / Stand-alone",                 variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125)",                        notes:"" },
   { id:"bds_19", benefit:"Pet Insurance",     category:"Lifestyle",         planDesign:"Reimbursement model",                    variant:"",  fundingMethod:"Fully Insured",                               billingMethod:"Composite",               contributionMethod:"Voluntary",                         planType:"After-tax",      erisa:"No",  ndtApplicability:"No",                              notes:"" },
-  { id:"bds_20", benefit:"FSA",               category:"Tax-Advantaged",    planDesign:"Health / LP / Dependent Care",           variant:"",  fundingMethod:"Self-Insured (Unfunded)",                     billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125 + 105(h) for HFSA)",     notes:"" },
-  { id:"bds_21", benefit:"HSA",               category:"Tax-Advantaged",    planDesign:"ER Funding / No ER Funding",             variant:"",  fundingMethod:"Trust/Custodial",                             billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 223",       erisa:"No",  ndtApplicability:"Yes (comparability)",              notes:"Must be paired with HDHP" },
-  { id:"bds_22", benefit:"HRA",               category:"Tax-Advantaged",    planDesign:"ICHRA / QSEHRA / Integrated",            variant:"",  fundingMethod:"Self-Insured",                                billingMethod:"",                        contributionMethod:"Non-Contrib",                       planType:"Sec. 105",       erisa:"Yes", ndtApplicability:"Yes (105(h))",                     notes:"" },
-  { id:"bds_23", benefit:"Commuter",          category:"Tax-Advantaged",    planDesign:"Transit / Parking",                      variant:"",  fundingMethod:"Unfunded",                                    billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 132(f)",    erisa:"No",  ndtApplicability:"No",                              notes:"" },
+  { id:"bds_20", benefit:"FSA",               category:"Spending Accounts",    planDesign:"Health / LP / Dependent Care",           variant:"",  fundingMethod:"Self-Insured (Unfunded)",                     billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 125",       erisa:"Yes", ndtApplicability:"Yes (125 + 105(h) for HFSA)",     notes:"" },
+  { id:"bds_21", benefit:"HSA",               category:"Spending Accounts",    planDesign:"ER Funding / No ER Funding",             variant:"",  fundingMethod:"Trust/Custodial",                             billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 223",       erisa:"No",  ndtApplicability:"Yes (comparability)",              notes:"Must be paired with HDHP" },
+  { id:"bds_22", benefit:"HRA",               category:"Spending Accounts",    planDesign:"ICHRA / QSEHRA / Integrated",            variant:"",  fundingMethod:"Self-Insured",                                billingMethod:"",                        contributionMethod:"Non-Contrib",                       planType:"Sec. 105",       erisa:"Yes", ndtApplicability:"Yes (105(h))",                     notes:"" },
+  { id:"bds_23", benefit:"Commuter",          category:"Spending Accounts",    planDesign:"Transit / Parking",                      variant:"",  fundingMethod:"Unfunded",                                    billingMethod:"",                        contributionMethod:"Contrib",                           planType:"Sec. 132(f)",    erisa:"No",  ndtApplicability:"No",                              notes:"" },
 ];
 
 // ── AdminView ─────────────────────────────────────────────────────────────────
@@ -11117,7 +11302,7 @@ const LIB_FOOTER = {
 };
 
 // ── AdminView ─────────────────────────────────────────────────────────────────
-function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
+function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, salespersonsLibrary, onSaveSalespersons, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
   const [adminTab, setAdminTab] = useState("plans");
 
   const tabs = [
@@ -11126,6 +11311,7 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
     { id: "tasks",         label: "✅ Tasks" },
     { id: "anchors",       label: "⚓ Anchor Events" },
     { id: "ddr",           label: "📅 Due Date Rules" },
+    { id: "salespersons",  label: "👤 Salespersons" },
     { id: "markets",       label: "📊 Markets" },
     { id: "funding",       label: "💰 Funding" },
     { id: "employerTypes", label: "🏢 Employer Types" },
@@ -11191,6 +11377,9 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
       )}
       {adminTab === "ddr" && (
         <DdrLibraryView dueDateRules={dueDateRules} onSave={onSaveDueDateRules} allAnchors={allAnchors} currentUser={currentUser} />
+      )}
+      {adminTab === "salespersons" && (
+        <SimpleLibraryView title="Salespersons" items={salespersonsLibrary} onSave={onSaveSalespersons} currentUser={currentUser} hasAbbr={false} description="Salespeople available in the client salesperson dropdown." />
       )}
       {adminTab === "markets" && (
         <SimpleLibraryView title="Markets" items={marketsLibrary} onSave={onSaveMarkets} currentUser={currentUser} hasAbbr={false} description="Market size categories used to classify clients and filter tasks." />
@@ -11334,7 +11523,7 @@ function SimpleLibraryView({ title, items, onSave, currentUser, hasAbbr, descrip
 // ── PlansLibraryView ──────────────────────────────────────────────────────────
 const PLAN_BENEFIT_CATEGORIES = [
   "Core Health", "Life & AD&D", "Income Protection",
-  "Statutory Income", "Worksite", "Wellness", "Lifestyle", "Tax-Advantaged",
+  "Statutory Income", "Worksite", "Wellness", "Lifestyle", "Spending Accounts",
 ];
 
 const PLAN_TYPES_BY_CATEGORY = {
@@ -11345,7 +11534,7 @@ const PLAN_TYPES_BY_CATEGORY = {
   "Worksite":           ["Fixed Schedule", "Lump Sum", "Per Diem", "Other"],
   "Wellness":           ["Embedded", "Stand-alone", "Other"],
   "Lifestyle":          ["Embedded", "Stand-alone", "Other"],
-  "Tax-Advantaged":     ["Health FSA", "Limited FSA", "Dependent Care FSA", "HSA", "HRA", "Commuter", "Other"],
+  "Spending Accounts":     ["Health FSA", "Limited FSA", "Dependent Care FSA", "HSA", "HRA", "Commuter", "Other"],
 };
 
 // Default plans seeded from Benefits DB — one entry per plan design variant
@@ -11392,12 +11581,12 @@ const DEFAULT_PLANS_LIBRARY = [
   { planName: "Prepaid Legal",   category: "Lifestyle", planType: "Embedded", notes: "" },
   { planName: "Pet Insurance",   category: "Lifestyle", planType: "Other",    notes: "" },
   // Tax-Advantaged
-  { planName: "FSA", category: "Tax-Advantaged", planType: "Health FSA",         notes: "" },
-  { planName: "FSA", category: "Tax-Advantaged", planType: "Limited FSA",        notes: "" },
-  { planName: "FSA", category: "Tax-Advantaged", planType: "Dependent Care FSA", notes: "" },
-  { planName: "HSA", category: "Tax-Advantaged", planType: "HSA",                notes: "Must be paired with HDHP" },
-  { planName: "HRA", category: "Tax-Advantaged", planType: "HRA",                notes: "" },
-  { planName: "Commuter", category: "Tax-Advantaged", planType: "Commuter",      notes: "" },
+  { planName: "FSA", category: "Spending Accounts", planType: "Health FSA",         notes: "" },
+  { planName: "FSA", category: "Spending Accounts", planType: "Limited FSA",        notes: "" },
+  { planName: "FSA", category: "Spending Accounts", planType: "Dependent Care FSA", notes: "" },
+  { planName: "HSA", category: "Spending Accounts", planType: "HSA",                notes: "Must be paired with HDHP" },
+  { planName: "HRA", category: "Spending Accounts", planType: "HRA",                notes: "" },
+  { planName: "Commuter", category: "Spending Accounts", planType: "Commuter",      notes: "" },
 ].map((p, i) => ({ ...p, id: "seed_" + i + "_" + p.planName.toLowerCase().replace(/[^a-z0-9]+/g, "_") + "_" + p.planType.toLowerCase().replace(/[^a-z0-9]+/g, "_") }));
 
 function PlansLibraryView({ plansLibrary, onSave, currentUser }) {
@@ -12160,7 +12349,7 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
     "Worksite":          { bg:"#dcfce7", text:"#166534" },
     "Wellness":          { bg:"#e0f2fe", text:"#0369a1" },
     "Lifestyle":         { bg:"#fde68a", text:"#78350f" },
-    "Tax-Advantaged":    { bg:"#d1fae5", text:"#065f46" },
+    "Spending Accounts":    { bg:"#d1fae5", text:"#065f46" },
   };
 
   function DropdownCell({ field, value, options, onChange }) {
@@ -14481,11 +14670,3628 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
             </div>
           </div>
         )}
+    </div>
+  </div>
+  );
+}
+
+
+
+// ── Renewals Kanban Board ─────────────────────────────────────────────────────
+
+function RenewalsKanban({ clients, teams, currentUser, userTeams, onOpenClient, renewals, stages, onUpdateRenewal }) {
+  const [filterTeam, setFilterTeam] = React.useState("All");
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const loading = !stages.length;
+
+  // Only show active (in_progress) renewals on the board
+  const activeRenewals = renewals.filter(r => r.status === 'in_progress');
+
+  // Apply team filter
+  const filtered = activeRenewals.filter(r => {
+    if (!isLead && userTeams.length > 0 && !userTeams.includes(r.team_id)) return false;
+    if (filterTeam !== "All" && r.team_id !== filterTeam) return false;
+    return true;
+  });
+
+  // Build client lookup — handle both string and integer IDs
+  const clientMap = {};
+  clients.forEach(c => { 
+    clientMap[c.id] = c; 
+    clientMap[String(c.id)] = c;
+    clientMap[Number(c.id)] = c;
+  });
+
+  // Team color lookup
+  const teamMap = {};
+  teams.forEach(t => { teamMap[t.id] = t; });
+
+  function moveToStage(renewal, stage) {
+    const updated = { ...renewal, stage_id: stage.id };
+    onUpdateRenewal(updated);
+  }
+
+  const BOB_OLIVE = { bg: "#eef2d8", border: "#c8d48a", text: "#55652B", dark: "#3d4a1a" };
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading renewals...</div>
+  );
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+            {filtered.length} active renewal{filtered.length !== 1 ? "s" : ""} in pipeline
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {isLead && (
+            <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "6px 10px", width: "auto",
+                background: filterTeam !== "All" ? BOB_OLIVE.bg : "#fff" }}>
+              <option value="All">All Teams</option>
+              {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* Kanban board — horizontal scroll */}
+      <div style={{ overflowX: "auto", paddingBottom: 16 }}>
+        <div style={{ display: "flex", gap: 14, minWidth: "max-content", alignItems: "flex-start" }}>
+          {stages.map(stage => {
+            const stageRenewals = filtered.filter(r => r.stage_id === stage.id);
+            const isEmpty = stageRenewals.length === 0;
+
+            return (
+              <div key={stage.id} style={{
+                width: 240, flexShrink: 0,
+                background: "#f8fafc",
+                borderRadius: 12,
+                border: "1.5px solid #e2e8f0",
+                overflow: "hidden",
+              }}>
+                {/* Column header */}
+                <div style={{
+                  padding: "10px 14px",
+                  background: stageRenewals.length > 0 ? BOB_OLIVE.bg : "#f1f5f9",
+                  borderBottom: `2px solid ${stageRenewals.length > 0 ? BOB_OLIVE.border : "#e2e8f0"}`,
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: stageRenewals.length > 0 ? BOB_OLIVE.dark : "#64748b",
+                    letterSpacing: "0.3px", textTransform: "uppercase" }}>
+                    {stage.name}
+                  </div>
+                  {stageRenewals.length > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 800, color: BOB_OLIVE.text,
+                      background: "#fff", borderRadius: 99, padding: "1px 7px",
+                      border: `1px solid ${BOB_OLIVE.border}` }}>
+                      {stageRenewals.length}
+                    </span>
+                  )}
+                </div>
+
+                {/* Cards */}
+                <div style={{ padding: "10px 10px", display: "flex", flexDirection: "column", gap: 8, minHeight: 80 }}>
+                  {isEmpty && (
+                    <div style={{ padding: "16px 8px", textAlign: "center", color: "#cbd5e1", fontSize: 11 }}>
+                      No clients
+                    </div>
+                  )}
+                  {stageRenewals.map(renewal => {
+                    const client = clientMap[renewal.client_id];
+                    if (!client) return null;
+                    const team = teamMap[renewal.team_id];
+                    const daysLeft = Math.ceil((new Date(renewal.effective_date) - new Date()) / 86400000);
+                    const isUrgent = daysLeft <= 30;
+                    const medCarrier = (client.benefitCarriers || {}).medical || (client.carriers || [])[0] || "";
+
+                    return (
+                      <div key={renewal.id}
+                        onClick={() => onOpenClient(client)}
+                        style={{
+                          background: "#fff",
+                          borderRadius: 9,
+                          border: `1.5px solid ${team ? team.border : "#e2e8f0"}`,
+                          borderLeft: `4px solid ${team ? team.border : "#e2e8f0"}`,
+                          padding: "10px 12px",
+                          cursor: "pointer",
+                          boxShadow: "0 1px 4px rgba(0,0,0,.06)",
+                          transition: "all .15s",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,.12)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+                        onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,.06)"; e.currentTarget.style.transform = "none"; }}
+                      >
+                        {/* Client name */}
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", marginBottom: 4,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {client.name}
+                        </div>
+
+                        {/* Renewal date + urgency */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>
+                            {new Date(renewal.effective_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          </div>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 99,
+                            background: isUrgent ? "#fee2e2" : daysLeft <= 60 ? "#fef3c7" : "#f0fdf4",
+                            color: isUrgent ? "#991b1b" : daysLeft <= 60 ? "#92400e" : "#166534",
+                          }}>
+                            {daysLeft}d
+                          </span>
+                        </div>
+
+                        {/* Tags */}
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {team && (
+                            <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+                              background: team.color, color: team.text }}>
+                              {team.label}
+                            </span>
+                          )}
+                          {medCarrier && (
+                            <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 99,
+                              background: "#f1f5f9", color: "#475569" }}>
+                              {medCarrier}
+                            </span>
+                          )}
+                          {client.marketSize && (
+                            <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 99,
+                              background: "#f0fdf4", color: "#166534" }}>
+                              {client.marketSize}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Move stage buttons */}
+                        <div style={{ display: "flex", gap: 4, marginTop: 8, justifyContent: "flex-end" }}>
+                          {stages.find(s => s.display_order === stage.display_order - 1) && (
+                            <button onClick={e => { e.stopPropagation(); moveToStage(renewal, stages.find(s => s.display_order === stage.display_order - 1)); }}
+                              style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, border: "1px solid #e2e8f0",
+                                background: "#f8fafc", color: "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                              ← Back
+                            </button>
+                          )}
+                          {stages.find(s => s.display_order === stage.display_order + 1) && (
+                            <button onClick={e => { e.stopPropagation(); moveToStage(renewal, stages.find(s => s.display_order === stage.display_order + 1)); }}
+                              style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, border: `1px solid ${BOB_OLIVE.border}`,
+                                background: BOB_OLIVE.bg, color: BOB_OLIVE.dark, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>
+                              Next →
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
+
+// ── Client Profile (Full Page) ────────────────────────────────────────────────
+
+function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal }) {
+  const [activeSection, setActiveSection] = React.useState("overview");
+
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const isAE   = currentUser?.role?.trim() === "Account Executive";
+  const canSeeCommission = ["Team Lead","VP","Lead","Account Executive"].includes(currentUser?.role?.trim());
+
+  const team = teams.find(t => t.id === client.team);
+  const clientRenewal = renewals.find(r => String(r.client_id) === String(client.id) && r.status === 'in_progress');
+  const currentStage = renewalStages.find(s => s.id === clientRenewal?.stage_id);
+
+  // ── Shared editor state (mirrors ClientModal) ─────────────────────────────
+  const [data, setData] = React.useState(() => {
+    const base = JSON.parse(JSON.stringify(client));
+    if (base.employeeClasses) {
+      base.employeeClasses = base.employeeClasses.map(cls => cls.id ? cls : { ...cls, id: generateId() });
+    }
+    return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
+  });
+  const [isDirty, setIsDirty] = React.useState(false);
+
+  // Sync when client prop changes externally
+  React.useEffect(() => {
+    setData(JSON.parse(JSON.stringify(client)));
+    setIsDirty(false);
+  }, [client.id]);
+
+  const set = (key, val) => { setIsDirty(true); setData(p => ({ ...p, [key]: val })); };
+  function applyDDR(newData) { return applyDueDateRulesToClient(newData, tasksDb, dueDateRules); }
+  function setWithDDR(key, val) { setIsDirty(true); setData(p => applyDDR({ ...p, [key]: val })); }
+
+  function setTask(group, id, field, val, taskLabel, category) {
+    setIsDirty(true);
+    setData(p => {
+      const existing = p[group]?.[id];
+      const base = (!existing || typeof existing === "string")
+        ? { status: existing || "Not Started", assignee: "", dueDate: "" }
+        : { ...existing };
+      const updated = { ...base, [field]: val };
+      if (["status","dueDate","assignee","completedDate"].includes(field) && base[field] !== val) {
+        insertAuditLog({ clientId: p.id, clientName: p.name,
+          userName: currentUser?.name || "Unknown", userRole: currentUser?.role || "",
+          category: category || group, taskLabel: taskLabel || id, field,
+          oldValue: base[field] ?? "", newValue: val ?? "" });
+      }
+      return { ...p, [group]: { ...p[group], [id]: updated } };
+    });
+  }
+
+  function getTask(group, id) {
+    const t = data[group]?.[id];
+    const dbTask = (tasksDb || []).find(td => td.id === "t_" + id) || (tasksDb || []).find(td => td.id === id);
+    const dbRole = dbTask?.defaultAssignee || "";
+    const defaultAssignee = resolveAssignee(dbRole, data.team);
+    if (!t) return { status: "Not Started", assignee: defaultAssignee, dueDate: "", completedDate: "" };
+    if (typeof t === "string") return { status: t, assignee: defaultAssignee, dueDate: "", completedDate: "" };
+    return { status: "Not Started", assignee: defaultAssignee, dueDate: "", completedDate: "", ...t };
+  }
+
+  const oe = data.openEnrollment || {};
+  function setOE(field, val) {
+    const OE_ANCHOR_FIELDS = ["oeStartDate", "oeEndDate"];
+    if (OE_ANCHOR_FIELDS.includes(field)) {
+      setData(p => applyDDR({ ...p, openEnrollment: { ...(p.openEnrollment || {}), [field]: val } }));
+    } else {
+      setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment || {}), [field]: val } }));
+    }
+  }
+
+  // Auto-save when dirty
+  React.useEffect(() => {
+    if (!isDirty) return;
+    const timer = setTimeout(() => {
+      onSave(data);
+      setIsDirty(false);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [data, isDirty]);
+
+  // Task completion counts for badges
+  function countTasks(group) {
+    const tasks = typeof group === 'object' && !Array.isArray(group) ? Object.values(group) : (group || []);
+    const total = tasks.length;
+    const done = tasks.filter(t => {
+      const s = typeof t === 'object' ? t?.status : t;
+      return s === 'Complete' || s === 'N/A';
+    }).length;
+    return { done, total };
+  }
+
+  const preRenewalCount = countTasks(data.preRenewal || {});
+  // Renewal: combines the fixed renewalMeeting + auto tasks + array tasks
+  const renewalAutoTasks = Object.values(data.renewalTasksAuto || {});
+  const renewalArrTasks  = data.renewalTasks || [];
+  const renewalMeetingTask = data.renewalMeeting ? [data.renewalMeeting] : [];
+  const allRenewalTasks = [...renewalMeetingTask, ...renewalAutoTasks, ...renewalArrTasks];
+  const renewalCount = { 
+    done: allRenewalTasks.filter(t => t?.status === 'Complete' || t?.status === 'N/A').length,
+    total: allRenewalTasks.length 
+  };
+  const postOECount     = countTasks(data.postOEFixed || {});
+  const complianceCount = countTasks(data.compliance || {});
+  const miscCount       = { done: 0, total: (data.miscTasks || []).length };
+  const txnCount        = { done: 0, total: (data.transactions || []).length };
+
+  const BOB = {
+    sidebar: "#2b3a4a", sidebarBorder: "#3a4f62",
+    navActive: "#4b7896", navActiveBg: "rgba(75,120,150,0.15)",
+    navText: "#a8bfcc", navTextActive: "#e8f2f8",
+    olive: "#7B8C3F", oliveDark: "#55652B", oliveBg: "#eef2d8",
+  };
+
+  function Badge({ done, total, urgent }) {
+    if (!total) return null;
+    const pct = total ? done/total : 0;
+    const bg = urgent ? "#fee2e2" : pct === 1 ? "#dcfce7" : "#eef2d8";
+    const color = urgent ? "#991b1b" : pct === 1 ? "#166534" : BOB.oliveDark;
+    return (
+      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+        background: bg, color, flexShrink: 0 }}>
+        {done}/{total}
+      </span>
+    );
+  }
+
+  const NAV = [
+    { id: "overview",   label: "Overview",   icon: "⊞" },
+    { id: "benefits",   label: "Benefits",   icon: "◫" },
+    { section: "Renewal Cycle" },
+    { id: "prerenewal", label: "Pre-Renewal",      icon: "↓", badge: preRenewalCount },
+    { id: "renewal",    label: "Renewal",           icon: "↻", badge: renewalCount },
+    { id: "oe",         label: "Open Enrollment",  icon: "◈", badge: null },
+    { id: "postoe",     label: "Post-OE",          icon: "✓", badge: postOECount },
+    { section: "Operations" },
+    { id: "compliance",   label: "Compliance",   icon: "⚖", badge: complianceCount },
+    { id: "transactions", label: "Transactions", icon: "⇄", badge: txnCount.total > 0 ? txnCount : null },
+    { id: "tasks",        label: "Tasks",        icon: "▣", badge: miscCount.total > 0 ? miscCount : null },
+    { id: "documents",    label: "Documents",    icon: "▤" },
+    ...(canSeeCommission ? [{ id: "commission", label: "Commission", icon: "$" }] : []),
+    { section: "History" },
+    { id: "planyears",  label: "Plan Years",  icon: "◷" },
+    { id: "activity",   label: "Activity",    icon: "↻" },
+  ];
+
+  const statusStyles = {
+    Active:      { bg: "#dcfce7", color: "#166534" },
+    Terminated:  { bg: "#fee2e2", color: "#991b1b" },
+    Transferred: { bg: "#fef3c7", color: "#92400e" },
+  };
+  const ss = statusStyles[client.clientStatus] || statusStyles.Active;
+
+  return (
+    <div style={{ display: "flex", height: "calc(100vh - 54px)", overflow: "hidden", background: "#f4f7f9" }}>
+
+      {/* Client sidebar */}
+      <div style={{ width: 200, flexShrink: 0, background: BOB.sidebar,
+        borderRight: `1px solid ${BOB.sidebarBorder}`,
+        display: "flex", flexDirection: "column", overflowY: "auto" }}>
+
+        {/* Client identity */}
+        <div style={{ padding: "14px 14px 10px", borderBottom: `1px solid ${BOB.sidebarBorder}` }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: BOB.navText,
+            fontSize: 11, cursor: "pointer", padding: 0, marginBottom: 8, fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 4 }}>
+            ← Back
+          </button>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1.3, marginBottom: 4 }}>
+            {client.name}
+          </div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 99,
+              background: ss.bg, color: ss.color }}>{client.clientStatus || "Active"}</span>
+            {team && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 99,
+              background: team.color, color: team.text }}>{team.label}</span>}
+          </div>
+          {clientRenewal && (
+            <div style={{ marginTop: 6, fontSize: 10, color: BOB.navText }}>
+              Stage: <span style={{ color: "#e8f2f8", fontWeight: 600 }}>{currentStage?.name || "—"}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Nav items */}
+        <nav style={{ flex: 1, padding: "8px 6px" }}>
+          {NAV.map((item, i) => {
+            if (item.section) return (
+              <div key={i} style={{ padding: "10px 8px 3px", fontSize: 9, fontWeight: 600,
+                color: BOB.navText, letterSpacing: "0.8px", textTransform: "uppercase", opacity: 0.7 }}>
+                {item.section}
+              </div>
+            );
+            const active = activeSection === item.id;
+            const hasOverdue = item.badge && item.badge.done < item.badge.total &&
+              item.badge.total > 0;
+            return (
+              <button key={item.id}
+                onClick={() => setActiveSection(item.id)}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8,
+                  padding: "7px 10px", borderRadius: 7, marginBottom: 1,
+                  border: "none", cursor: "pointer", textAlign: "left",
+                  background: active ? BOB.navActiveBg : "transparent",
+                  borderLeft: `3px solid ${active ? BOB.navActive : "transparent"}`,
+                  color: active ? BOB.navTextActive : BOB.navText,
+                  fontFamily: "inherit", fontWeight: active ? 600 : 400, fontSize: 12,
+                  justifyContent: "space-between",
+                }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span style={{ fontSize: 12, opacity: active ? 1 : 0.6, color: active ? BOB.navActive : BOB.navText }}>
+                    {item.icon}
+                  </span>
+                  {item.label}
+                </span>
+                {item.badge && <Badge done={item.badge.done} total={item.badge.total} urgent={hasOverdue && item.badge.done === 0} />}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Main content */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+
+        {/* Overview */}
+        {activeSection === "overview" && (
+          <ClientOverview
+            data={data} set={set} setData={setData}
+            client={client} team={team} currentUser={currentUser}
+            tasksDb={tasksDb} dueDateRules={dueDateRules} clientRenewal={clientRenewal}
+            currentStage={currentStage} renewalStages={renewalStages} onUpdateRenewal={onUpdateRenewal}
+            teams={teams} salespersonsLibrary={salespersonsLibrary}
+          />
+        )}
+
+        {/* Benefits */}
+        {activeSection === "benefits" && (
+          <ClientBenefits
+            data={data} set={set} setData={setData}
+            carriersData={carriersData} currentUser={currentUser}
+            applyPreRenewalRules={applyPreRenewalRules}
+          />
+        )}
+
+        {/* Pre-Renewal — uses shared ClientModal tab via taskTab prop */}
+        {activeSection === "prerenewal" && (
+          <ClientModalSection
+            section="preRenewal"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Renewal Tasks */}
+        {activeSection === "renewal" && (
+          <ClientModalSection
+            section="renewal"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Open Enrollment */}
+        {activeSection === "oe" && (
+          <ClientModalSection
+            section="oe"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR} oe={oe} setOE={setOE}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Post-OE */}
+        {activeSection === "postoe" && (
+          <ClientModalSection
+            section="postOE"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Compliance */}
+        {activeSection === "compliance" && (
+          <ClientModalSection
+            section="compliance"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Transactions */}
+        {activeSection === "transactions" && (
+          <ClientModalSection
+            section="transactions"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Tasks */}
+        {activeSection === "tasks" && (
+          <ClientModalSection
+            section="misc"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+          />
+        )}
+
+        {/* Documents */}
+        {activeSection === "documents" && (
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733", marginBottom: 16 }}>Documents</div>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0", padding: "48px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#64748b" }}>Document storage coming soon</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 6 }}>
+                Storage solution being finalized — Supabase Storage selected
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Commission */}
+        {activeSection === "commission" && canSeeCommission && (
+          <CommissionView data={data} setData={setData} carriersData={carriersData} />
+        )}
+
+        {/* Plan Years */}
+        {activeSection === "planyears" && (
+          <PlanYearsSection
+            data={data} set={set} setData={setData}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            currentUser={currentUser}
+          />
+        )}
+
+        {/* Activity */}
+        {activeSection === "activity" && (
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733", marginBottom: 16 }}>Activity Log</div>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 20 }}>
+              <div style={{ fontSize: 13, color: "#64748b" }}>Activity log migration in progress.</div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+
+// ── Client Overview Tab ───────────────────────────────────────────────────────
+
+function ClientOverview({ data, set, setData, client, team, currentUser,
+  tasksDb, dueDateRules, clientRenewal, currentStage, renewalStages, onUpdateRenewal, teams, salespersonsLibrary }) {
+
+  // Label maps for stored codes
+  const CONTINUATION_LABELS = {
+    cobra: "COBRA", state_cont: "State Continuation",
+  };
+  const MEDICARE_LABELS = {
+    medicare_primary: "Medicare Primary", plan_primary: "Plan Primary",
+  };
+  const MARKET_SIZES = ["ACA","Mid-Market","Large","National"];
+  const FUNDING_METHODS = ["Fully Insured","Level-Funded","Self-Funded","COBRA Only"];
+  const PAYROLL_FREQS = ["Weekly","Bi-Weekly","Semi-Monthly","Monthly"];
+
+  // Collect due-soon / overdue tasks
+  const today = new Date();
+  const in30 = new Date(); in30.setDate(today.getDate() + 30);
+  const dueSoon = [];
+  function checkTask(t, label) {
+    if (!t || typeof t !== 'object') return;
+    const due = t.dueDate;
+    if (!due || t.status === 'Complete' || t.status === 'N/A') return;
+    const d = new Date(due + 'T12:00:00');
+    if (d < today && t.status !== 'Complete') dueSoon.push({ label, due, assignee: t.assignee, overdue: true });
+    else if (d >= today && d <= in30) dueSoon.push({ label, due, assignee: t.assignee });
+  }
+  Object.entries(data.preRenewal || {}).forEach(([k,v]) => checkTask(v, k.replace(/_/g,' ')));
+  Object.entries(data.compliance || {}).forEach(([k,v]) => checkTask(v, k.replace(/_/g,' ')));
+
+  // Editable field components
+  const Field = ({ label, field, placeholder, type = "text" }) => (
+    <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+      <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>{label}</div>
+      <DebouncedInput type={type} value={data[field] || ""} placeholder={placeholder || "—"}
+        onChange={v => set(field, v)}
+        style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
+          fontSize: 12, fontFamily: "inherit", color: "#1a2733", background: "#fff",
+          outline: "none" }} />
+    </div>
+  );
+
+  const SelectField = ({ label, field, options, placeholder }) => (
+    <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+      <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>{label}</div>
+      <select value={data[field] || ""} onChange={e => set(field, e.target.value)}
+        style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
+          fontSize: 12, fontFamily: "inherit", color: data[field] ? "#1a2733" : "#94a3b8",
+          background: "#fff", cursor: "pointer" }}>
+        <option value="">{placeholder || "— Select —"}</option>
+        {options.map(o => typeof o === 'string'
+          ? <option key={o} value={o}>{o}</option>
+          : <option key={o.val} value={o.val}>{o.label}</option>
+        )}
+      </select>
+    </div>
+  );
+
+  const CheckboxField = ({ label, field }) => (
+    <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+      <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>{label}</div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+        <input type="checkbox" checked={!!data[field]}
+          onChange={e => set(field, e.target.checked)}
+          style={{ accentColor: "#4b7896", width: 14, height: 14 }} />
+        <span style={{ fontSize: 12, color: "#1a2733" }}>{data[field] ? "Yes" : "No"}</span>
+      </label>
+    </div>
+  );
+
+  const MultiCheckField = ({ label, field, options }) => {
+    const vals = data[field] || [];
+    return (
+      <div style={{ display: "flex", alignItems: "flex-start", marginBottom: 8, gap: 8 }}>
+        <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0, paddingTop: 2 }}>{label}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {options.map(o => {
+            const isChecked = vals.includes(o.val);
+            return (
+              <label key={o.val} style={{ display: "flex", alignItems: "center", gap: 4,
+                cursor: "pointer", padding: "3px 8px", borderRadius: 6, fontSize: 11,
+                border: `1px solid ${isChecked ? "#4b7896" : "#e2e8f0"}`,
+                background: isChecked ? "#dce8f0" : "#f8fafc",
+                color: isChecked ? "#2d4a6b" : "#64748b", fontWeight: isChecked ? 700 : 400 }}>
+                <input type="checkbox" checked={isChecked}
+                  onChange={() => set(field, isChecked
+                    ? vals.filter(v => v !== o.val)
+                    : [...vals, o.val])}
+                  style={{ accentColor: "#4b7896", width: 12, height: 12 }} />
+                {o.label}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const Card = ({ title, children, accent }) => (
+    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0",
+      borderTop: `3px solid ${accent || "#4b7896"}`, padding: "16px 18px", marginBottom: 16 }}>
+      {title && <div style={{ fontSize: 13, fontWeight: 700, color: "#1a2733", marginBottom: 12,
+        paddingBottom: 8, borderBottom: "1px solid #f1f5f9" }}>{title}</div>}
+      {children}
+    </div>
+  );
+
+  // Medical enrolled auto-sum
+  const medPlans = (data.benefitPlans || {}).medical || [];
+  const medEnrolled = medPlans.length > 0
+    ? medPlans.reduce((s,pl) => {
+        if (pl.ageBands?.length > 0) return s + pl.ageBands.reduce((ss,b) => ss+(parseInt(b.enrolled)||0),0);
+        return s + ["ee","es","ec","ff"].reduce((ss,k) => ss+(parseInt((pl.enrolled||{})[k])||0),0);
+      }, 0)
+    : (data.medicalEnrolled || null);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+
+      {/* ── Left column ── */}
+      <div>
+        <Card title="Client Information" accent="#4b7896">
+          <Field label="Legal Name"          field="name" />
+          <Field label="Nature of Business"  field="natureOfBusiness" />
+          <Field label="Corporate Structure" field="corporateStructure" />
+          <Field label="Tax ID"              field="taxId" />
+          <Field label="SIC Code"            field="sic" />
+          <Field label="Annual Revenue"      field="annualRevenue" />
+          <Field label="# Locations"         field="numLocations" type="number" />
+          <SelectField label="Group Situs"   field="groupSitus"
+            options={["Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut",
+              "Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas",
+              "Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota",
+              "Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey",
+              "New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon",
+              "Pennsylvania","Rhode Island","South Carolina","South Dakota","Tennessee","Texas",
+              "Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"]}
+            placeholder="— Select state —" />
+
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+            <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>Sales Person</div>
+            <select value={data.salesPerson || ""} onChange={e => set("salesPerson", e.target.value)}
+              style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
+                fontSize: 12, fontFamily: "inherit", color: data.salesPerson ? "#1a2733" : "#94a3b8", background: "#fff" }}>
+              <option value="">— Select —</option>
+              {[...(salespersonsLibrary && salespersonsLibrary.length > 0
+                ? salespersonsLibrary
+                : [{label:"SI"},{label:"Lock"},{label:"Amanda"},{label:"Anthony"},
+                   {label:"Holly"},{label:"Jaclyn"},{label:"Jonathon"},{label:"Rob"},
+                   {label:"Steve"},{label:"BDT"}]
+              )].sort((a,b)=>(a.order??0)-(b.order??0)).map((s,i) => (
+                <option key={s.id||i} value={s.label}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+        </Card>
+
+        <Card title="Contact Information" accent="#78873c">
+          <Field label="Primary Contact"  field="contactName" />
+          <Field label="Title"            field="contactTitle" />
+          <Field label="Email"            field="contactEmail" type="email" />
+          <Field label="Phone"            field="contactPhone" type="tel" />
+          <Field label="Main Phone"       field="mainPhone" type="tel" />
+          <Field label="Street Address"   field="streetAddress" />
+          <Field label="City"             field="city" />
+          <Field label="State"            field="state" />
+          <Field label="ZIP"              field="zipCode" />
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f1f5f9",
+            fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase",
+            letterSpacing: "0.5px", marginBottom: 8 }}>Additional Contact</div>
+          <Field label="Name"   field="addlContactName" />
+          <Field label="Title"  field="addlContactTitle" />
+          <Field label="Email"  field="addlContactEmail" type="email" />
+          <Field label="Phone"  field="addlContactPhone" type="tel" />
+        </Card>
+
+      </div>
+
+      {/* ── Right column ── */}
+      <div>
+        <Card title="Renewal Summary" accent={team?.border || "#4b7896"}>
+          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+            <div style={{ flex: 1, textAlign: "center", padding: "10px 8px",
+              background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+              <DebouncedInput value={data.totalEligible || ""} inputMode="numeric"
+                onChange={v => set("totalEligible", v.replace(/\D/g,""))}
+                placeholder="0"
+                style={{ width: "100%", fontSize: 20, fontWeight: 800, color: "#1a2733",
+                  border: "none", textAlign: "center", background: "transparent",
+                  fontFamily: "inherit", outline: "none" }} />
+              <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: "0.5px" }}>Total Eligible</div>
+            </div>
+            <div style={{ flex: 1, textAlign: "center", padding: "10px 8px",
+              background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2733" }}>
+                {medEnrolled ?? "—"}
+              </div>
+              <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: "0.5px" }}>Medical Enrolled</div>
+              <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>
+                {medPlans.length > 0 ? "auto-sum from plans" : "set in Benefits tab"}
+              </div>
+            </div>
+          </div>
+          <Field label="Renewal Date"    field="renewalDate" type="date" />
+          <SelectField label="Market Segment" field="marketSize" options={MARKET_SIZES} />
+          <SelectField label="Funding Method" field="fundingMethod" options={FUNDING_METHODS} />
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8,
+            opacity: data.marketSize === "ACA" ? 1 : 0.4,
+            pointerEvents: data.marketSize === "ACA" ? "auto" : "none" }}>
+            <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>
+              Rating Region
+              {data.marketSize !== "ACA" && (
+                <span style={{ marginLeft: 4, fontSize: 10, color: "#94a3b8" }}>(ACA only)</span>
+              )}
+            </div>
+            <DebouncedInput value={data.ratingRegion || ""} placeholder="e.g. Chicago"
+              onChange={v => set("ratingRegion", v)}
+              style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
+                fontSize: 12, fontFamily: "inherit", color: "#1a2733", background: "#fff",
+                outline: "none" }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+            <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>Lead</div>
+            <select value={data.lead || ""} onChange={e => set("lead", e.target.value)}
+              style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
+                fontSize: 12, fontFamily: "inherit", color: data.lead ? "#1a2733" : "#94a3b8", background: "#fff" }}>
+              <option value="">— Select —</option>
+              {(() => {
+                const seen = new Set();
+                return teams.flatMap(t => (t.members||[]).filter(m =>
+                  m.role === "Team Lead" || m.role === "VP" || m.role === "Lead"
+                )).filter(m => {
+                  const abbr = m.name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase() || m.name;
+                  if (seen.has(abbr)) return false;
+                  seen.add(abbr);
+                  return true;
+                }).map(m => {
+                  const abbr = m.name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase() || m.name;
+                  return <option key={abbr} value={abbr}>{abbr} — {m.name}</option>;
+                });
+              })()}
+            </select>
+          </div>
+
+          {/* Team selector */}
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+            <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>Team</div>
+            <select value={data.team || ""} onChange={e => set("team", e.target.value)}
+              style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
+                fontSize: 12, fontFamily: "inherit", color: "#1a2733", background: "#fff" }}>
+              <option value="">— Select team —</option>
+              {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
+            </select>
+          </div>
+
+          {/* Renewal stage */}
+          {clientRenewal && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Renewal Stage</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {renewalStages.map(s => (
+                  <button key={s.id} onClick={() => onUpdateRenewal({ ...clientRenewal, stage_id: s.id })}
+                    style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99,
+                      border: `1.5px solid ${s.id === clientRenewal.stage_id ? "#4b7896" : "#e2e8f0"}`,
+                      background: s.id === clientRenewal.stage_id ? "#dce8f0" : "#fff",
+                      color: s.id === clientRenewal.stage_id ? "#2d4a6b" : "#64748b",
+                      cursor: "pointer", fontFamily: "inherit",
+                      fontWeight: s.id === clientRenewal.stage_id ? 700 : 400 }}>
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card title="COBRA & Continuation" accent="#78873c">
+          <MultiCheckField label="Continuation Type" field="continuation"
+            options={[
+              { val: "cobra",      label: "COBRA" },
+              { val: "state_cont", label: "State Continuation" },
+            ]} />
+          <Field label="COBRA Vendor" field="cobraVendor" />
+          <CheckboxField label="COBRA/SI Paid" field="cobraSIPaid" />
+          <MultiCheckField label="Medicare Eligibility" field="medicareEligibility"
+            options={[
+              { val: "medicare_primary", label: "Medicare Primary" },
+              { val: "plan_primary",     label: "Plan Primary" },
+            ]} />
+        </Card>
+
+        <Card title="Payroll & Admin" accent="#4b7896">
+          <Field label="Payroll System"   field="payrollSystem" />
+          <SelectField label="Pay Frequency" field="payrollFrequency" options={PAYROLL_FREQS} />
+          <Field label="Benefit Admin"    field="benefitAdminSystem" />
+          <CheckboxField label="EDI Established" field="ediEstablished" />
+        </Card>
+
+        {dueSoon.length > 0 && (
+          <Card title="Due Soon / Overdue" accent="#ef4444">
+            {dueSoon.slice(0,8).map((t,i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center",
+                justifyContent: "space-between", padding: "5px 0",
+                borderBottom: i < Math.min(dueSoon.length,8)-1 ? "1px solid #f1f5f9" : "none" }}>
+                <div style={{ fontSize: 12, color: "#1a2733", textTransform: "capitalize" }}>{t.label}</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {t.assignee && <span style={{ fontSize: 10, color: "#64748b" }}>{t.assignee}</span>}
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+                    background: t.overdue ? "#fee2e2" : "#fef3c7",
+                    color: t.overdue ? "#991b1b" : "#92400e" }}>
+                    {t.overdue ? "Overdue" : formatDate(t.due)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+
+        <Card title="Notes" accent="#94a3b8">
+          <DebouncedTextarea value={data.notes || ""} rows={4} placeholder="Client notes..."
+            onChange={v => set("notes", v)}
+            style={{ width: "100%", padding: "8px", border: "1px solid #e2e8f0",
+              borderRadius: 8, fontSize: 12, fontFamily: "inherit", color: "#1a2733",
+              resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Client Benefits Tab ───────────────────────────────────────────────────────
+// Full editor with BENEFIT_GROUPS sub-navigation in the left sidebar
+
+function ClientBenefits({ data, set, setData, carriersData, currentUser,
+  setBenefitCarrier, otherCarrierText, setOtherCarrierText, applyPreRenewalRules }) {
+
+  const [activeGroup, setActiveGroup] = React.useState("core");
+  const [activeBenefit, setActiveBenefit] = React.useState(null);
+  const [showPicker, setShowPicker] = React.useState(false);
+
+  const ba = data.benefitActive || {};
+
+  // Count active benefits per group
+  function groupActiveCount(groupId) {
+    return BENEFITS_SCHEMA.filter(b => b.group === groupId && !!ba[b.id]).length;
+  }
+
+  // Get active benefits in a group
+  function groupActiveBenefits(groupId) {
+    return BENEFITS_SCHEMA.filter(b => b.group === groupId && !!ba[b.id]);
+  }
+
+  const currentGroup = BENEFIT_GROUPS.find(g => g.id === activeGroup) || BENEFIT_GROUPS[0];
+  const activeBenefitsInGroup = groupActiveBenefits(activeGroup);
+
+  // Auto-select first benefit in group when group changes
+  React.useEffect(() => {
+    const first = activeBenefitsInGroup[0];
+    setActiveBenefit(first?.id || null);
+  }, [activeGroup, JSON.stringify(Object.keys(ba))]);
+
+  const selectedBenefit = BENEFITS_SCHEMA.find(b => b.id === activeBenefit);
+
+  // Helper: carriers for a benefit
+  function carriersFor(benefitId) {
+    if (!carriersData) return [];
+    const bid = benefitId.startsWith("medical") ? "medical" : benefitId;
+    const cat = bid === "medical" ? "Medical" : "Ancillary";
+    return carriersData
+      .filter(c => c.category === cat || (c.products || []).some(p =>
+        p.toLowerCase().includes(bid.replace(/_/g,' '))
+      ))
+      .map(c => c.name)
+      .sort();
+  }
+
+  // Toggle a benefit active/inactive
+  function toggleBenefit(id, active) {
+    setData(p => {
+      const newActive = { ...(p.benefitActive || {}), [id]: active };
+      const newDates = { ...(p.benefitEffectiveDates || {}) };
+      if (active && !newDates[id] && p.renewalDate) newDates[id] = p.renewalDate;
+      return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
+    });
+    if (active) setActiveBenefit(id);
+  }
+
+  // Update a plan field
+  function updatePlan(benefitId, idx, field, val) {
+    setData(p => {
+      const plans = [...((p.benefitPlans || {})[benefitId] || [])];
+      plans[idx] = { ...plans[idx], [field]: val };
+      return { ...p, benefitPlans: { ...(p.benefitPlans || {}), [benefitId]: plans } };
+    });
+  }
+
+  function setPlans(benefitId, plans) {
+    setData(p => ({ ...p, benefitPlans: { ...(p.benefitPlans || {}), [benefitId]: plans } }));
+  }
+
+  const BOB_OLIVE = { bg: "#eef2d8", border: "#c8d48a", text: "#55652B", dark: "#3d4a1a" };
+
+  return (
+    <div style={{ display: "flex", gap: 0, minHeight: 500 }}>
+
+      {/* Benefits sub-nav */}
+      <div style={{ width: 180, flexShrink: 0, borderRight: "1px solid #e2e8f0",
+        background: "#f8fafc", borderRadius: "10px 0 0 10px", paddingTop: 8 }}>
+
+        {/* Add coverage button */}
+        <div style={{ padding: "0 10px 10px", borderBottom: "1px solid #e2e8f0", marginBottom: 8 }}>
+          <button onClick={() => setShowPicker(!showPicker)}
+            style={{ width: "100%", padding: "7px 0", borderRadius: 7, fontSize: 12, fontWeight: 700,
+              border: `1.5px solid ${showPicker ? "#4b7896" : "#c8d48a"}`,
+              background: showPicker ? "#dce8f0" : BOB_OLIVE.bg,
+              color: showPicker ? "#2d4a6b" : BOB_OLIVE.dark,
+              cursor: "pointer", fontFamily: "inherit" }}>
+            {showPicker ? "✕ Done" : "＋ Add Coverage"}
+          </button>
+        </div>
+
+        {/* Group nav items */}
+        {BENEFIT_GROUPS.map(group => {
+          const count = groupActiveCount(group.id);
+          const isActive = activeGroup === group.id;
+          return (
+            <button key={group.id} onClick={() => setActiveGroup(group.id)}
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "8px 12px", border: "none", borderLeft: `3px solid ${isActive ? group.color : "transparent"}`,
+                background: isActive ? `${group.color}18` : "transparent",
+                cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                color: isActive ? group.color : "#64748b",
+                fontWeight: isActive ? 700 : 400, fontSize: 12 }}>
+              <span>{group.label}</span>
+              {count > 0 && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+                  background: isActive ? group.color : "#e2e8f0",
+                  color: isActive ? "#fff" : "#64748b" }}>{count}</span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* Employee Classes */}
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #e2e8f0" }}>
+          <button onClick={() => { setActiveGroup("__classes__"); setActiveBenefit(null); }}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "8px 12px", border: "none", borderLeft: `3px solid ${activeGroup === "__classes__" ? "#475569" : "transparent"}`,
+              background: activeGroup === "__classes__" ? "#47556918" : "transparent",
+              cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+              color: activeGroup === "__classes__" ? "#475569" : "#64748b",
+              fontWeight: activeGroup === "__classes__" ? 700 : 400, fontSize: 12 }}>
+            <span>Employee Classes</span>
+            {(data.employeeClasses || []).length > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+                background: "#e2e8f0", color: "#64748b" }}>{data.employeeClasses.length}</span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div style={{ flex: 1, padding: "16px 20px", minWidth: 0 }}>
+
+        {/* Coverage picker overlay */}
+        {showPicker && (
+          <div style={{ background: "#f0f5fa", borderRadius: 10, border: "1.5px solid #4b7896",
+            padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#2d4a6b", marginBottom: 12 }}>
+              Select lines of coverage — check all that apply:
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+              {BENEFIT_GROUPS.map(group => {
+                const benefitsInGroup = BENEFITS_SCHEMA.filter(b => b.group === group.id);
+                if (!benefitsInGroup.length) return null;
+                return (
+                  <div key={group.id}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: group.color,
+                      letterSpacing: ".8px", textTransform: "uppercase", marginBottom: 6,
+                      paddingBottom: 4, borderBottom: `1px solid ${group.color}40` }}>
+                      {group.label}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                      {benefitsInGroup.map(b => {
+                        const isActive = !!ba[b.id];
+                        return (
+                          <label key={b.id} style={{ display: "flex", alignItems: "center", gap: 8,
+                            cursor: "pointer", padding: "5px 7px", borderRadius: 6,
+                            background: isActive ? `${group.color}18` : "#fff",
+                            border: `1px solid ${isActive ? group.color : "#e2e8f0"}` }}>
+                            <input type="checkbox" checked={isActive}
+                              onChange={() => toggleBenefit(b.id, !isActive)}
+                              style={{ accentColor: group.color, width: 13, height: 13 }} />
+                            <span style={{ fontSize: 12, fontWeight: isActive ? 700 : 400,
+                              color: isActive ? group.color : "#334155" }}>
+                              {b.label}
+                              {isActive && <span style={{ marginLeft: 6, fontSize: 10 }}>✓</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Employee Classes view */}
+        {activeGroup === "__classes__" && (
+          <BenefitEmployeeClasses data={data} setData={setData} />
+        )}
+
+        {/* Group content */}
+        {activeGroup !== "__classes__" && (
+          <div>
+            {/* Benefit selector tabs within group */}
+            {activeBenefitsInGroup.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16,
+                paddingBottom: 12, borderBottom: "1px solid #e2e8f0" }}>
+                {activeBenefitsInGroup.map(b => {
+                  const isSelected = activeBenefit === b.id;
+                  const carrier = (data.benefitCarriers || {})[b.id] || "";
+                  return (
+                    <button key={b.id} onClick={() => setActiveBenefit(b.id)}
+                      style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: isSelected ? 700 : 500,
+                        border: `1.5px solid ${isSelected ? currentGroup.color : "#e2e8f0"}`,
+                        background: isSelected ? `${currentGroup.color}15` : "#fff",
+                        color: isSelected ? currentGroup.color : "#475569",
+                        cursor: "pointer", fontFamily: "inherit" }}>
+                      {b.label}
+                      {carrier && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.7 }}>{carrier}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* No active benefits in this group */}
+            {activeBenefitsInGroup.length === 0 && !showPicker && (
+              <div style={{ padding: "48px 20px", textAlign: "center",
+                background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0" }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>
+                  {currentGroup.icon}
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#64748b", marginBottom: 4 }}>
+                  No {currentGroup.label} benefits active
+                </div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>
+                  Click "Add Coverage" to activate benefits in this category
+                </div>
+                <button onClick={() => setShowPicker(true)}
+                  style={{ padding: "8px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                    border: `1.5px solid ${currentGroup.color}`,
+                    background: `${currentGroup.color}15`, color: currentGroup.color,
+                    cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add {currentGroup.label}
+                </button>
+              </div>
+            )}
+
+            {/* Selected benefit editor */}
+            {selectedBenefit && activeBenefit && (
+              <BenefitLineEditor
+                benefit={selectedBenefit}
+                data={data} set={set} setData={setData}
+                carriersData={carriersData}
+                carriersFor={carriersFor}
+                updatePlan={updatePlan}
+                setPlans={setPlans}
+                groupColor={currentGroup.color}
+                onRemove={() => {
+                  toggleBenefit(selectedBenefit.id, false);
+                  setActiveBenefit(activeBenefitsInGroup.find(b => b.id !== selectedBenefit.id)?.id || null);
+                }}
+                applyPreRenewalRules={applyPreRenewalRules}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Individual Benefit Line Editor ────────────────────────────────────────────
+
+function BenefitLineEditor({ benefit, data, set, setData, carriersData,
+  carriersFor, updatePlan, setPlans, groupColor, onRemove, applyPreRenewalRules }) {
+
+  const catId = benefit.id;
+  const currentCarrier = (data.benefitCarriers || {})[catId] || "";
+  const effectiveDate  = (data.benefitEffectiveDates || {})[catId] || "";
+  const policyNumber   = (data.benefitPolicyNumbers || {})[catId] || "";
+  const notes          = (data.benefitNotes || {})[catId] || "";
+  const commission     = (data.benefitCommissions || {})[catId] || {};
+  const plans          = (data.benefitPlans || {})[catId] || [];
+  const [otherText, setOtherText] = React.useState("");
+
+  const carrierOptions = carriersFor(catId);
+  const isMedical = catId === "medical" || catId.startsWith("medical_");
+  const isDental  = catId === "dental";
+  const isVision  = catId === "vision";
+  const isTiered  = isMedical || isDental || isVision ||
+    ["worksite_accident","worksite_hospital","identity_theft"].includes(catId);
+  const isUnitRate = ["basic_life","std","ltd"].includes(catId);
+  const isAgeBanded = catId === "vol_life" || catId === "worksite_ci";
+
+  // Tier mode — per benefit, stored in benefitTierMode
+  const tierMode = (data.benefitTierMode || {})[catId] || "4tier";
+  function setTierMode(mode) {
+    setData(p => ({ ...p, benefitTierMode: { ...(p.benefitTierMode||{}), [catId]: mode } }));
+  }
+  // Also support age-banded for medical
+  const isAgeBandedMedical = isMedical && tierMode === "agebanded";
+
+  const TIERS = {
+    "4tier": [{k:"ee",l:"EE Only"},{k:"es",l:"EE+Spouse"},{k:"ec",l:"EE+Child"},{k:"ff",l:"Family"}],
+    "3tier": [{k:"ee",l:"EE Only"},{k:"es",l:"EE+1"},{k:"ff",l:"Family"}],
+    "2tier": [{k:"ee",l:"EE Only"},{k:"ff",l:"Family"}],
+  };
+  const activeTiers = TIERS[tierMode] || TIERS["4tier"];
+
+  const AGE_BANDS = ["0-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65+"];
+
+  const UNIT_CONFIG = {
+    basic_life: { unitLabel: "per $1,000 of coverage",  rateLabel: "Rate per $1,000 ($)", volumeLabel: "Total Insured Volume ($)", maxLabel: "Max Benefit ($)" },
+    std:        { unitLabel: "per $10 of weekly benefit", rateLabel: "Rate per $10 ($)",   volumeLabel: "Total Weekly Benefit Vol ($)", maxLabel: "Max Weekly Benefit ($)" },
+    ltd:        { unitLabel: "per $100 of monthly pay",  rateLabel: "Rate per $100 ($)",  volumeLabel: "Total Monthly Covered Payroll ($)", maxLabel: "Max Monthly Benefit ($)" },
+  };
+  const unitCfg = UNIT_CONFIG[catId] || null;
+
+  // Auto-sum enrolled from plans
+  const enrolledFromPlans = React.useMemo(() => {
+    if (plans.length === 0) return null;
+    if (isUnitRate) return plans.reduce((s,pl) => s + (parseInt(pl.enrolled)||0), 0);
+    if (isAgeBanded || isAgeBandedMedical) return plans.reduce((s,pl) =>
+      s + (pl.ageBands||[]).reduce((ss,b) => ss + (parseInt(b.enrolled)||0), 0), 0);
+    return plans.reduce((s,pl) => {
+      const enr = pl.enrolled || {};
+      return s + activeTiers.reduce((ss,t) => ss + (parseInt(enr[t.k])||0), 0);
+    }, 0);
+  }, [plans, tierMode]);
+
+  function setCarrier(val) {
+    setData(p => {
+      const updated = { ...p, benefitCarriers: { ...(p.benefitCarriers || {}), [catId]: val } };
+      if (val && val !== "__other__" && carriersData) {
+        const carrierObj = carriersData.find(c => c.name === val);
+        const rules = carrierObj?.commissionRules || [];
+        const BENEFIT_MAP = {
+          medical:"Medical", dental:"Dental", vision:"Vision",
+          basic_life:"Basic Life/AD&D", vol_life:"Vol Life",
+          std:"STD", ltd:"LTD", worksite_ci:"Worksite",
+          worksite_cancer:"Worksite", worksite_accident:"Worksite",
+          worksite_hospital:"Worksite", eap:"EAP",
+          fsa_health:"FSA", fsa_limited:"FSA", hsa_funding:"HSA", hra:"HRA",
+        };
+        const benefitName = BENEFIT_MAP[catId] || catId;
+        const match = rules.find(r => r.benefit === benefitName && r.segment === (p.marketSize||"All"))
+          || rules.find(r => r.benefit === benefitName)
+          || rules.find(r => r.benefit === "All");
+        if (match?.amount) {
+          updated.benefitCommissions = { ...(updated.benefitCommissions||{}),
+            [catId]: { type: match.type, amount: match.amount } };
+        }
+      }
+      return isMedical ? applyPreRenewalRules(updated) : updated;
+    });
+  }
+
+  const Section = ({ title, children }) => (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase",
+        letterSpacing: "0.8px", marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid #f1f5f9" }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 10, border: `1.5px solid ${groupColor}40`, overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px",
+        background: `${groupColor}10`, borderBottom: `1px solid ${groupColor}30` }}>
+        <div style={{ flex: 1, fontSize: 14, fontWeight: 800, color: "#1a2733" }}>{benefit.label}</div>
+        {currentCarrier && <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px",
+          borderRadius: 99, background: "#dce8f0", color: "#2d4a6b" }}>{currentCarrier}</span>}
+        {effectiveDate && <span style={{ fontSize: 11, color: "#64748b" }}>Eff: {formatDate(effectiveDate)}</span>}
+        <button onClick={onRemove} style={{ padding: "3px 8px", borderRadius: 6, fontSize: 11,
+          border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+          cursor: "pointer", fontFamily: "inherit" }}>Remove</button>
+      </div>
+
+      <div style={{ padding: "16px 18px" }}>
+
+        {/* ── Coverage Details ── */}
+        <Section title="Coverage Details">
+          {/* Row 1: Carrier, Effective Date, Policy # */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <label style={{ ...labelStyle }}>
+              Carrier / Vendor
+              <select value={currentCarrier} onChange={e => setCarrier(e.target.value)}
+                style={{ ...inputStyle, marginTop: 3,
+                  borderColor: currentCarrier && currentCarrier !== "__other__" ? "#3b82f6" : undefined,
+                  background: currentCarrier && currentCarrier !== "__other__" ? "#eff6ff" : "#fff",
+                  color: currentCarrier && currentCarrier !== "__other__" ? "#1d4ed8" : "#94a3b8",
+                  fontWeight: currentCarrier && currentCarrier !== "__other__" ? 600 : 400 }}>
+                <option value="">— Select carrier —</option>
+                {carrierOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                <option value="__other__">Other…</option>
+              </select>
+              {currentCarrier === "__other__" && (
+                <input placeholder="Enter carrier name" value={otherText}
+                  onChange={e => setOtherText(e.target.value)}
+                  onBlur={() => {
+                    const val = otherText.trim();
+                    setData(p => ({ ...p, benefitCarriers: { ...(p.benefitCarriers||{}), [catId]: val || "__other__" } }));
+                  }}
+                  style={{ ...inputStyle, marginTop: 4, fontSize: 12 }} />
+              )}
+            </label>
+            <label style={{ ...labelStyle }}>
+              Effective Date
+              <input type="date" value={effectiveDate}
+                onChange={e => setData(p => ({ ...p, benefitEffectiveDates: { ...(p.benefitEffectiveDates||{}), [catId]: e.target.value } }))}
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+            <label style={{ ...labelStyle }}>
+              Policy Number
+              <input type="text" value={policyNumber} placeholder="e.g. 123456"
+                onChange={e => setData(p => ({ ...p, benefitPolicyNumbers: { ...(p.benefitPolicyNumbers||{}), [catId]: e.target.value } }))}
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+          </div>
+
+          {/* Row 2: Funding Method (medical), # Enrolled (auto-sum), Commission */}
+          <div style={{ display: "grid", gridTemplateColumns: isMedical ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12 }}>
+            {isMedical && (
+              <label style={{ ...labelStyle }}>
+                Funding Method
+                <select value={data.fundingMethod || ""} onChange={e => set("fundingMethod", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 3 }}>
+                  {["Fully Insured","Level-Funded","Self-Funded","COBRA Only"].map(f => <option key={f}>{f}</option>)}
+                </select>
+              </label>
+            )}
+            <label style={{ ...labelStyle }}>
+              # Enrolled
+              {enrolledFromPlans !== null ? (
+                <div style={{ ...inputStyle, marginTop: 3, background: "#f0fdf4",
+                  color: "#166534", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  {enrolledFromPlans}
+                  <span style={{ fontSize: 10, fontWeight: 400, color: "#64748b" }}>auto-sum from plans</span>
+                </div>
+              ) : (
+                <input type="text" inputMode="numeric"
+                  value={(data.benefitEnrolled || {})[catId] || ""} placeholder="0"
+                  onChange={e => {
+                    const v = e.target.value.replace(/\D/g,"");
+                    setData(p => {
+                      const updated = { ...p, benefitEnrolled: { ...(p.benefitEnrolled||{}), [catId]: v },
+                        ...(isMedical ? { medicalEnrolled: v } : {}) };
+                      return isMedical ? applyPreRenewalRules(updated) : updated;
+                    });
+                  }}
+                  style={{ ...inputStyle, marginTop: 3 }} />
+              )}
+            </label>
+            <label style={{ ...labelStyle }}>
+              Commission
+              <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
+                <select value={commission.type || ""}
+                  onChange={e => setData(p => ({ ...p, benefitCommissions: { ...(p.benefitCommissions||{}),
+                    [catId]: { ...(p.benefitCommissions?.[catId]||{}), type: e.target.value, amount: "" } } }))}
+                  style={{ padding: "8px 8px", border: "1.5px solid #e2e8f0", borderRadius: 8,
+                    fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#334155",
+                    flex: "0 0 90px" }}>
+                  <option value="">— Type —</option>
+                  <option>PEPM</option><option>Flat %</option><option>Graded</option>
+                </select>
+                {commission.type && (
+                  <div style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                    {commission.type === "PEPM" && (
+                      <span style={{ padding: "8px 8px", background: "#f1f5f9",
+                        border: "1.5px solid #e2e8f0", borderRight: "none",
+                        borderRadius: "8px 0 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>$</span>
+                    )}
+                    <input type="text" inputMode="decimal" value={commission.amount || ""}
+                      onChange={e => setData(p => ({ ...p, benefitCommissions: { ...(p.benefitCommissions||{}),
+                        [catId]: { ...(p.benefitCommissions?.[catId]||{}), amount: e.target.value.replace(/[^0-9.]/g,"") } } }))}
+                      placeholder="0"
+                      style={{ padding: "8px 10px", border: "1.5px solid #e2e8f0", fontSize: 13,
+                        fontFamily: "inherit", textAlign: "right", flex: 1, color: "#0f172a",
+                        background: "#fff",
+                        borderLeft: commission.type === "PEPM" ? "none" : "1.5px solid #e2e8f0",
+                        borderRight: commission.type !== "PEPM" ? "none" : "1.5px solid #e2e8f0",
+                        borderRadius: commission.type === "PEPM" ? "0 8px 8px 0" : "8px 0 0 8px" }} />
+                    {commission.type !== "PEPM" && (
+                      <span style={{ padding: "8px 8px", background: "#f1f5f9",
+                        border: "1.5px solid #e2e8f0", borderLeft: "none",
+                        borderRadius: "0 8px 8px 0", fontSize: 13, color: "#475569", fontWeight: 600 }}>%</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </label>
+          </div>
+        </Section>
+
+        {/* ── Plans ── */}
+        <Section title="Plans">
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: "#64748b" }}>Number of plans:</span>
+              <input type="text" inputMode="numeric" value={plans.length || ""} placeholder="0"
+                onChange={e => {
+                  const n = parseInt(e.target.value) || 0;
+                  const blank = () => ({
+                    id: generateId(), name: "", type: "", carrierPlanNumber: "",
+                    groupNumber: "", eligibleClasses: [],
+                    rates: { ee: "", es: "", ec: "", ff: "" },
+                    enrolled: { ee: "", es: "", ec: "", ff: "" },
+                    // Unit-rate fields
+                    unitRate: "", volume: "", maxBenefit: "", enrolledCount: "",
+                    // Age-banded fields
+                    ageBands: AGE_BANDS.map(b => ({ band: b, rate: "", enrolled: "" })),
+                  });
+                  if (n > plans.length) setPlans(catId, [...plans, ...Array(n-plans.length).fill(null).map(blank)]);
+                  else if (n < plans.length) setPlans(catId, plans.slice(0, n));
+                }}
+                style={{ width: 56, padding: "5px 10px", border: "1.5px solid #e2e8f0",
+                  borderRadius: 8, fontSize: 14, fontWeight: 700, color: "#2d4a6b",
+                  fontFamily: "inherit", textAlign: "center", background: "#fff" }} />
+            </div>
+
+            {/* Tier mode selector — tiered benefits only */}
+            {(isTiered || isMedical) && plans.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  Structure:
+                </span>
+                {[
+                  { key: "4tier", label: "4-Tier" },
+                  { key: "3tier", label: "3-Tier" },
+                  { key: "2tier", label: "2-Tier" },
+                  ...(isMedical ? [{ key: "agebanded", label: "Age-Banded" }] : []),
+                ].map(opt => (
+                  <button key={opt.key} type="button" onClick={() => setTierMode(opt.key)}
+                    style={{ fontSize: 11, fontWeight: tierMode === opt.key ? 700 : 500,
+                      padding: "4px 10px", borderRadius: 7, cursor: "pointer", fontFamily: "inherit",
+                      border: `1.5px solid ${tierMode === opt.key ? "#3b82f6" : "#e2e8f0"}`,
+                      background: tierMode === opt.key ? "#eff6ff" : "#fff",
+                      color: tierMode === opt.key ? "#1d4ed8" : "#64748b" }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {plans.map((pl, idx) => (
+            <div key={pl.id || idx} style={{ background: "#f8fafc", borderRadius: 8,
+              border: "1px solid #e2e8f0", padding: "12px 14px", marginBottom: 10 }}>
+
+              {/* Plan header */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10, marginBottom: 12 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>
+                  Plan Name
+                  <DebouncedInput value={pl.name || ""} placeholder="e.g. Blue Choice PPO"
+                    onChange={v => updatePlan(catId, idx, "name", v)}
+                    style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                </label>
+                <label style={{ ...labelStyle, marginTop: 0 }}>
+                  Plan Type
+                  <DebouncedInput value={pl.type || ""} placeholder="PPO, HMO, HSA..."
+                    onChange={v => updatePlan(catId, idx, "type", v)}
+                    style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                </label>
+                <label style={{ ...labelStyle, marginTop: 0 }}>
+                  Carrier Plan #
+                  <DebouncedInput value={pl.carrierPlanNumber || ""} placeholder="e.g. 12345"
+                    onChange={v => updatePlan(catId, idx, "carrierPlanNumber", v)}
+                    style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+                </label>
+                <button onClick={() => setPlans(catId, plans.filter((_,i) => i !== idx))}
+                  style={{ alignSelf: "flex-end", padding: "8px 10px", borderRadius: 7,
+                    border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                    cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>✕</button>
+              </div>
+
+              {/* ── Tiered composite rates (medical, dental, vision, etc.) ── */}
+              {(isTiered && !isAgeBandedMedical) && (
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${activeTiers.length},1fr)`, gap: 8, marginBottom: 8 }}>
+                  {activeTiers.map(tier => (
+                    <div key={tier.k}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8",
+                        textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>{tier.l}</div>
+                      <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>Rate ($)
+                        <DebouncedInput value={(pl.rates||{})[tier.k] || ""} inputMode="decimal"
+                          onChange={v => updatePlan(catId, idx, "rates", { ...(pl.rates||{}), [tier.k]: v.replace(/[^0-9.]/g,"") })}
+                          placeholder="0.00"
+                          style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "4px 8px" }} />
+                      </label>
+                      <label style={{ ...labelStyle, marginTop: 4, fontSize: 11 }}># Enrolled
+                        <DebouncedInput value={(pl.enrolled||{})[tier.k] || ""} inputMode="numeric"
+                          onChange={v => updatePlan(catId, idx, "enrolled", { ...(pl.enrolled||{}), [tier.k]: v.replace(/\D/g,"") })}
+                          placeholder="0"
+                          style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "4px 8px" }} />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Age-banded rates (medical age-banded, vol life, CI) ── */}
+              {(isAgeBandedMedical || isAgeBanded) && (
+                <div style={{ overflowX: "auto", marginBottom: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${AGE_BANDS.length},1fr)`, gap: 6, minWidth: 800 }}>
+                    {(pl.ageBands || AGE_BANDS.map(b => ({ band: b, rate: "", enrolled: "" }))).map((ab, bi) => (
+                      <div key={ab.band}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#94a3b8",
+                          textTransform: "uppercase", marginBottom: 3, textAlign: "center" }}>{ab.band}</div>
+                        <label style={{ ...labelStyle, marginTop: 0, fontSize: 10 }}>Rate
+                          <input type="text" inputMode="decimal" value={ab.rate || ""}
+                            onChange={e => {
+                              const bands = [...(pl.ageBands || AGE_BANDS.map(b => ({ band: b, rate: "", enrolled: "" })))];
+                              bands[bi] = { ...bands[bi], rate: e.target.value.replace(/[^0-9.]/g,"") };
+                              updatePlan(catId, idx, "ageBands", bands);
+                            }}
+                            placeholder="0.00"
+                            style={{ ...inputStyle, marginTop: 2, fontSize: 10, padding: "3px 5px" }} />
+                        </label>
+                        <label style={{ ...labelStyle, marginTop: 3, fontSize: 10 }}>Count
+                          <input type="text" inputMode="numeric" value={ab.enrolled || ""}
+                            onChange={e => {
+                              const bands = [...(pl.ageBands || AGE_BANDS.map(b => ({ band: b, rate: "", enrolled: "" })))];
+                              bands[bi] = { ...bands[bi], enrolled: e.target.value.replace(/\D/g,"") };
+                              updatePlan(catId, idx, "ageBands", bands);
+                            }}
+                            placeholder="0"
+                            style={{ ...inputStyle, marginTop: 2, fontSize: 10, padding: "3px 5px" }} />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Unit-rate (basic life, STD, LTD) ── */}
+              {isUnitRate && unitCfg && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
+                  <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                    {unitCfg.rateLabel}
+                    <DebouncedInput value={pl.unitRate || ""} inputMode="decimal"
+                      onChange={v => updatePlan(catId, idx, "unitRate", v.replace(/[^0-9.]/g,""))}
+                      placeholder="0.000"
+                      style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                  </label>
+                  <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                    {unitCfg.volumeLabel}
+                    <DebouncedInput value={pl.volume || ""} inputMode="numeric"
+                      onChange={v => updatePlan(catId, idx, "volume", v.replace(/\D/g,""))}
+                      placeholder="0"
+                      style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                  </label>
+                  <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                    {unitCfg.maxLabel}
+                    <DebouncedInput value={pl.maxBenefit || ""} inputMode="numeric"
+                      onChange={v => updatePlan(catId, idx, "maxBenefit", v.replace(/\D/g,""))}
+                      placeholder="0"
+                      style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                  </label>
+                  <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                    # Enrolled
+                    <DebouncedInput value={pl.enrolled || pl.enrolledCount || ""} inputMode="numeric"
+                      onChange={v => updatePlan(catId, idx, "enrolled", v.replace(/\D/g,""))}
+                      placeholder="0"
+                      style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                  </label>
+                </div>
+              )}
+
+              {/* ── Employee class assignment ── */}
+              {(data.employeeClasses || []).length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #e2e8f0" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+                    Eligible Employee Classes
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {(data.employeeClasses || []).map(cls => {
+                      const clsId = cls.id || cls;
+                      const lbl = cls.name || cls.label || cls;
+                      const isAssigned = (pl.eligibleClasses || []).includes(clsId);
+                      return (
+                        <button key={clsId} type="button"
+                          onClick={() => {
+                            const cur = pl.eligibleClasses || [];
+                            updatePlan(catId, idx, "eligibleClasses",
+                              isAssigned ? cur.filter(c => c !== clsId) : [...cur, clsId]);
+                          }}
+                          style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99,
+                            cursor: "pointer", fontFamily: "inherit", fontWeight: isAssigned ? 700 : 400,
+                            border: `1.5px solid ${isAssigned ? groupColor : "#e2e8f0"}`,
+                            background: isAssigned ? `${groupColor}15` : "#f8fafc",
+                            color: isAssigned ? groupColor : "#64748b" }}>
+                          {lbl}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          {plans.length === 0 && (
+            <div style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic", padding: "8px 0" }}>
+              Set number of plans above to configure plan details.
+            </div>
+          )}
+        </Section>
+
+        {/* ── Notes ── */}
+        <Section title="Notes">
+          <textarea value={notes} rows={3} placeholder="Special conditions, notes..."
+            onChange={e => setData(p => ({ ...p, benefitNotes: { ...(p.benefitNotes||{}), [catId]: e.target.value } }))}
+            style={{ ...inputStyle, marginTop: 0, resize: "vertical", fontFamily: "inherit" }} />
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Employee Classes Editor ───────────────────────────────────────────────────
+
+function BenefitEmployeeClasses({ data, setData }) {
+  const classes = data.employeeClasses || [];
+
+  function addClass() {
+    setData(p => ({
+      ...p,
+      employeeClasses: [...(p.employeeClasses || []),
+        { id: generateId(), name: "", eligibility: "", waitingPeriod: "" }]
+    }));
+  }
+
+  function updateClass(idx, field, val) {
+    setData(p => {
+      const cls = [...(p.employeeClasses || [])];
+      cls[idx] = { ...cls[idx], [field]: val };
+      return { ...p, employeeClasses: cls };
+    });
+  }
+
+  function removeClass(idx) {
+    setData(p => ({ ...p, employeeClasses: p.employeeClasses.filter((_,i) => i !== idx) }));
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Employee Classes</div>
+        <button onClick={addClass}
+          style={{ fontSize: 12, fontWeight: 700, padding: "6px 14px", borderRadius: 8,
+            background: "#eef2d8", border: "1.5px solid #c8d48a", color: "#55652b",
+            cursor: "pointer", fontFamily: "inherit" }}>+ Add Class</button>
+      </div>
+      {classes.length === 0 ? (
+        <div style={{ padding: "40px 20px", textAlign: "center", background: "#fff",
+          borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8", fontSize: 13 }}>
+          No employee classes defined. Classes are used to assign eligibility per plan.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {classes.map((cls, idx) => (
+            <div key={cls.id || idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto",
+              gap: 10, padding: "12px 14px", background: "#fff", borderRadius: 10,
+              border: "1px solid #e2e8f0", alignItems: "center" }}>
+              <label style={{ ...labelStyle }}>
+                Class Name
+                <input type="text" value={cls.name || ""} placeholder="e.g. Management"
+                  onChange={e => updateClass(idx, "name", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+              </label>
+              <label style={{ ...labelStyle }}>
+                Eligibility Description
+                <input type="text" value={cls.eligibility || ""} placeholder="e.g. Full-time 30+ hrs/wk"
+                  onChange={e => updateClass(idx, "eligibility", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+              </label>
+              <label style={{ ...labelStyle }}>
+                Waiting Period
+                <input type="text" value={cls.waitingPeriod || ""} placeholder="e.g. 30 days"
+                  onChange={e => updateClass(idx, "waitingPeriod", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
+              </label>
+              <button onClick={() => removeClass(idx)}
+                style={{ alignSelf: "flex-end", padding: "8px 10px", borderRadius: 7,
+                  border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                  cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Client Modal Section Wrapper ──────────────────────────────────────────────
+// Renders a single tab's content from ClientModal in the full-page profile context.
+// All state (data, set, setTask, etc.) is passed as props from ClientProfile.
+
+function ClientModalSection({ section, data, set, setData, setTask, getTask,
+  applyDDR, setWithDDR, oe, setOE, tasksDb, dueDateRules, carriersData, currentUser, teams }) {
+
+  // Resolve team members for assignee dropdowns
+  const teamObj = teams?.find(t => t.id === data.team);
+  const teamMembers = teamObj ? (teamObj.members || []).map(m => m.name) : ALL_MEMBERS;
+
+  // Section header style
+  const SectionHead = ({ title, sub }) => (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>{title}</div>
+      {sub && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  // ── PRE-RENEWAL ──────────────────────────────────────────────────────────────
+  if (section === "preRenewal") {
+    const showRateRelief = !(data.marketSize === "ACA" && data.fundingMethod === "Fully Insured");
+    const rr = data.rateRelief || {};
+    const rv = data.renewalReceived || {};
+
+    // Count progress
+    const total = PRERENEWAL_TASKS.filter(t => !(t.acaOnly && data.marketSize !== "ACA")).length;
+    const done  = PRERENEWAL_TASKS.filter(t => {
+      if (t.acaOnly && data.marketSize !== "ACA") return false;
+      const task = data.preRenewal?.[t.id];
+      const s = typeof task === 'object' ? task?.status : task;
+      return s === 'Complete' || s === 'N/A';
+    }).length;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Pre-Renewal</div>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+            background: done === total ? "#dcfce7" : "#eef2d8",
+            color: done === total ? "#166534" : "#55652b" }}>
+            {done}/{total} complete
+          </span>
+        </div>
+
+        {/* Medical Renewal Status */}
+        <div style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 12 }}>
+            Medical Renewal Status
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: `1.4fr 90px 140px 90px${showRateRelief ? " 130px 130px 100px" : ""}`, gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid #fde68a" }}>
+            {["Carrier","Received","Date Received","Renewal %",...(showRateRelief ? ["Rate Relief Req.","Rate Relief Rec.","Negotiated %"] : [])].map(h => (
+              <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" }}>{h}</div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: `1.4fr 90px 140px 90px${showRateRelief ? " 130px 130px 100px" : ""}`, gap: 8, alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>
+              {(data.benefitCarriers || {}).medical || <span style={{ opacity: 0.4, fontStyle: "italic", fontWeight: 400 }}>Medical carrier</span>}
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
+              <input type="checkbox" checked={!!rv.received}
+                onChange={e => setData(p => applyDDR({ ...p, renewalReceived: { ...rv, received: e.target.checked } }))}
+                style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
+            </label>
+            <input type="date" value={rv.date || ""}
+              onChange={e => setData(p => applyDDR({ ...p, renewalReceived: { ...rv, date: e.target.value } }))}
+              disabled={!rv.received}
+              style={{ ...inputStyle, marginTop: 0, padding: "4px 8px", fontSize: 12, opacity: rv.received ? 1 : 0.4 }} />
+            <PercentInput value={rv.pct || ""} onChange={v => set("renewalReceived", { ...rv, pct: v })}
+              placeholder="0.00" disabled={!rv.received}
+              style={{ ...inputStyle, marginTop: 0, padding: "4px 6px", fontSize: 12, opacity: rv.received ? 1 : 0.4, width: "100%" }} />
+            {showRateRelief && <>
+              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!rr.requested}
+                  onChange={e => set("rateRelief", { ...rr, requested: e.target.checked })}
+                  style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
+                <span style={{ fontSize: 11, color: rr.requested ? "#92400e" : "#94a3b8", fontWeight: rr.requested ? 700 : 400 }}>
+                  {rr.requested ? "Yes" : "No"}
+                </span>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!rr.received}
+                  onChange={e => set("rateRelief", { ...rr, received: e.target.checked })}
+                  style={{ accentColor: "#22c55e", width: 14, height: 14 }} />
+                <span style={{ fontSize: 11, color: rr.received ? "#166534" : "#94a3b8", fontWeight: rr.received ? 700 : 400 }}>
+                  {rr.received ? "Yes" : "No"}
+                </span>
+              </label>
+              <PercentInput value={data.negotiatedRenewalPct || ""} onChange={v => set("negotiatedRenewalPct", v)}
+                placeholder="0.00"
+                style={{ ...inputStyle, marginTop: 0, padding: "4px 6px", fontSize: 12, width: "100%" }} />
+            </>}
+          </div>
+
+          {/* Decisions received + tracker */}
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+              borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>📋 Decisions Received</span>
+              <input type="date" value={data.decisionsReceivedDate || ""}
+                onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
+                style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", width: 160 }} />
+            </div>
+            {["Mid-Market","Large"].includes(data.marketSize) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+                borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", flex: 1 }}>
+                  <input type="checkbox" checked={!!data.renewalTrackerUpdated}
+                    onChange={e => set("renewalTrackerUpdated", e.target.checked)}
+                    style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Renewal Tracker Updated</span>
+                </label>
+                {data.renewalTrackerUpdated && (
+                  <input type="date" value={data.renewalTrackerUpdatedDate || ""}
+                    onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", width: 160 }} />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Pre-renewal task checklist */}
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
+            gap: 8, padding: "8px 12px", background: "#f8fafc",
+            borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
+            color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            {["Task","Status","Assignee","Due Date","Completed"].map((h,i) => <div key={i}>{h}</div>)}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "8px 10px" }}>
+            {PRERENEWAL_TASKS.filter(t => !(t.acaOnly && data.marketSize !== "ACA")).map(taskDef => {
+              const task = getTask("preRenewal", taskDef.id);
+              const isDone = task.status === "Complete" || task.status === "N/A";
+              return (
+                <div key={taskDef.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
+                  gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8, marginBottom: 4,
+                  background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
+                  borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>
+                    {taskDef.label}
+                  </div>
+                  <select value={task.status}
+                    onChange={e => setTask("preRenewal", taskDef.id, "status", e.target.value, taskDef.label, "Pre-Renewal")}
+                    style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                      background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                      color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <select value={task.assignee || ""}
+                    onChange={e => setTask("preRenewal", taskDef.id, "assignee", e.target.value, taskDef.label, "Pre-Renewal")}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                    <option value="">Unassigned</option>
+                    {teamMembers.map(m => <option key={m}>{m}</option>)}
+                  </select>
+                  <input type="date" value={task.dueDate || ""}
+                    onChange={e => setTask("preRenewal", taskDef.id, "dueDate", e.target.value, taskDef.label, "Pre-Renewal")}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                  <input type="date" value={task.completedDate || ""}
+                    onChange={e => setTask("preRenewal", taskDef.id, "completedDate", e.target.value, taskDef.label, "Pre-Renewal")}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── COMPLIANCE ────────────────────────────────────────────────────────────────
+  if (section === "compliance") {
+    const dueDates = complianceDueDates(data.renewalDate);
+    const dueFnMap = { aca_filing:"aca", rxdc:"rxdc", medicare_d:"medicare", pcori:"pcori", form5500:"form5500", gag_clause:"gag_clause" };
+    const total = COMPLIANCE_TASKS.length;
+    const done = COMPLIANCE_TASKS.filter(t => {
+      const task = data.compliance?.[t.id];
+      const s = typeof task === 'object' ? task?.status : task;
+      return s === 'Complete' || s === 'N/A';
+    }).length;
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Compliance</div>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+            background: done === total ? "#dcfce7" : "#eef2d8",
+            color: done === total ? "#166534" : "#55652b" }}>
+            {done}/{total} complete
+          </span>
+        </div>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", padding: "14px 16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 130px", gap: 8,
+            paddingBottom: 8, marginBottom: 8, borderBottom: "1px solid #f1f5f9" }}>
+            {["Item","Status","Assignee","Due Date","Completed"].map(h => (
+              <div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</div>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {COMPLIANCE_TASKS.map(taskDef => {
+              const task = getTask("compliance", taskDef.id);
+              const isDone = task.status === "Complete" || task.status === "N/A";
+              const autoDate = dueDates[dueFnMap[taskDef.id]] || "";
+              return (
+                <div key={taskDef.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 130px",
+                  gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8,
+                  background: isDone ? "#f0fdf4" : "#f8fafc" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>{taskDef.label}</div>
+                  <select value={task.status}
+                    onChange={e => setTask("compliance", taskDef.id, "status", e.target.value, taskDef.label, "Compliance")}
+                    style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                      background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                      color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <select value={task.assignee || ""}
+                    onChange={e => setTask("compliance", taskDef.id, "assignee", e.target.value, taskDef.label, "Compliance")}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                    <option value="">Unassigned</option>
+                    {teamMembers.map(m => <option key={m}>{m}</option>)}
+                  </select>
+                  <input type="date" value={task.dueDate || autoDate}
+                    onChange={e => setTask("compliance", taskDef.id, "dueDate", e.target.value, taskDef.label, "Compliance")}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                  <input type="date" value={task.completedDate || ""}
+                    onChange={e => setTask("compliance", taskDef.id, "completedDate", e.target.value, taskDef.label, "Compliance")}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+
+  // ── RENEWAL TASKS ────────────────────────────────────────────────────────────
+  if (section === "renewal") {
+    // Build one flat list ordered by tasksDb order field
+    const renewalTemplates = (tasksDb || [])
+      .filter(t => t.category === "Renewal")
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    const flatTasks = renewalTemplates.map(tmpl => {
+      if (tmpl.id === "t_schedule_meeting" || tmpl.id === "t_renewalMeeting") {
+        const t = data.renewalMeeting || {};
+        return { key: "renewalMeeting", label: tmpl.label,
+          status: t.status, assignee: t.assignee, dueDate: t.dueDate, completedDate: t.completedDate,
+          onChange: (field, val) => setData(p => ({ ...p, renewalMeeting: { ...(p.renewalMeeting||{}), [field]: val } })) };
+      }
+      const arrIdx = (data.renewalTasks || []).findIndex(t => t._standardTemplateId === tmpl.id);
+      if (arrIdx >= 0) {
+        const t = data.renewalTasks[arrIdx];
+        return { key: t.id || tmpl.id, label: tmpl.label,
+          status: t.status, assignee: t.assignee, dueDate: t.dueDate, completedDate: t.completedDate,
+          onChange: (field, val) => { const arr = [...(data.renewalTasks||[])]; arr[arrIdx]={...arr[arrIdx],[field]:val}; set("renewalTasks",arr); } };
+      }
+      return null;
+    }).filter(Boolean);
+
+    // Label map for auto-generated carrier task keys
+    const CARRIER_TASK_LABELS = {
+      tl:  "Transmittal Letter",
+      bpa: "Benefit Plan Application",
+      bps: "Benefit Plan Summary",
+      ncp: "New Carrier Paperwork",
+      pcr: "Plan Change Request",
+    };
+    function carrierTaskLabel(key) {
+      const [prefix, ...rest] = key.split('_');
+      const benefit = rest.join(' ');
+      const label = CARRIER_TASK_LABELS[prefix] || prefix.toUpperCase();
+      return benefit ? `${label} — ${benefit.charAt(0).toUpperCase() + benefit.slice(1)}` : label;
+    }
+
+    const autoEntries = Object.entries(data.renewalTasksAuto || {}).map(([key, t]) => ({
+      key, label: carrierTaskLabel(key), isCarrier: true,
+      status: t?.status, assignee: t?.assignee, dueDate: t?.dueDate, completedDate: t?.completedDate,
+      onChange: (field, val) => setData(p => ({ ...p, renewalTasksAuto: { ...p.renewalTasksAuto, [key]: { ...(p.renewalTasksAuto?.[key]||{}), [field]: val } } }))
+    }));
+
+    const allTasks = [...flatTasks, ...autoEntries];
+    const allTotal = allTasks.length;
+    const allDone = allTasks.filter(t => t.status === "Complete" || t.status === "N/A").length;
+
+    function RenewalTaskRow({ task }) {
+      const isDone = task.status === "Complete" || task.status === "N/A";
+      return (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
+          gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8, marginBottom: 4,
+          background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
+          borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733", display: "flex", alignItems: "center", gap: 6 }}>
+            {task.label}
+            {task.isCarrier && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 99, background: "#dbeafe", color: "#1e40af", fontWeight: 700 }}>carrier</span>}
+          </div>
+          <select value={task.status || "Not Started"} onChange={e => task.onChange("status", e.target.value)}
+            style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+              background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+              color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+            {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+          </select>
+          <select value={task.assignee || ""} onChange={e => task.onChange("assignee", e.target.value)}
+            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+            <option value="">Unassigned</option>
+            {teamMembers.map(m => <option key={m}>{m}</option>)}
+          </select>
+          <input type="date" value={task.dueDate || ""} onChange={e => task.onChange("dueDate", e.target.value)}
+            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+          <input type="date" value={task.completedDate || ""} onChange={e => task.onChange("completedDate", e.target.value)}
+            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Renewal Tasks</div>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+            background: allDone === allTotal && allTotal > 0 ? "#dcfce7" : "#eef2d8",
+            color: allDone === allTotal && allTotal > 0 ? "#166534" : "#55652b" }}>
+            {allDone}/{allTotal} complete
+          </span>
+        </div>
+        {allTasks.length === 0 ? (
+          <div style={{ padding: "32px 24px", textAlign: "center", color: "#94a3b8", fontSize: 13,
+            background: "#fff", borderRadius: 10, border: "1.5px dashed #e2e8f0" }}>
+            No renewal tasks yet. Order and assign tasks in Admin → Tasks.
+          </div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
+              gap: 8, padding: "8px 12px", background: "#f8fafc",
+              borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
+              color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              {["Task","Status","Assignee","Due Date","Completed"].map((h,i) => <div key={i}>{h}</div>)}
+            </div>
+            <div style={{ padding: "8px 10px" }}>
+              {allTasks.map(task => <RenewalTaskRow key={task.key} task={task} />)}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── OPEN ENROLLMENT ───────────────────────────────────────────────────────────
+  if (section === "oe") {
+    const oeData = data.openEnrollment || {};
+    return (
+      <div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733", marginBottom: 16 }}>Open Enrollment</div>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", padding: "16px 20px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            <label style={{ ...labelStyle }}>OE Start Date
+              <input type="date" value={oeData.oeStartDate || ""}
+                onChange={e => setOE ? setOE("oeStartDate", e.target.value) : null}
+                style={{ ...inputStyle, marginTop: 4 }} />
+            </label>
+            <label style={{ ...labelStyle }}>OE End Date
+              <input type="date" value={oeData.oeEndDate || ""}
+                onChange={e => setOE ? setOE("oeEndDate", e.target.value) : null}
+                style={{ ...inputStyle, marginTop: 4 }} />
+            </label>
+            <label style={{ ...labelStyle }}>OE Type
+              <input type="text" value={oeData.oeType || ""}
+                onChange={e => setOE ? setOE("oeType", e.target.value) : null}
+                style={{ ...inputStyle, marginTop: 4 }} />
+            </label>
+            <label style={{ ...labelStyle }}>Enrollment Method
+              <input type="text" value={oeData.enrollMethod || ""}
+                onChange={e => setOE ? setOE("enrollMethod", e.target.value) : null}
+                style={{ ...inputStyle, marginTop: 4 }} />
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── POST-OE ───────────────────────────────────────────────────────────────────
+  if (section === "postOE") {
+    const postOEFixedDefs = [
+      { id: "elections_received",      label: "Elections Received?" },
+      { id: "oe_changes_processed",    label: "OE Changes Processed?" },
+      { id: "carrier_bill_audited",    label: "Carrier Bill Audited?" },
+      { id: "lineup_updated",          label: "Lineup Updated?" },
+      { id: "oe_wrapup_email",         label: "OE Wrap-Up Email Sent?" },
+      { id: "new_carrier_census",      label: "New Carrier Submission Census Created?" },
+    ];
+    const allPostOE = [...postOEFixedDefs, ...(data.postOETasks || []).map(t => ({ id: t.id, label: t.title }))];
+    const total = allPostOE.length;
+    const done = postOEFixedDefs.filter(t => {
+      const task = data.postOEFixed?.[t.id];
+      const s = typeof task === 'object' ? task?.status : task;
+      return s === 'Complete' || s === 'N/A';
+    }).length + (data.postOETasks || []).filter(t => t.status === 'Complete' || t.status === 'N/A').length;
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Post-OE</div>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+            background: done === total ? "#dcfce7" : "#eef2d8",
+            color: done === total ? "#166534" : "#55652b" }}>
+            {done}/{total} complete
+          </span>
+        </div>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
+            gap: 8, padding: "8px 12px", background: "#f8fafc",
+            borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
+            color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            {["Task","Status","Assignee","Due Date","Completed"].map((h,i) => <div key={i}>{h}</div>)}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "8px 10px" }}>
+            {postOEFixedDefs.map(taskDef => {
+              const raw = data.postOEFixed?.[taskDef.id];
+              const task = typeof raw === 'object' && raw ? raw : { status: raw || "Not Started", assignee: "", dueDate: "", completedDate: "" };
+              const isDone = task.status === "Complete" || task.status === "N/A";
+              return (
+                <div key={taskDef.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
+                  gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8, marginBottom: 4,
+                  background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
+                  borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>{taskDef.label}</div>
+                  <select value={task.status}
+                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, status: e.target.value } } }))}
+                    style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                      background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                      color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <select value={task.assignee || ""}
+                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, assignee: e.target.value } } }))}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                    <option value="">Unassigned</option>
+                    {teamMembers.map(m => <option key={m}>{m}</option>)}
+                  </select>
+                  <input type="date" value={task.dueDate || ""}
+                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, dueDate: e.target.value } } }))}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                  <input type="date" value={task.completedDate || ""}
+                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, completedDate: e.target.value } } }))}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── MISC TASKS ────────────────────────────────────────────────────────────────
+  if (section === "misc") {
+    const tasks = data.miscTasks || [];
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Tasks</div>
+          <button onClick={() => setData(p => ({ ...p, miscTasks: [...(p.miscTasks||[]),
+            { id: generateId(), title: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "", followUps: [] }]}))}
+            style={{ fontSize: 12, fontWeight: 700, padding: "6px 14px", borderRadius: 8,
+              background: "#eef2d8", border: "1.5px solid #c8d48a", color: "#55652b", cursor: "pointer", fontFamily: "inherit" }}>
+            + Add Task
+          </button>
+        </div>
+        {tasks.length === 0 ? (
+          <div style={{ padding: "40px 20px", textAlign: "center", background: "#fff",
+            borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8", fontSize: 13 }}>
+            No miscellaneous tasks yet.
+          </div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", padding: "14px 16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {tasks.map((task, idx) => (
+                <div key={task.id || idx} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 28px",
+                  gap: 8, alignItems: "center", padding: "6px 10px", borderRadius: 8,
+                  background: task.status === "Complete" ? "#f0fdf4" : "#f8fafc",
+                  border: `1px solid ${task.status === "Complete" ? "#bbf7d0" : "#e2e8f0"}` }}>
+                  <input type="text" value={task.title || ""}
+                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],title:e.target.value}; set("miscTasks",t); }}
+                    placeholder="Task description"
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
+                  <select value={task.status || "Not Started"}
+                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],status:e.target.value}; set("miscTasks",t); }}
+                    style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                      background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                      color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <select value={task.assignee || ""}
+                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],assignee:e.target.value}; set("miscTasks",t); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                    <option value="">Unassigned</option>
+                    {teamMembers.map(m => <option key={m}>{m}</option>)}
+                  </select>
+                  <input type="date" value={task.dueDate || ""}
+                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],dueDate:e.target.value}; set("miscTasks",t); }}
+                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                  <button onClick={() => { const t=tasks.filter((_,i)=>i!==idx); set("miscTasks",t); }}
+                    style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#991b1b",
+                      cursor: "pointer", fontSize: 12, padding: "4px 6px", fontFamily: "inherit" }}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
+  if (section === "transactions") {
+    const txns = data.transactions || [];
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Transactions</div>
+          <button onClick={() => setData(p => ({ ...p, transactions: [...(p.transactions||[]),
+            { id: generateId(), label: "", memberName: "", changeType: "", receivedDate: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "" }]}))}
+            style={{ fontSize: 12, fontWeight: 700, padding: "6px 14px", borderRadius: 8,
+              background: "#eef2d8", border: "1.5px solid #c8d48a", color: "#55652b", cursor: "pointer", fontFamily: "inherit" }}>
+            + Add Transaction
+          </button>
+        </div>
+        {txns.length === 0 ? (
+          <div style={{ padding: "40px 20px", textAlign: "center", background: "#fff",
+            borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8", fontSize: 13 }}>
+            No transactions recorded.
+          </div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 110px 140px 28px",
+              gap: 8, padding: "8px 12px", background: "#f8fafc",
+              borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
+              color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              {["Member","Change Type","Received","Status","Assignee",""].map((h,i) => <div key={i}>{h}</div>)}
+            </div>
+            {txns.map((txn, idx) => (
+              <div key={txn.id || idx} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 110px 140px 28px",
+                gap: 8, padding: "8px 12px", alignItems: "center",
+                borderBottom: idx < txns.length-1 ? "1px solid #f1f5f9" : "none",
+                background: txn.status === "Complete" ? "#f0fdf4" : "#fff" }}>
+                <input type="text" value={txn.memberName || ""}
+                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],memberName:e.target.value}; set("transactions",t); }}
+                  placeholder="Member name"
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
+                <input type="text" value={txn.changeType || txn.label || ""}
+                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],changeType:e.target.value,label:e.target.value}; set("transactions",t); }}
+                  placeholder="Type of change"
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
+                <input type="date" value={txn.receivedDate || ""}
+                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],receivedDate:e.target.value}; set("transactions",t); }}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                <select value={txn.status || "Not Started"}
+                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],status:e.target.value}; set("transactions",t); }}
+                  style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                    background: STATUS_STYLES[txn.status]?.bg || "#f1f5f9",
+                    color: STATUS_STYLES[txn.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                  {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                </select>
+                <select value={txn.assignee || ""}
+                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],assignee:e.target.value}; set("transactions",t); }}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                  <option value="">Unassigned</option>
+                  {teamMembers.map(m => <option key={m}>{m}</option>)}
+                </select>
+                <button onClick={() => { const t=txns.filter((_,i)=>i!==idx); set("transactions",t); }}
+                  style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#991b1b",
+                    cursor: "pointer", fontSize: 12, padding: "4px 6px", fontFamily: "inherit" }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+
+// ── Client Benefits Editor ────────────────────────────────────────────────────
+// Full benefit editing with group sub-navigation sidebar.
+// Uses the same state (data/set/setData) as the parent ClientProfile.
+
+function ClientBenefitsEditor({ data, set, setData, carriersData, currentUser, benefitsDb, fundingOptions }) {
+  const [activeGroup, setActiveGroup] = React.useState("core");
+  const [benefitLeafId, setBenefitLeafId] = React.useState("");
+  const [showPicker, setShowPicker] = React.useState(false);
+
+  // setBenefitCarrier mirrors the modal logic — auto-populates commission from carrier rules
+  function setBenefitCarrier(benefitId, carrier) {
+    setData(p => {
+      const updated = { ...p, benefitCarriers: { ...p.benefitCarriers, [benefitId]: carrier } };
+      if (carrier && carrier !== "__other__" && carriersData) {
+        const carrierObj = carriersData.find(c => c.name === carrier);
+        const rules = carrierObj?.commissionRules || [];
+        const BENEFIT_ID_TO_NAME = {
+          medical:"Medical", dental:"Dental", vision:"Vision",
+          basic_life:"Basic Life/AD&D", vol_life:"Vol Life",
+          std:"STD", ltd:"LTD", worksite:"Worksite",
+          eap:"EAP", telehealth:"Telehealth", fsa:"FSA",
+          hsa_funding:"HSA", hra:"HRA", nydbl_pfl:"NYDBL & PFL",
+        };
+        const benefitName = BENEFIT_ID_TO_NAME[benefitId] || benefitId;
+        const market = p.marketSize || "";
+        const funding = p.fundingMethod || "";
+        const match = rules.find(r =>
+          (r.benefit === benefitName) && (r.segment === market) && (r.fundingMethod === funding)
+        ) || rules.find(r =>
+          (r.benefit === benefitName || r.benefit === "All") && (r.segment === market || r.segment === "All") && r.fundingMethod === "All"
+        ) || rules.find(r => r.benefit === benefitName && r.segment === "All");
+        if (match?.amount) {
+          return {
+            ...updated,
+            benefitCommissions: { ...(updated.benefitCommissions||{}),
+              [benefitId]: { type: match.type, amount: match.amount } }
+          };
+        }
+      }
+      return updated;
+    });
+  }
+
+  // Build active benefits per group
+  const benefitsByGroup = {};
+  BENEFIT_GROUPS.forEach(g => { benefitsByGroup[g.id] = []; });
+  BENEFITS_SCHEMA.forEach(cat => {
+    const grp = cat.group || "supplemental";
+    const isActive = !!(data.benefitActive || {})[cat.id];
+    if (benefitsByGroup[grp]) {
+      benefitsByGroup[grp].push({ ...cat, isActive });
+    }
+  });
+
+  const groupsWithActive = BENEFIT_GROUPS.map(g => ({
+    ...g,
+    activeCount: (benefitsByGroup[g.id] || []).filter(b => b.isActive).length,
+    totalCount:  (benefitsByGroup[g.id] || []).length,
+  }));
+
+  // Current group's benefits
+  const currentGroupBenefits = benefitsByGroup[activeGroup] || [];
+  const activeBenefitsInGroup = currentGroupBenefits.filter(b => b.isActive);
+
+  // Selected benefit leaf
+  const selBenefit = activeBenefitsInGroup.find(b => b.id === benefitLeafId) || activeBenefitsInGroup[0];
+
+  const carrierOptions = selBenefit ? carriersForBenefit(selBenefit.id, carriersData) : [];
+  const currentCarrier = selBenefit ? (data.benefitCarriers || {})[selBenefit.id] || "" : "";
+  const effectiveDate  = selBenefit ? (data.benefitEffectiveDates || {})[selBenefit.id] || "" : "";
+
+  const BOB_OLIVE = "#7B8C3F";
+  const BOB_OLIVE_BG = "#eef2d8";
+  const BOB_OLIVE_BORDER = "#c8d48a";
+
+  return (
+    <div style={{ display: "flex", gap: 0, minHeight: 500 }}>
+
+      {/* Group sub-navigation */}
+      <div style={{ width: 180, flexShrink: 0, borderRight: "1px solid #e2e8f0",
+        paddingRight: 0, marginRight: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.8px",
+          textTransform: "uppercase", marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid #f1f5f9" }}>
+          Benefit Groups
+        </div>
+        {groupsWithActive.map(g => {
+          const isActive = activeGroup === g.id;
+          return (
+            <button key={g.id} onClick={() => { setActiveGroup(g.id); setBenefitLeafId(""); }}
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "8px 10px", borderRadius: 7, marginBottom: 2, border: "none",
+                borderLeft: `3px solid ${isActive ? BOB_OLIVE : "transparent"}`,
+                background: isActive ? BOB_OLIVE_BG : "transparent",
+                color: isActive ? BOB_OLIVE : "#475569",
+                cursor: "pointer", fontFamily: "inherit", fontSize: 12,
+                fontWeight: isActive ? 700 : 400, textAlign: "left" }}>
+              <span>{g.label}</span>
+              {g.activeCount > 0 && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+                  background: isActive ? "#fff" : BOB_OLIVE_BG,
+                  color: BOB_OLIVE, border: `1px solid ${BOB_OLIVE_BORDER}` }}>
+                  {g.activeCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9" }}>
+          <button onClick={() => setShowPicker(!showPicker)}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+              border: `1.5px solid ${showPicker ? BOB_OLIVE : "#e2e8f0"}`,
+              background: showPicker ? BOB_OLIVE_BG : "#f8fafc",
+              color: showPicker ? BOB_OLIVE : "#475569",
+              cursor: "pointer", fontFamily: "inherit" }}>
+            {showPicker ? "✕ Close" : "＋ Add Coverage"}
+          </button>
+        </div>
+      </div>
+
+      {/* Right content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+
+        {/* Add Coverage Picker */}
+        {showPicker && (
+          <div style={{ background: "#f0f5fa", borderRadius: 12, border: `1.5px solid ${BOB_OLIVE}`,
+            padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#2d4a6b", marginBottom: 12 }}>
+              Select lines of coverage to add:
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              {BENEFIT_GROUPS.map(g => {
+                const groupBenefits = BENEFITS_SCHEMA.filter(s => s.group === g.id);
+                if (!groupBenefits.length) return null;
+                return (
+                  <div key={g.id}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".8px",
+                      textTransform: "uppercase", marginBottom: 6, paddingBottom: 4,
+                      borderBottom: "1px solid #cbd5e1" }}>{g.label}</div>
+                    {groupBenefits.map(cat => {
+                      const isActive = !!(data.benefitActive || {})[cat.id];
+                      return (
+                        <label key={cat.id} style={{ display: "flex", alignItems: "center", gap: 8,
+                          cursor: "pointer", padding: "4px 6px", borderRadius: 6, marginBottom: 2,
+                          background: isActive ? BOB_OLIVE_BG : "#fff",
+                          border: `1px solid ${isActive ? BOB_OLIVE_BORDER : "#e2e8f0"}` }}>
+                          <input type="checkbox" checked={isActive}
+                            onChange={() => {
+                              setData(p => {
+                                const newActive = { ...(p.benefitActive||{}), [cat.id]: !isActive };
+                                const newDates = { ...(p.benefitEffectiveDates||{}) };
+                                if (!isActive && !newDates[cat.id] && p.renewalDate)
+                                  newDates[cat.id] = p.renewalDate;
+                                return { ...p, benefitActive: newActive, benefitEffectiveDates: newDates };
+                              });
+                              if (!isActive) { setActiveGroup(cat.group); setBenefitLeafId(cat.id); setShowPicker(false); }
+                            }}
+                            style={{ accentColor: BOB_OLIVE, width: 13, height: 13 }} />
+                          <span style={{ fontSize: 12, color: isActive ? BOB_OLIVE : "#334155",
+                            fontWeight: isActive ? 700 : 400 }}>
+                            {cat.label}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => setShowPicker(false)}
+                style={{ padding: "7px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  border: "none", background: BOB_OLIVE, color: "#fff",
+                  cursor: "pointer", fontFamily: "inherit" }}>Done</button>
+            </div>
+          </div>
+        )}
+
+        {/* Benefit leaf tabs within group */}
+        {activeBenefitsInGroup.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+            {activeBenefitsInGroup.map(b => (
+              <button key={b.id}
+                onClick={() => setBenefitLeafId(b.id)}
+                style={{ padding: "6px 14px", borderRadius: 99, fontSize: 12, fontWeight: 700,
+                  border: `1.5px solid ${selBenefit?.id === b.id ? BOB_OLIVE : "#e2e8f0"}`,
+                  background: selBenefit?.id === b.id ? BOB_OLIVE_BG : "#f8fafc",
+                  color: selBenefit?.id === b.id ? BOB_OLIVE : "#64748b",
+                  cursor: "pointer", fontFamily: "inherit" }}>
+                {b.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* No active benefits in this group */}
+        {activeBenefitsInGroup.length === 0 && !showPicker && (
+          <div style={{ padding: "40px 20px", textAlign: "center", background: "#fff",
+            borderRadius: 12, border: "1.5px dashed #e2e8f0" }}>
+            <div style={{ fontSize: 24, marginBottom: 8 }}>+</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#64748b" }}>
+              No {BENEFIT_GROUPS.find(g => g.id === activeGroup)?.label} benefits active
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+              Click "+ Add Coverage" to add benefits to this group
+            </div>
+          </div>
+        )}
+
+        {/* Benefit detail card */}
+        {selBenefit && (
+          <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e2e8f0",
+            borderTop: `3px solid ${BOB_OLIVE}`, padding: "18px 20px" }}>
+
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16,
+              paddingBottom: 12, borderBottom: "1px solid #f1f5f9" }}>
+              <div style={{ flex: 1, fontSize: 15, fontWeight: 800, color: "#0f172a" }}>{selBenefit.label}</div>
+              {currentCarrier && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8",
+                  background: "#eff6ff", padding: "2px 10px", borderRadius: 99 }}>{currentCarrier}</span>
+              )}
+              {effectiveDate && (
+                <span style={{ fontSize: 11, color: "#64748b" }}>
+                  Eff: {effectiveDate.slice(5,7)}/{effectiveDate.slice(8,10)}/{effectiveDate.slice(0,4)}
+                </span>
+              )}
+              <button onClick={() => {
+                if (!confirm(`Remove ${selBenefit.label} from this client's benefits?`)) return;
+                setData(p => ({ ...p, benefitActive: { ...(p.benefitActive||{}), [selBenefit.id]: false } }));
+                setBenefitLeafId("");
+              }} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                cursor: "pointer", fontFamily: "inherit" }}>Remove</button>
+            </div>
+
+            {/* Core fields: Carrier + Effective Date */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Carrier / Vendor
+                <select value={currentCarrier}
+                  onChange={e => setBenefitCarrier(selBenefit.id, e.target.value)}
+                  style={{ ...inputStyle, marginTop: 3,
+                    borderColor: currentCarrier ? "#3b82f6" : undefined,
+                    background: currentCarrier ? "#eff6ff" : "#fff",
+                    color: currentCarrier ? "#1d4ed8" : "#94a3b8",
+                    fontWeight: currentCarrier ? 600 : 400 }}>
+                  <option value="">— Select carrier —</option>
+                  {carrierOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="__other__">Other…</option>
+                </select>
+                {currentCarrier === "__other__" && (
+                  <input placeholder="Enter carrier name"
+                    value={(data.benefitCarriers || {})[selBenefit.id + "__other_text"] || ""}
+                    onChange={e => setData(p => ({ ...p, benefitCarriers: { ...p.benefitCarriers,
+                      [selBenefit.id + "__other_text"]: e.target.value } }))}
+                    onBlur={e => setData(p => ({ ...p, benefitCarriers: { ...p.benefitCarriers,
+                      [selBenefit.id]: e.target.value || "__other__",
+                      [selBenefit.id + "__other_text"]: e.target.value } }))}
+                    style={{ ...inputStyle, marginTop: 4 }} />
+                )}
+              </label>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Effective Date
+                <input type="date" value={effectiveDate}
+                  onChange={e => setData(p => ({ ...p, benefitEffectiveDates: { ...p.benefitEffectiveDates, [selBenefit.id]: e.target.value } }))}
+                  style={{ ...inputStyle, marginTop: 3 }} />
+              </label>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Policy Number
+                <input type="text" value={(data.benefitPolicyNumbers || {})[selBenefit.id] || ""}
+                  onChange={e => setData(p => ({ ...p, benefitPolicyNumbers: { ...p.benefitPolicyNumbers, [selBenefit.id]: e.target.value } }))}
+                  placeholder="e.g. 123456"
+                  style={{ ...inputStyle, marginTop: 3 }} />
+              </label>
+              {selBenefit.id === "medical" && (
+                <label style={{ ...labelStyle, marginTop: 0 }}>Funding Method
+                  <select value={data.fundingMethod || ""}
+                    onChange={e => set("fundingMethod", e.target.value)}
+                    style={{ ...inputStyle, marginTop: 3 }}>
+                    {(fundingOptions || ["Fully Insured","Level-Funded","Self-Funded"]).map(f => <option key={f}>{f}</option>)}
+                  </select>
+                </label>
+              )}
+              <label style={{ ...labelStyle, marginTop: 0 }}>Commissions
+                <div style={{ display: "flex", gap: 6, marginTop: 3 }}>
+                  <select value={(data.benefitCommissions || {})[selBenefit.id]?.type || ""}
+                    onChange={e => setData(p => ({ ...p, benefitCommissions: { ...p.benefitCommissions,
+                      [selBenefit.id]: { ...(p.benefitCommissions?.[selBenefit.id]||{}), type: e.target.value, amount: "" } } }))}
+                    style={{ ...inputStyle, marginTop: 0, flex: "0 0 100px" }}>
+                    <option value="">— Type —</option>
+                    <option>PEPM</option>
+                    <option>Flat %</option>
+                    <option>Graded</option>
+                  </select>
+                  {(data.benefitCommissions || {})[selBenefit.id]?.type && (
+                    <div style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                      {(data.benefitCommissions || {})[selBenefit.id]?.type === "PEPM" && (
+                        <span style={{ padding: "8px 8px", background: "#f1f5f9", border: "1.5px solid #e2e8f0",
+                          borderRight: "none", borderRadius: "8px 0 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>$</span>
+                      )}
+                      <input type="text" inputMode="decimal"
+                        value={(data.benefitCommissions || {})[selBenefit.id]?.amount || ""}
+                        onChange={e => setData(p => ({ ...p, benefitCommissions: { ...p.benefitCommissions,
+                          [selBenefit.id]: { ...(p.benefitCommissions?.[selBenefit.id]||{}), amount: e.target.value.replace(/[^0-9.]/g,"") } } }))}
+                        placeholder="0.00"
+                        style={{ ...inputStyle, marginTop: 0, flex: 1,
+                          borderRadius: (data.benefitCommissions || {})[selBenefit.id]?.type === "PEPM" ? "0 8px 8px 0" : "8px 0 0 8px",
+                          borderLeft: (data.benefitCommissions || {})[selBenefit.id]?.type === "PEPM" ? "none" : undefined,
+                          borderRight: (data.benefitCommissions || {})[selBenefit.id]?.type !== "PEPM" ? "none" : undefined,
+                          textAlign: "right" }} />
+                      {(data.benefitCommissions || {})[selBenefit.id]?.type !== "PEPM" && (
+                        <span style={{ padding: "8px 8px", background: "#f1f5f9", border: "1.5px solid #e2e8f0",
+                          borderLeft: "none", borderRadius: "0 8px 8px 0", fontSize: 13, color: "#475569", fontWeight: 600 }}>%</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </label>
+              <label style={{ ...labelStyle, marginTop: 0 }}># Enrolled
+                <IntegerInput value={(data.benefitEnrolled || {})[selBenefit.id] || ""}
+                  onChange={v => setData(p => ({ ...p,
+                    benefitEnrolled: { ...p.benefitEnrolled, [selBenefit.id]: v },
+                    ...(selBenefit.id === "medical" ? { medicalEnrolled: v } : {}) }))}
+                  placeholder="# enrolled"
+                  style={{ ...inputStyle, marginTop: 3 }} />
+              </label>
+            </div>
+
+            {/* Plans section — number input + plan cards */}
+            {(() => {
+              const plans = (data.benefitPlans || {})[selBenefit.id] || [];
+              const setPlans = newPlans => setData(p => ({ ...p,
+                benefitPlans: { ...p.benefitPlans, [selBenefit.id]: newPlans } }));
+              const isTiered = ["medical","dental","vision"].includes(selBenefit.id);
+              const isUnitRate = ["basic_life","std","ltd"].includes(selBenefit.id);
+              const TIERS_4 = [{key:"ee",label:"EE Only"},{key:"es",label:"EE + Spouse"},{key:"ec",label:"EE + Child(ren)"},{key:"ff",label:"Family"}];
+              const tierMode = (data.benefitTierMode || {})[selBenefit.id] || "4tier";
+              const TIERS = tierMode === "2tier"
+                ? [{key:"ee",label:"EE Only"},{key:"ff",label:"Family"}]
+                : tierMode === "3tier"
+                ? [{key:"ee",label:"EE Only"},{key:"es",label:"EE+1"},{key:"ff",label:"Family"}]
+                : TIERS_4;
+
+              const blankPlan = () => {
+                const base = { id: generateId(), name: "", groupNumber: "", carrierPlanNumber: "", eligibleClasses: [] };
+                if (isUnitRate) return { ...base, unitRate: "", volume: "", maxBenefit: "", enrolled: "" };
+                if (isTiered) return { ...base, rates: {ee:"",es:"",ec:"",ff:""}, enrolled: {ee:"",es:"",ec:"",ff:""} };
+                return base;
+              };
+
+              return (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10,
+                    paddingTop: 12, borderTop: "1px solid #f1f5f9" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: ".8px", textTransform: "uppercase" }}>
+                      Plans Offered
+                    </div>
+                    <input type="text" inputMode="numeric" value={plans.length || ""} placeholder="0"
+                      onChange={e => {
+                        const n = parseInt(e.target.value.replace(/\D/g,"")) || 0;
+                        if (n > plans.length) setPlans([...plans, ...Array(n-plans.length).fill(null).map(blankPlan)]);
+                        else if (n < plans.length && (n === 0 || confirm(`Reduce to ${n} plan(s)?`))) setPlans(plans.slice(0, n));
+                      }}
+                      style={{ width: 56, padding: "4px 10px", border: "1.5px solid #e2e8f0", borderRadius: 8,
+                        fontSize: 14, fontWeight: 700, color: "#2d4a6b", fontFamily: "inherit", textAlign: "center" }} />
+                    {isTiered && plans.length > 0 && (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {[{k:"4tier",l:"4-Tier"},{k:"3tier",l:"3-Tier"},{k:"2tier",l:"2-Tier"}].map(opt => (
+                          <button key={opt.k} onClick={() => setData(p => ({ ...p, benefitTierMode: { ...p.benefitTierMode, [selBenefit.id]: opt.k } }))}
+                            style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
+                              border: `1.5px solid ${tierMode === opt.k ? "#3b82f6" : "#e2e8f0"}`,
+                              background: tierMode === opt.k ? "#eff6ff" : "#fff",
+                              color: tierMode === opt.k ? "#1d4ed8" : "#64748b", fontWeight: tierMode === opt.k ? 700 : 400 }}>
+                            {opt.l}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {plans.map((pl, idx) => (
+                    <div key={pl.id || idx} style={{ background: "#f8fafc", borderRadius: 10,
+                      border: "1.5px solid #e2e8f0", padding: "12px 14px", marginBottom: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, marginBottom: 10, alignItems: "end" }}>
+                        <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>Plan Name
+                          <input type="text" value={pl.name || ""}
+                            onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p,name:e.target.value} : p))}
+                            placeholder="e.g. Blue Choice PPO"
+                            style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                        </label>
+                        <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>Carrier Plan #
+                          <input type="text" value={pl.carrierPlanNumber || ""}
+                            onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p,carrierPlanNumber:e.target.value} : p))}
+                            style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                        </label>
+                        <button onClick={() => { if (confirm("Remove this plan?")) setPlans(plans.filter((_,i) => i!==idx)); }}
+                          style={{ padding: "5px 10px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
+                            background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", alignSelf: "end" }}>✕</button>
+                      </div>
+
+                      {/* Employee class assignment */}
+                      {(data.employeeClasses || []).length > 0 && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 6 }}>
+                            Eligible Classes
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {(data.employeeClasses || []).map(cls => {
+                              const assigned = (pl.eligibleClasses || []).includes(cls.id);
+                              return (
+                                <button key={cls.id} onClick={() => {
+                                  const newClasses = assigned
+                                    ? (pl.eligibleClasses || []).filter(id => id !== cls.id)
+                                    : [...(pl.eligibleClasses || []), cls.id];
+                                  setPlans(plans.map((p,i) => i===idx ? {...p,eligibleClasses:newClasses} : p));
+                                }} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99, cursor: "pointer", fontFamily: "inherit",
+                                  border: `1.5px solid ${assigned ? BOB_OLIVE : "#e2e8f0"}`,
+                                  background: assigned ? BOB_OLIVE_BG : "#fff",
+                                  color: assigned ? BOB_OLIVE : "#64748b", fontWeight: assigned ? 700 : 400 }}>
+                                  {cls.name || cls.label || `Class ${idx+1}`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Rates table — tiered */}
+                      {isTiered && (
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                            <thead>
+                              <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
+                                <th style={{ textAlign: "left", padding: "4px 8px", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Tier</th>
+                                <th style={{ textAlign: "right", padding: "4px 8px", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Rate</th>
+                                <th style={{ textAlign: "right", padding: "4px 8px", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Enrolled</th>
+                                <th style={{ textAlign: "right", padding: "4px 8px", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Monthly Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {TIERS.map(tier => {
+                                const rate = parseFloat((pl.rates || {})[tier.key]) || 0;
+                                const enrolled = parseInt((pl.enrolled || {})[tier.key]) || 0;
+                                const monthly = rate * enrolled;
+                                return (
+                                  <tr key={tier.key} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                    <td style={{ padding: "4px 8px", fontWeight: 600, color: "#475569" }}>{tier.label}</td>
+                                    <td style={{ padding: "4px 8px" }}>
+                                      <input type="text" inputMode="decimal" value={(pl.rates || {})[tier.key] || ""}
+                                        onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p, rates:{...(p.rates||{}),[tier.key]:e.target.value.replace(/[^0-9.]/g,"")}} : p))}
+                                        style={{ width: 80, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6, textAlign: "right", fontSize: 11, fontFamily: "inherit" }} />
+                                    </td>
+                                    <td style={{ padding: "4px 8px" }}>
+                                      <input type="text" inputMode="numeric" value={(pl.enrolled || {})[tier.key] || ""}
+                                        onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p, enrolled:{...(p.enrolled||{}),[tier.key]:e.target.value.replace(/\D/g,"")}} : p))}
+                                        style={{ width: 60, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6, textAlign: "right", fontSize: 11, fontFamily: "inherit" }} />
+                                    </td>
+                                    <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 700, color: monthly > 0 ? "#166534" : "#94a3b8" }}>
+                                      {monthly > 0 ? `$${monthly.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}` : "—"}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {/* Plan total */}
+                              {TIERS.some(t => parseFloat((pl.rates||{})[t.key]) > 0) && (
+                                <tr style={{ background: "#f0fdf4", borderTop: "2px solid #bbf7d0" }}>
+                                  <td colSpan={3} style={{ padding: "5px 8px", fontWeight: 700, color: "#166534", fontSize: 12 }}>Plan Monthly Total</td>
+                                  <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: "#166534", fontSize: 12 }}>
+                                    ${TIERS.reduce((sum, t) => sum + (parseFloat((pl.rates||{})[t.key])||0) * (parseInt((pl.enrolled||{})[t.key])||0), 0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Unit rate — basic life, STD, LTD */}
+                      {isUnitRate && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>Unit Rate
+                            <input type="text" inputMode="decimal" value={pl.unitRate || ""}
+                              onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p,unitRate:e.target.value.replace(/[^0-9.]/g,"")} : p))}
+                              style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                          </label>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>Total Volume
+                            <input type="text" inputMode="decimal" value={pl.volume || ""}
+                              onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p,volume:e.target.value.replace(/[^0-9.]/g,"")} : p))}
+                              style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                          </label>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>Max Benefit
+                            <input type="text" inputMode="decimal" value={pl.maxBenefit || ""}
+                              onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p,maxBenefit:e.target.value.replace(/[^0-9.]/g,"")} : p))}
+                              style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
+                          </label>
+                        </div>
+                      )}
+
+                      {/* Plan notes */}
+                      <div style={{ marginTop: 8 }}>
+                        <input type="text" value={pl.notes || ""} placeholder="Plan notes (optional)"
+                          onChange={e => setPlans(plans.map((p,i) => i===idx ? {...p,notes:e.target.value} : p))}
+                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, color: "#64748b" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Benefit notes */}
+            <div style={{ marginTop: 8 }}>
+              <label style={{ ...labelStyle, marginTop: 0, fontSize: 12 }}>Notes
+                <textarea value={(data.benefitNotes || {})[selBenefit.id] || ""}
+                  onChange={e => setData(p => ({ ...p, benefitNotes: { ...p.benefitNotes, [selBenefit.id]: e.target.value } }))}
+                  rows={2} placeholder="Notes for this benefit line..."
+                  style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontSize: 12 }} />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Employee Classes section at bottom of any group */}
+        {activeGroup === "core" && (
+          <div style={{ marginTop: 16, background: "#fff", borderRadius: 12,
+            border: "1px solid #e2e8f0", borderTop: `3px solid ${BOB_OLIVE}`, padding: "16px 18px" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1a2733", marginBottom: 12,
+              display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              Employee Classes
+              <button onClick={() => setData(p => ({ ...p, employeeClasses: [
+                ...(p.employeeClasses||[]),
+                { id: generateId(), name: "", label: "", eligibility: "" }
+              ]}))} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, fontFamily: "inherit",
+                border: `1.5px solid ${BOB_OLIVE_BORDER}`, background: BOB_OLIVE_BG,
+                color: BOB_OLIVE, cursor: "pointer", fontWeight: 700 }}>+ Add Class</button>
+            </div>
+            {(data.employeeClasses || []).length === 0 ? (
+              <div style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>No employee classes defined.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {(data.employeeClasses || []).map((cls, idx) => (
+                  <div key={cls.id || idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto",
+                    gap: 8, alignItems: "center", padding: "8px 10px", borderRadius: 8,
+                    background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+                    <input type="text" value={cls.name || cls.label || ""}
+                      onChange={e => { const ec=[...(data.employeeClasses||[])]; ec[idx]={...ec[idx],name:e.target.value,label:e.target.value}; set("employeeClasses",ec); }}
+                      placeholder="Class name (e.g. Management)"
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 12 }} />
+                    <input type="text" value={cls.eligibility || ""}
+                      onChange={e => { const ec=[...(data.employeeClasses||[])]; ec[idx]={...ec[idx],eligibility:e.target.value}; set("employeeClasses",ec); }}
+                      placeholder="Eligibility criteria"
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 12 }} />
+                    <button onClick={() => set("employeeClasses", (data.employeeClasses||[]).filter((_,i) => i!==idx))}
+                      style={{ padding: "5px 8px", borderRadius: 6, border: "1.5px solid #fca5a5",
+                        background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Commission View ───────────────────────────────────────────────────────────
+
+function CommissionView({ data, setData, carriersData }) {
+
+  // Calculate monthly premium for a benefit from its plans
+  function calcMonthlyPremium(benefitId) {
+    const plans = (data.benefitPlans || {})[benefitId] || [];
+    const tierMode = (data.benefitTierMode || {})[benefitId] || "4tier";
+    const TIER_KEYS = {
+      "4tier": ["ee","es","ec","ff"],
+      "3tier": ["ee","es","ff"],
+      "2tier": ["ee","ff"],
+    };
+    const tierKeys = TIER_KEYS[tierMode] || TIER_KEYS["4tier"];
+    const isUnitRate = ["basic_life","std","ltd"].includes(benefitId);
+    const isAgeBanded = benefitId === "vol_life" || benefitId === "worksite_ci";
+    const isAgeBandedMedical = benefitId === "medical" && tierMode === "agebanded";
+
+    return plans.reduce((total, pl) => {
+      if (isUnitRate) {
+        // unit rate × volume / unitSize
+        const UNIT_SIZE = { basic_life: 1000, std: 10, ltd: 100 };
+        const unitSize = UNIT_SIZE[benefitId] || 1000;
+        const rate = parseFloat(pl.unitRate) || 0;
+        const vol  = parseFloat(pl.volume) || 0;
+        return total + (rate * vol / unitSize);
+      }
+      if (isAgeBanded || isAgeBandedMedical) {
+        return total + (pl.ageBands || []).reduce((s, b) => {
+          return s + (parseFloat(b.rate)||0) * (parseInt(b.enrolled)||0);
+        }, 0);
+      }
+      // Tiered composite
+      return total + tierKeys.reduce((s, k) => {
+        const rate = parseFloat((pl.rates||{})[k]) || 0;
+        const enr  = parseInt((pl.enrolled||{})[k]) || 0;
+        return s + rate * enr;
+      }, 0);
+    }, 0);
+  }
+
+  // Calculate commission amount for a benefit
+  function calcBenefitCommission(benefitId) {
+    const comm = (data.benefitCommissions || {})[benefitId] || {};
+    if (!comm.type || !comm.amount) return null;
+
+    const monthlyPremium = calcMonthlyPremium(benefitId);
+    const annualPremium  = monthlyPremium * 12;
+
+    // Enrolled count — from plans or legacy field
+    const plans = (data.benefitPlans || {})[benefitId] || [];
+    const tierMode = (data.benefitTierMode || {})[benefitId] || "4tier";
+    const TIER_KEYS = { "4tier":["ee","es","ec","ff"],"3tier":["ee","es","ff"],"2tier":["ee","ff"] };
+    const tierKeys = TIER_KEYS[tierMode] || TIER_KEYS["4tier"];
+    const enrolled = plans.length > 0
+      ? plans.reduce((s, pl) => s + tierKeys.reduce((ss,k) => ss+(parseInt((pl.enrolled||{})[k])||0),0), 0)
+      : parseInt((data.benefitEnrolled||{})[benefitId]) || 0;
+
+    let monthly = 0;
+    if (comm.type === "PEPM") {
+      monthly = (parseFloat(comm.amount)||0) * enrolled;
+    } else if (comm.type === "Flat %") {
+      monthly = monthlyPremium * ((parseFloat(comm.amount)||0) / 100);
+    } else if (comm.type === "Graded") {
+      const annual = calcGradedCommission(annualPremium, comm.tiers || []);
+      monthly = annual / 12;
+    }
+
+    return {
+      monthly,
+      annual: monthly * 12,
+      monthlyPremium,
+      annualPremium,
+      enrolled,
+      type: comm.type,
+      rate: comm.amount,
+    };
+  }
+
+  // Build commission rows for all active benefits
+  const activeBenefits = BENEFITS_SCHEMA.filter(b => !!(data.benefitActive||{})[b.id]);
+  const rows = activeBenefits.map(b => {
+    const result = calcBenefitCommission(b.id);
+    const carrier = (data.benefitCarriers||{})[b.id] || "";
+    const group = BENEFIT_GROUPS.find(g => g.id === b.group);
+    return { ...b, carrier, group, result };
+  }).filter(r => r.result !== null);
+
+  const totalMonthly = rows.reduce((s, r) => s + (r.result?.monthly||0), 0);
+  const totalAnnual  = rows.reduce((s, r) => s + (r.result?.annual||0), 0);
+  const totalPremium = rows.reduce((s, r) => s + (r.result?.monthlyPremium||0), 0);
+
+  const fmt = n => n.toLocaleString("en-US", { style:"currency", currency:"USD", maximumFractionDigits:0 });
+  const fmtPrecise = n => n.toLocaleString("en-US", { style:"currency", currency:"USD", minimumFractionDigits:2, maximumFractionDigits:2 });
+
+  // Summary tiles
+  const tiles = [
+    { label: "Monthly Premium", value: fmt(totalPremium), color: "#4b7896" },
+    { label: "Annual Premium",  value: fmt(totalPremium * 12), color: "#4b7896" },
+    { label: "Monthly Commission", value: fmtPrecise(totalMonthly), color: "#7B8C3F" },
+    { label: "Annual Commission",  value: fmtPrecise(totalAnnual),  color: "#55652B" },
+  ];
+
+  return (
+    <div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733", marginBottom: 16 }}>Commission</div>
+
+      {/* Summary tiles */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 20 }}>
+        {tiles.map(t => (
+          <div key={t.label} style={{ background: "#eef2d8", borderRadius: 10,
+            border: "1px solid #c8d48a", padding: "14px 16px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#55652B",
+              textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>{t.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: t.color }}>{t.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Detail table */}
+      {rows.length === 0 ? (
+        <div style={{ padding: "40px 20px", textAlign: "center", background: "#fff",
+          borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>
+            No commission data to calculate
+          </div>
+          <div style={{ fontSize: 12 }}>
+            Set commission type and rate on each benefit in the Benefits tab, and configure plan rates and enrollment.
+          </div>
+        </div>
+      ) : (
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 60px 1fr 1fr 1.2fr 1fr 1fr",
+            gap: 8, padding: "8px 16px", background: "#f8fafc",
+            borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
+            color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            {["Benefit","Carrier","Enrolled","Monthly Premium","Annual Premium","Commission Rate","Monthly Comm.","Annual Comm."].map((h,i) => (
+              <div key={i}>{h}</div>
+            ))}
+          </div>
+
+          {/* Group rows */}
+          {BENEFIT_GROUPS.map(group => {
+            const groupRows = rows.filter(r => r.group?.id === group.id);
+            if (!groupRows.length) return null;
+            return (
+              <React.Fragment key={group.id}>
+                <div style={{ padding: "6px 16px", background: `${group.color}10`,
+                  fontSize: 10, fontWeight: 800, color: group.color,
+                  textTransform: "uppercase", letterSpacing: "0.8px",
+                  borderBottom: "1px solid #f1f5f9" }}>
+                  {group.label}
+                </div>
+                {groupRows.map(row => {
+                  const r = row.result;
+                  const rateDisplay = r.type === "PEPM"
+                    ? `$${r.rate}/mo per enrollee`
+                    : r.type === "Graded"
+                      ? "Graded"
+                      : `${r.rate}%`;
+                  return (
+                    <div key={row.id} style={{ display: "grid",
+                      gridTemplateColumns: "1.5fr 1fr 60px 1fr 1fr 1.2fr 1fr 1fr",
+                      gap: 8, padding: "10px 16px", alignItems: "center",
+                      borderBottom: "1px solid #f8fafc",
+                      fontSize: 12, color: "#334155" }}>
+                      <div style={{ fontWeight: 600 }}>{row.label}</div>
+                      <div style={{ color: "#64748b", fontSize: 11 }}>{row.carrier || "—"}</div>
+                      <div style={{ textAlign: "right" }}>{r.enrolled || "—"}</div>
+                      <div style={{ textAlign: "right" }}>{fmtPrecise(r.monthlyPremium)}</div>
+                      <div style={{ textAlign: "right" }}>{fmtPrecise(r.annualPremium)}</div>
+                      <div style={{ fontSize: 11 }}>
+                        <span style={{ padding: "2px 7px", borderRadius: 99,
+                          background: "#eef2d8", color: "#55652b", fontWeight: 700, fontSize: 10 }}>
+                          {r.type}
+                        </span>
+                        {" "}{rateDisplay}
+                      </div>
+                      <div style={{ textAlign: "right", fontWeight: 700, color: "#7B8C3F" }}>
+                        {fmtPrecise(r.monthly)}
+                      </div>
+                      <div style={{ textAlign: "right", fontWeight: 700, color: "#55652B" }}>
+                        {fmtPrecise(r.annual)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
+
+          {/* Totals row */}
+          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 60px 1fr 1fr 1.2fr 1fr 1fr",
+            gap: 8, padding: "12px 16px", background: "#eef2d8",
+            borderTop: "2px solid #c8d48a", fontSize: 13, fontWeight: 800 }}>
+            <div style={{ color: "#55652B" }}>Total</div>
+            <div /><div />
+            <div style={{ textAlign: "right", color: "#4b7896" }}>{fmtPrecise(totalPremium)}</div>
+            <div style={{ textAlign: "right", color: "#4b7896" }}>{fmtPrecise(totalPremium*12)}</div>
+            <div />
+            <div style={{ textAlign: "right", color: "#7B8C3F" }}>{fmtPrecise(totalMonthly)}</div>
+            <div style={{ textAlign: "right", color: "#55652B" }}>{fmtPrecise(totalAnnual)}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Dashboard Book of Business Panel ─────────────────────────────────────────
+
+function DashboardBOBPanel({ clients, teams }) {
+
+  const [filterTeam, setFilterTeam] = React.useState("All");
+
+  // Calculate monthly premium + commission for a single client
+  function calcClientCommission(client) {
+    const activeIds = Object.keys(client.benefitActive || {}).filter(k => !!(client.benefitActive||{})[k]);
+    let monthlyPremium = 0;
+    let monthlyComm = 0;
+
+    activeIds.forEach(benefitId => {
+      const plans = (client.benefitPlans || {})[benefitId] || [];
+      const tierMode = (client.benefitTierMode || {})[benefitId] || "4tier";
+      const TIER_KEYS = { "4tier":["ee","es","ec","ff"],"3tier":["ee","es","ff"],"2tier":["ee","ff"] };
+      const tierKeys = TIER_KEYS[tierMode] || TIER_KEYS["4tier"];
+      const isUnitRate = ["basic_life","std","ltd"].includes(benefitId);
+      const isAgeBanded = ["vol_life","worksite_ci"].includes(benefitId);
+      const isAgeBandedMed = benefitId === "medical" && tierMode === "agebanded";
+
+      // Monthly premium from plans
+      let mp = 0;
+      if (plans.length > 0) {
+        mp = plans.reduce((s, pl) => {
+          if (isUnitRate) {
+            const UNIT = { basic_life:1000, std:10, ltd:100 };
+            return s + (parseFloat(pl.unitRate)||0) * (parseFloat(pl.volume)||0) / (UNIT[benefitId]||1000);
+          }
+          if (isAgeBanded || isAgeBandedMed) {
+            return s + (pl.ageBands||[]).reduce((ss,b) => ss + (parseFloat(b.rate)||0)*(parseInt(b.enrolled)||0), 0);
+          }
+          return s + tierKeys.reduce((ss,k) => ss + (parseFloat((pl.rates||{})[k])||0)*(parseInt((pl.enrolled||{})[k])||0), 0);
+        }, 0);
+      }
+      monthlyPremium += mp;
+
+      // Commission
+      const comm = (client.benefitCommissions || {})[benefitId] || {};
+      if (!comm.type || !comm.amount) return;
+
+      const enrolled = plans.length > 0
+        ? plans.reduce((s,pl) => s + tierKeys.reduce((ss,k) => ss+(parseInt((pl.enrolled||{})[k])||0),0), 0)
+        : parseInt((client.benefitEnrolled||{})[benefitId]) || 0;
+
+      if (comm.type === "PEPM") {
+        monthlyComm += (parseFloat(comm.amount)||0) * enrolled;
+      } else if (comm.type === "Flat %") {
+        monthlyComm += mp * ((parseFloat(comm.amount)||0) / 100);
+      } else if (comm.type === "Graded") {
+        monthlyComm += calcGradedCommission(mp * 12, comm.tiers || []) / 12;
+      }
+    });
+
+    return { monthlyPremium, monthlyComm };
+  }
+
+  // Filter active clients
+  const activeClients = clients.filter(c => (c.clientStatus || "Active") === "Active");
+  const filtered = filterTeam === "All" ? activeClients : activeClients.filter(c => c.team === filterTeam);
+
+  // Aggregate by team
+  const teamTotals = {};
+  filtered.forEach(c => {
+    const tid = c.team || "Unknown";
+    if (!teamTotals[tid]) teamTotals[tid] = { premium: 0, comm: 0, count: 0 };
+    const { monthlyPremium, monthlyComm } = calcClientCommission(c);
+    teamTotals[tid].premium += monthlyPremium;
+    teamTotals[tid].comm    += monthlyComm;
+    teamTotals[tid].count++;
+  });
+
+  const grandPremiumMo = filtered.reduce((s,c) => s + calcClientCommission(c).monthlyPremium, 0);
+  const grandCommMo    = filtered.reduce((s,c) => s + calcClientCommission(c).monthlyComm, 0);
+
+  const fmt  = n => "$" + Math.round(n).toLocaleString();
+  const fmtK = n => n >= 1000000 ? "$" + (n/1000000).toFixed(1) + "M" : n >= 1000 ? "$" + Math.round(n/1000) + "K" : "$" + Math.round(n);
+
+  const BOB_OLIVE = { bg: "#eef2d8", border: "#c8d48a", text: "#55652B", dark: "#3d4a1a", mid: "#7B8C3F" };
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0",
+      overflow: "hidden", marginBottom: 0 }}>
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "14px 20px", borderBottom: "1px solid #f1f5f9",
+        background: BOB_OLIVE.bg }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: BOB_OLIVE.dark }}>Book of Business</div>
+          <div style={{ fontSize: 11, color: BOB_OLIVE.text, marginTop: 2 }}>
+            {filtered.length} active client{filtered.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+            style={{ fontSize: 12, padding: "5px 10px", border: `1px solid ${BOB_OLIVE.border}`,
+              borderRadius: 7, background: "#fff", color: BOB_OLIVE.dark,
+              fontFamily: "inherit", cursor: "pointer" }}>
+            <option value="All">All Teams</option>
+            {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Summary row */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 0,
+        borderBottom: "1px solid #f1f5f9" }}>
+        {[
+          { label: "Monthly Premium",  value: fmtK(grandPremiumMo),    sub: fmt(grandPremiumMo) + "/mo" },
+          { label: "Annual Premium",   value: fmtK(grandPremiumMo*12), sub: fmt(grandPremiumMo*12) + "/yr" },
+          { label: "Monthly Comm.",    value: fmtK(grandCommMo),       sub: fmt(grandCommMo) + "/mo", accent: true },
+          { label: "Annual Comm.",     value: fmtK(grandCommMo*12),    sub: fmt(grandCommMo*12) + "/yr", accent: true },
+        ].map((tile, i) => (
+          <div key={i} style={{ padding: "16px 20px",
+            borderRight: i < 3 ? "1px solid #f1f5f9" : "none",
+            background: tile.accent ? `${BOB_OLIVE.bg}88` : "#fff" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8",
+              textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>{tile.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 800,
+              color: tile.accent ? BOB_OLIVE.mid : "#1a2733" }}>{tile.value}</div>
+            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{tile.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Per-team breakdown */}
+      {Object.keys(teamTotals).length > 1 && (
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid #f1f5f9" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8",
+            textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 10 }}>
+            By Team
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {Object.entries(teamTotals).map(([tid, totals]) => {
+              const team = teams.find(t => t.id === tid);
+              if (!team) return null;
+              return (
+                <div key={tid} style={{ flex: 1, minWidth: 200, padding: "10px 14px",
+                  borderRadius: 10, border: `1.5px solid ${team.border || "#e2e8f0"}`,
+                  background: team.color || "#f8fafc" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: team.text || "#1a2733" }}>
+                      Team {team.label}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#64748b" }}>
+                      {totals.count} client{totals.count !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#94a3b8",
+                        textTransform: "uppercase", letterSpacing: "0.5px" }}>Annual Premium</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#1a2733" }}>
+                        {fmtK(totals.premium * 12)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#94a3b8",
+                        textTransform: "uppercase", letterSpacing: "0.5px" }}>Annual Comm.</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: BOB_OLIVE.mid }}>
+                        {fmtK(totals.comm * 12)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Top clients by commission */}
+      <div style={{ padding: "12px 20px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8",
+          textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 10 }}>
+          Top Clients by Annual Commission
+        </div>
+        <div>
+          {filtered
+            .map(c => ({ c, ...calcClientCommission(c) }))
+            .filter(x => x.monthlyComm > 0)
+            .sort((a,b) => b.monthlyComm - a.monthlyComm)
+            .slice(0, 8)
+            .map(({ c, monthlyPremium, monthlyComm }, i) => {
+              const team = teams.find(t => t.id === c.team);
+              const pct = grandCommMo > 0 ? (monthlyComm / grandCommMo) * 100 : 0;
+              return (
+                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                  padding: "7px 0", borderBottom: i < 7 ? "1px solid #f8fafc" : "none" }}>
+                  <div style={{ width: 20, fontSize: 11, fontWeight: 700, color: "#94a3b8",
+                    textAlign: "center", flexShrink: 0 }}>{i+1}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#1a2733",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.name}
+                    </div>
+                    {team && (
+                      <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px",
+                        borderRadius: 99, background: team.color, color: team.text }}>
+                        {team.label}
+                      </span>
+                    )}
+                  </div>
+                  {/* Bar */}
+                  <div style={{ width: 80, height: 4, background: "#f1f5f9",
+                    borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
+                    <div style={{ width: pct + "%", height: "100%",
+                      background: BOB_OLIVE.mid, borderRadius: 2 }} />
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: BOB_OLIVE.mid }}>
+                      {fmtK(monthlyComm * 12)}<span style={{ fontSize: 9, fontWeight: 400,
+                        color: "#94a3b8" }}>/yr</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "#94a3b8" }}>
+                      {fmtK(monthlyPremium * 12)} premium
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          }
+          {filtered.filter(c => calcClientCommission(c).monthlyComm > 0).length === 0 && (
+            <div style={{ padding: "16px 0", textAlign: "center", color: "#94a3b8", fontSize: 12 }}>
+              No commission data yet — configure commission rates in each client's Benefits tab.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Plan Years Section ────────────────────────────────────────────────────────
+
+function PlanYearsSection({ data, set, setData, tasksDb, dueDateRules, currentUser }) {
+  const [showArchiveForm, setShowArchiveForm] = React.useState(false);
+  const [archiveForm, setArchiveForm] = React.useState({ effectiveFrom: "", effectiveTo: "", notes: "" });
+  const [expandedId, setExpandedId] = React.useState(null);
+  const [correcting, setCorrecting] = React.useState(null);
+  const [correctionNote, setCorrectionNote] = React.useState("");
+
+  const BOB = { olive: "#7B8C3F", oliveDark: "#55652B", oliveBg: "#eef2d8", oliveBorder: "#c8d48a" };
+
+  function buildSnapshot() {
+    return {
+      marketSize:            data.marketSize,
+      fundingMethod:         data.fundingMethod,
+      benefitActive:         JSON.parse(JSON.stringify(data.benefitActive  || {})),
+      benefitCarriers:       JSON.parse(JSON.stringify(data.benefitCarriers || {})),
+      benefitEffectiveDates: JSON.parse(JSON.stringify(data.benefitEffectiveDates || {})),
+      benefitPlans:          JSON.parse(JSON.stringify(data.benefitPlans   || {})),
+      benefitPolicyNumbers:  JSON.parse(JSON.stringify(data.benefitPolicyNumbers || {})),
+      benefitCommissions:    JSON.parse(JSON.stringify(data.benefitCommissions || {})),
+      benefitEnrolled:       JSON.parse(JSON.stringify(data.benefitEnrolled || {})),
+      employeeClasses:       JSON.parse(JSON.stringify(data.employeeClasses || [])),
+    };
+  }
+
+  function doArchive(mode) {
+    if (!archiveForm.effectiveFrom || !archiveForm.effectiveTo) {
+      alert("Please set both Effective From and Effective To dates.");
+      return;
+    }
+    const snapshot = buildSnapshot();
+    const py = {
+      id:              Date.now(),
+      archivedAt:      new Date().toISOString().split("T")[0],
+      effectiveFrom:   archiveForm.effectiveFrom,
+      effectiveTo:     archiveForm.effectiveTo,
+      notes:           archiveForm.notes,
+      correctionNotes: "",
+      ...snapshot,
+    };
+
+    let newData = { ...data, planYears: [...(data.planYears || []), py] };
+
+    if (mode === "rollforward") {
+      const d = new Date(archiveForm.effectiveTo + "T12:00:00");
+      d.setDate(d.getDate() + 1);
+      const newRenewalDate = d.toISOString().split("T")[0];
+
+      // Reset pre-renewal tasks with new due dates
+      const newPreRenewal = defaultPreRenewalTasks(newRenewalDate, data.marketSize, data.team, tasksDb);
+      const mergedPreRenewal = { ...newPreRenewal };
+      Object.entries(data.preRenewal || {}).forEach(([id, existing]) => {
+        if (!mergedPreRenewal[id]) return;
+        const ex = typeof existing === "object" && existing ? existing : { status: existing || "Not Started" };
+        mergedPreRenewal[id] = { ...ex, status: "Not Started", completedDate: "" };
+      });
+
+      // Reset compliance with new due dates
+      const newCompDates = complianceDueDates(newRenewalDate);
+      const dueFnMap = { aca_filing:"aca", rxdc:"rxdc", medicare_d:"medicare", pcori:"pcori", form5500:"form5500", gag_clause:"gag_clause" };
+      const newCompliance = {};
+      Object.entries(data.compliance || {}).forEach(([taskId, existing]) => {
+        const base = typeof existing === "object" && existing
+          ? { ...existing, status: "Not Started", completedDate: "" }
+          : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
+        const key = dueFnMap[taskId];
+        newCompliance[taskId] = { ...base, ...(key && newCompDates[key] ? { dueDate: newCompDates[key] } : {}) };
+      });
+
+      // Advance effective dates by 1 year
+      const advancedEffDates = {};
+      Object.entries(snapshot.benefitEffectiveDates || {}).forEach(([catId, dt]) => {
+        if (!dt) { advancedEffDates[catId] = dt; return; }
+        const d2 = new Date(dt + "T12:00:00");
+        d2.setFullYear(d2.getFullYear() + 1);
+        advancedEffDates[catId] = d2.toISOString().split("T")[0];
+      });
+
+      newData = {
+        ...newData,
+        renewalDate:           newRenewalDate,
+        benefitActive:         { ...snapshot.benefitActive },
+        benefitCarriers:       { ...snapshot.benefitCarriers },
+        benefitEffectiveDates: advancedEffDates,
+        benefitPlans:          JSON.parse(JSON.stringify(snapshot.benefitPlans)),
+        benefitPolicyNumbers:  JSON.parse(JSON.stringify(snapshot.benefitPolicyNumbers)),
+        benefitCommissions:    JSON.parse(JSON.stringify(snapshot.benefitCommissions)),
+        benefitEnrolled:       JSON.parse(JSON.stringify(snapshot.benefitEnrolled || {})),
+        employeeClasses:       JSON.parse(JSON.stringify(snapshot.employeeClasses)),
+        preRenewal:            mergedPreRenewal,
+        compliance:            newCompliance,
+        renewalReceived:       { received: false, date: "", pct: "" },
+        decisionsReceivedDate: "",
+        renewalMeeting:        { status: "Not Started", assignee: "", dueDate: "", completedDate: "" },
+        renewalTasks:          (data.renewalTasks || []).map(t => ({ ...t, status: "Not Started", completedDate: "" })),
+        postOEFixed:           {},
+        renewalTasksAuto:      {},
+      };
+    }
+
+    setData(newData);
+    setShowArchiveForm(false);
+    setArchiveForm({ effectiveFrom: "", effectiveTo: "", notes: "" });
+    setExpandedId(py.id);
+  }
+
+  function saveCorrection(pyId) {
+    if (!correctionNote.trim()) return;
+    const logEntry = new Date().toLocaleDateString() + ": " + correctionNote.trim();
+    setData(p => ({
+      ...p,
+      planYears: (p.planYears || []).map(py => py.id !== pyId ? py : {
+        ...py,
+        correctionNotes: (py.correctionNotes ? py.correctionNotes + "\n" : "") + logEntry,
+      }),
+    }));
+    setCorrecting(null);
+    setCorrectionNote("");
+  }
+
+  const planYears = [...(data.planYears || [])].reverse();
+  const fmtDate = d => d ? `${d.slice(5,7)}/${d.slice(8,10)}/${d.slice(0,4)}` : "—";
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Plan Year History</div>
+        <button onClick={() => setShowArchiveForm(!showArchiveForm)}
+          style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+            border: `1.5px solid ${showArchiveForm ? "#4b7896" : BOB.oliveBorder}`,
+            background: showArchiveForm ? "#dce8f0" : BOB.oliveBg,
+            color: showArchiveForm ? "#2d4a6b" : BOB.oliveDark,
+            cursor: "pointer", fontFamily: "inherit" }}>
+          {showArchiveForm ? "✕ Cancel" : "🗄 Archive Plan Year"}
+        </button>
+      </div>
+
+      {/* Archive form */}
+      {showArchiveForm && (
+        <div style={{ background: "#f0f5fa", borderRadius: 12, border: "1.5px solid #4b7896",
+          padding: "18px 20px", marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#2d4a6b", marginBottom: 14 }}>
+            Archive Current Plan Year
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12, marginBottom: 12 }}>
+            <label style={{ ...labelStyle }}>
+              Effective From
+              <input type="date" value={archiveForm.effectiveFrom}
+                onChange={e => setArchiveForm(p => ({ ...p, effectiveFrom: e.target.value }))}
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+            <label style={{ ...labelStyle }}>
+              Effective To
+              <input type="date" value={archiveForm.effectiveTo}
+                onChange={e => setArchiveForm(p => ({ ...p, effectiveTo: e.target.value }))}
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+            <label style={{ ...labelStyle }}>
+              Notes
+              <input type="text" value={archiveForm.notes}
+                onChange={e => setArchiveForm(p => ({ ...p, notes: e.target.value }))}
+                placeholder="e.g. Switched FI→LF; added dental"
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+          </div>
+
+          {/* Preview new renewal date */}
+          {archiveForm.effectiveTo && (() => {
+            const d = new Date(archiveForm.effectiveTo + "T12:00:00");
+            d.setDate(d.getDate() + 1);
+            return (
+              <div style={{ fontSize: 11, color: "#2d4a6b", background: "#dce8f0",
+                padding: "6px 12px", borderRadius: 6, fontWeight: 600, marginBottom: 12 }}>
+                New renewal date after roll-forward: <strong>{fmtDate(d.toISOString().split("T")[0])}</strong>
+                {" "}· Pre-renewal and compliance due dates will recalculate automatically.
+              </div>
+            );
+          })()}
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button onClick={() => doArchive("rollforward")}
+              style={{ padding: "9px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                background: "linear-gradient(135deg,#2d4a6b,#4b7896)", color: "#fff",
+                border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+              ✓ Archive &amp; Roll Forward
+            </button>
+            <button onClick={() => doArchive("clear")}
+              style={{ padding: "9px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                background: "#fff", color: "#dc2626",
+                border: "1.5px solid #fca5a5", cursor: "pointer", fontFamily: "inherit" }}>
+              ✕ Archive &amp; Clear All
+            </button>
+            <span style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
+              Both options snapshot current benefits before making changes.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Plan year cards */}
+      {planYears.length === 0 ? (
+        <div style={{ padding: "48px 20px", textAlign: "center", background: "#fff",
+          borderRadius: 12, border: "1.5px dashed #e2e8f0" }}>
+          <div style={{ fontSize: 32, marginBottom: 10 }}>🗄</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#64748b", marginBottom: 4 }}>No archived plan years yet</div>
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>
+            Click "Archive Plan Year" above to save the current plan year before making changes.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {planYears.map(py => {
+            const isOpen = expandedId === py.id;
+            const activeBenefits = BENEFITS_SCHEMA.filter(b => !!(py.benefitActive || {})[b.id]);
+            const isCorrectingThis = correcting === py.id;
+
+            return (
+              <div key={py.id} style={{ background: "#fff", borderRadius: 12,
+                border: "1.5px solid #e2e8f0", overflow: "hidden" }}>
+
+                {/* Card header */}
+                <div onClick={() => setExpandedId(isOpen ? null : py.id)}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "14px 18px", cursor: "pointer", background: "#f8fafc",
+                    borderBottom: isOpen ? "1px solid #e2e8f0" : "none" }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>
+                      {py.effectiveFrom && py.effectiveTo
+                        ? `${fmtDate(py.effectiveFrom)} – ${fmtDate(py.effectiveTo)}`
+                        : `Archived ${fmtDate(py.archivedAt)}`}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      {[py.marketSize, py.fundingMethod].filter(Boolean).join(" · ")}
+                      {" · "}Archived {fmtDate(py.archivedAt)}
+                    </div>
+                    {py.notes && (
+                      <div style={{ fontSize: 12, color: "#475569", marginTop: 3, fontStyle: "italic" }}>
+                        "{py.notes}"
+                      </div>
+                    )}
+                    {py.correctionNotes && (
+                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 3 }}>📝 Correction on file</div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button type="button" onClick={e => { e.stopPropagation(); setCorrecting(isCorrectingThis ? null : py.id); setCorrectionNote(""); }}
+                      style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                        border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569",
+                        cursor: "pointer", fontFamily: "inherit" }}>
+                      {isCorrectingThis ? "Cancel" : "✎ Correct"}
+                    </button>
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>{isOpen ? "▲" : "▼"}</span>
+                  </div>
+                </div>
+
+                {/* Correction note */}
+                {isCorrectingThis && (
+                  <div style={{ padding: "12px 18px", background: "#faf5ff",
+                    borderBottom: "1px solid #e2e8f0" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#7c3aed", marginBottom: 6 }}>
+                      Add Correction Note
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input type="text" value={correctionNote}
+                        onChange={e => setCorrectionNote(e.target.value)}
+                        placeholder="Describe the correction..."
+                        style={{ ...inputStyle, marginTop: 0, flex: 1, fontSize: 12 }} />
+                      <button onClick={() => saveCorrection(py.id)}
+                        style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                          background: "#7c3aed", color: "#fff", border: "none",
+                          cursor: "pointer", fontFamily: "inherit" }}>
+                        Save
+                      </button>
+                    </div>
+                    {py.correctionNotes && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: "#6d28d9",
+                        background: "#f3e8ff", padding: "6px 10px", borderRadius: 6,
+                        whiteSpace: "pre-line" }}>
+                        {py.correctionNotes}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Expanded detail */}
+                {isOpen && (
+                  <div style={{ padding: "16px 18px" }}>
+                    {/* Benefits grid */}
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8",
+                      textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 10 }}>
+                      Benefits in this plan year ({activeBenefits.length})
+                    </div>
+                    {activeBenefits.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>No benefits recorded.</div>
+                    ) : (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8, marginBottom: 16 }}>
+                        {activeBenefits.map(b => {
+                          const carrier = (py.benefitCarriers || {})[b.id] || "";
+                          const effDate = (py.benefitEffectiveDates || {})[b.id] || "";
+                          const policyNum = (py.benefitPolicyNumbers || {})[b.id] || "";
+                          const enrolled = (py.benefitEnrolled || {})[b.id] || "";
+                          const group = BENEFIT_GROUPS.find(g => g.id === b.group);
+                          return (
+                            <div key={b.id} style={{ padding: "10px 12px", borderRadius: 8,
+                              border: `1px solid ${group?.color || "#e2e8f0"}20`,
+                              background: `${group?.color || "#4b7896"}08` }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: "#1a2733", marginBottom: 4 }}>
+                                {b.label}
+                              </div>
+                              {carrier && <div style={{ fontSize: 11, color: "#475569" }}>Carrier: {carrier}</div>}
+                              {effDate && <div style={{ fontSize: 11, color: "#64748b" }}>Eff: {fmtDate(effDate)}</div>}
+                              {policyNum && <div style={{ fontSize: 11, color: "#64748b" }}>Policy: {policyNum}</div>}
+                              {enrolled && <div style={{ fontSize: 11, color: "#64748b" }}>Enrolled: {enrolled}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 
 const inputStyle = {

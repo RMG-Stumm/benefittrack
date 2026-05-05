@@ -1,24 +1,126 @@
 import { supabase } from './supabase.js'
 
+// ── USER PROFILE ──────────────────────────────────────────────────────────────
+
+export async function fetchUserProfile(authUserId) {
+  // Single query with embedded team memberships
+  const { data, error } = await supabase
+    .from('users')
+    .select(`
+      id, name, email, role, team, active, first_name, last_name, auth_user_id,
+      team_members(team_id, roles(name, code))
+    `)
+    .eq('auth_user_id', authUserId)
+    .single();
+
+  if (error) {
+    console.error('fetchUserProfile error:', error);
+    return null;
+  }
+
+  return {
+    ...data,
+    teams: (data.team_members || []).map(m => ({
+      teamId: m.team_id,
+      role: m.roles?.name,
+      roleCode: m.roles?.code,
+    })),
+  };
+}
+
 // ── CLIENTS ──────────────────────────────────────────────────────────────────
 
 export async function fetchClients() {
   const { data, error } = await supabase.from('clients').select('*')
   if (error) { console.error('fetchClients error:', error); return null }
-  return data.map(row => row.data ? { ...row.data, id: row.id } : row)
+  return data.map(row => {
+    // Start with the JSONB blob for all legacy fields
+    const base = row.data ? { ...row.data, id: row.id } : { id: row.id }
+    // Override with proper columns where they exist — these are the source of truth now
+    return {
+      ...base,
+      id:               row.id,
+      name:             row.legal_name    || base.name             || '',
+      clientStatus:     row.status        ? (row.status.charAt(0).toUpperCase() + row.status.slice(1)) : (base.clientStatus || 'Active'),
+      marketSize:       row.market_segment || base.marketSize      || '',
+      employerType:     row.employer_size  || base.employerType    || '',
+      fundingMethod:    row.funding_method || base.fundingMethod   || '',
+      groupSitus:       row.situs_state    || base.groupSitus      || '',
+      totalEligible:    row.eligible_employee_count != null ? String(row.eligible_employee_count) : (base.totalEligible || ''),
+      medicalEnrolled:  row.enrolled_employee_count != null ? String(row.enrolled_employee_count) : (base.medicalEnrolled || ''),
+      team:             row.primary_team_id || row.team            || base.team || '',
+      renewalDate:      row.renewal_date   || base.renewalDate     || '',
+      streetAddress:    row.street_address || base.streetAddress   || '',
+      city:             row.city           || base.city            || '',
+      state:            row.state          || base.state           || '',
+      zipCode:          row.zip_code       || base.zipCode         || '',
+      mainPhone:        row.main_phone     || base.mainPhone       || '',
+      taxId:            row.tax_id         || base.taxId           || '',
+      natureOfBusiness: row.nature_of_business || base.natureOfBusiness || '',
+      corporateStructure: row.corporate_structure || base.corporateStructure || '',
+      numLocations:     row.num_locations  || base.numLocations    || '',
+      payrollSystem:    row.payroll_system || base.payrollSystem   || '',
+      payrollFrequency: row.payroll_frequency || base.payrollFrequency || '',
+      benefitAdminSystem: row.benefit_admin_system || base.benefitAdminSystem || '',
+      ratingRegion:     row.rating_region  || base.ratingRegion   || '',
+      cobraVendor:      row.cobra_vendor   || base.cobraVendor    || '',
+      cobraSIPaid:      row.cobra_si_paid  != null ? row.cobra_si_paid : (base.cobraSIPaid || false),
+      notes:            row.notes          || base.notes           || '',
+      salesPerson:      row.sales_person   || base.salesPerson    || '',
+      clientStatusDate: row.status_changed_date || base.clientStatusDate || '',
+    }
+  })
 }
 
 export async function upsertClient(clientData) {
   const row = {
-    id: clientData.id,
-    name: clientData.name || '',
-    renewal_date: clientData.renewalDate || null,
-    market_size: clientData.marketSize || '',
-    team: clientData.team || '',
-    client_status: clientData.clientStatus || 'Active',
-    lead: clientData.lead || '',
-    data: clientData,
-    updated_at: new Date().toISOString(),
+    id:                   clientData.id,
+    // Promoted columns — always write these from the live client data
+    legal_name:           clientData.name             || '',
+    name:                 clientData.name             || '',
+    status:               (clientData.clientStatus    || 'Active').toLowerCase(),
+    market_size:          clientData.marketSize        || '',
+    market_segment:       clientData.marketSize        || '',
+    employer_size:        clientData.employerType      || '',
+    funding_method:       clientData.fundingMethod     || '',
+    renewal_date:         clientData.renewalDate       || null,
+    renewal_month:        clientData.renewalDate
+                            ? parseInt(clientData.renewalDate.split('-')[1], 10)
+                            : null,
+    situs_state:          clientData.groupSitus        || '',
+    eligible_employee_count: clientData.totalEligible
+                            ? parseInt(String(clientData.totalEligible).replace(/\D/g,''), 10) || null
+                            : null,
+    enrolled_employee_count: clientData.medicalEnrolled
+                            ? parseInt(String(clientData.medicalEnrolled).replace(/\D/g,''), 10) || null
+                            : null,
+    team:                 clientData.team              || '',
+    primary_team_id:      clientData.team              || '',
+    client_status:        clientData.clientStatus      || 'Active',
+    lead:                 clientData.lead              || '',
+    street_address:       clientData.streetAddress     || '',
+    city:                 clientData.city              || '',
+    state:                clientData.state             || '',
+    zip_code:             clientData.zipCode           || '',
+    main_phone:           clientData.mainPhone         || '',
+    tax_id:               clientData.taxId             || '',
+    nature_of_business:   clientData.natureOfBusiness  || '',
+    corporate_structure:  clientData.corporateStructure || '',
+    num_locations:        clientData.numLocations
+                            ? parseInt(String(clientData.numLocations).replace(/\D/g,''), 10) || null
+                            : null,
+    payroll_system:       clientData.payrollSystem      || '',
+    payroll_frequency:    clientData.payrollFrequency   || '',
+    benefit_admin_system: clientData.benefitAdminSystem || '',
+    rating_region:        clientData.ratingRegion       || '',
+    cobra_vendor:         clientData.cobraVendor        || '',
+    cobra_si_paid:        clientData.cobraSIPaid        || false,
+    notes:                clientData.notes              || '',
+    sales_person:         clientData.salesPerson        || '',
+    status_changed_date:  clientData.clientStatusDate   || null,
+    // Keep the full JSONB blob for all other fields not yet in proper columns
+    data:                 clientData,
+    updated_at:           new Date().toISOString(),
   }
   const { error } = await supabase.from('clients').upsert(row)
   if (error) console.error('upsertClient error:', error)
@@ -247,4 +349,46 @@ export async function fetchAuditLogs({ clientId, userName, field, from, to } = {
   const { data, error } = await q
   if (error) { console.error('fetchAuditLogs error:', error); return [] }
   return data
+}
+
+// ── RENEWALS ──────────────────────────────────────────────────────────────────
+
+export async function fetchRenewalStages() {
+  const { data, error } = await supabase
+    .from('renewal_stages')
+    .select('*')
+    .order('display_order')
+  if (error) { console.error('fetchRenewalStages error:', error); return [] }
+  return data
+}
+
+export async function fetchRenewals({ teamId } = {}) {
+  // Lean query — just the fields we need, no joins
+  let q = supabase
+    .from('renewals')
+    .select('id, client_id, renewal_year, effective_date, team_id, status, stage_id, notes, estimated_annual_premium, estimated_annual_commission')
+    .order('effective_date')
+
+  if (teamId && teamId !== 'All') q = q.eq('team_id', teamId)
+
+  const { data, error } = await q
+  if (error) { console.error('fetchRenewals error:', error); return [] }
+  return data || []
+}
+
+export async function upsertRenewal(renewal) {
+  const { error } = await supabase.from('renewals').upsert({
+    id:                          renewal.id,
+    client_id:                   renewal.client_id,
+    renewal_year:                renewal.renewal_year,
+    effective_date:              renewal.effective_date,
+    team_id:                     renewal.team_id || null,
+    status:                      renewal.status || 'in_progress',
+    stage_id:                    renewal.stage_id || null,
+    notes:                       renewal.notes || null,
+    estimated_annual_premium:    renewal.estimated_annual_premium || null,
+    estimated_annual_commission: renewal.estimated_annual_commission || null,
+    updated_at:                  new Date().toISOString(),
+  })
+  if (error) console.error('upsertRenewal error:', error)
 }
