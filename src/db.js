@@ -3,13 +3,10 @@ import { supabase } from './supabase.js'
 // ── USER PROFILE ──────────────────────────────────────────────────────────────
 
 export async function fetchUserProfile(authUserId) {
-  // Single query with embedded team memberships
+  // Simple flat query — no joins that can hang on missing tables
   const { data, error } = await supabase
     .from('users')
-    .select(`
-      id, name, email, role, team, active, first_name, last_name, auth_user_id,
-      team_members(team_id, roles(name, code))
-    `)
+    .select('id, name, email, role, team, active, first_name, last_name, auth_user_id')
     .eq('auth_user_id', authUserId)
     .single();
 
@@ -20,11 +17,7 @@ export async function fetchUserProfile(authUserId) {
 
   return {
     ...data,
-    teams: (data.team_members || []).map(m => ({
-      teamId: m.team_id,
-      role: m.roles?.name,
-      roleCode: m.roles?.code,
-    })),
+    teams: [], // team membership resolved from teams table in App via userTeams useMemo
   };
 }
 
@@ -325,18 +318,26 @@ export async function deleteTeam(id) {
 // ── AUDIT LOGS ────────────────────────────────────────────────────────────────
 
 export async function insertAuditLog(entry) {
-  const { error } = await supabase.from('audit_logs').insert({
+  // Fire-and-forget — never await this, never block the UI
+  // Silently swallow errors if audit_logs table doesn't exist yet
+  supabase.from('audit_logs').insert({
     client_id:   entry.clientId,
     client_name: entry.clientName,
     user_name:   entry.userName,
     user_role:   entry.userRole,
+    action:      entry.action || 'updated',
+    changed_fields: entry.changedFields ? JSON.stringify(entry.changedFields) : null,
     category:    entry.category,
     task_label:  entry.taskLabel,
     field:       entry.field,
     old_value:   entry.oldValue != null ? String(entry.oldValue) : '',
     new_value:   entry.newValue != null ? String(entry.newValue) : '',
-  })
-  if (error) console.error('insertAuditLog error:', error)
+    timestamp:   entry.timestamp || new Date().toISOString(),
+  }).then(({ error }) => {
+    if (error && !error.message?.includes('does not exist')) {
+      console.warn('insertAuditLog:', error.message);
+    }
+  }).catch(() => {}); // silently ignore network errors
 }
 
 export async function fetchAuditLogs({ clientId, userName, field, from, to } = {}) {
