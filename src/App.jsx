@@ -163,7 +163,7 @@ function syncStandardTasks(client, tasksDb) {
         allGroups.flatMap(g => client[g] || []).find(t => !t._standardTemplateId && (t.title === tmpl.label || t.label === tmpl.label));
       return found
         ? { ...found, _standardTemplateId: tmpl.id, title: tmpl.label,
-            assignee: found.assignee || resolveAssignee(tmpl.defaultAssignee || "", client.team) || "",
+            assignee: found.assignee || resolveAssignee(tmpl.defaultAssignee || '', client.team) || '',
           }
         : {
             id: "std_" + tmpl.id + "_" + client.id,
@@ -183,6 +183,8 @@ function syncStandardTasks(client, tasksDb) {
   const POST_OE_FIXED_IDS = new Set([
     "elections_received", "oe_changes_processed", "carrier_bill_audited",
     "lineup_updated", "oe_wrapup_email", "new_carrier_census",
+    "t_elections_received", "t_oe_changes_processed", "t_carrier_bill_audited",
+    "t_lineup_updated", "t_oe_wrapup_email", "t_new_carrier_census",
   ]);
 
   // Labels already handled by the hardcoded PRERENEWAL_TASKS list —
@@ -195,11 +197,17 @@ function syncStandardTasks(client, tasksDb) {
 
   const miscTemplates    = matchingTemplates.filter(t =>
     groupForCategory(t.category) === "miscTasks" &&
-    !PRERENEWAL_FIXED_LABELS.has(t.label)
+    !PRERENEWAL_FIXED_LABELS.has(t.label) &&
+    t.category !== "Transactions"
   );
+  const POST_OE_FIXED_LABELS_SYNC = new Set([
+    "Elections Received?","OE Changes Processed?","Carrier Bill Audited?",
+    "Lineup Updated?","OE Wrap-Up Email Sent?","New Carrier Submission Census Created?",
+  ]);
   const postOETemplates  = matchingTemplates.filter(t =>
     groupForCategory(t.category) === "postOETasks" &&
-    !POST_OE_FIXED_IDS.has(t.id)  // skip tasks that live in postOEFixed
+    !POST_OE_FIXED_IDS.has(t.id) &&
+    !POST_OE_FIXED_LABELS_SYNC.has(t.label)
   );
   const renewalTemplates = matchingTemplates.filter(t => groupForCategory(t.category) === "renewalTasks");
 
@@ -734,32 +742,20 @@ function applyDueDateRulesToClient(clientData, tasksDb, dueDateRules) {
   const pof = { ...(updated.postOEFixed || {}) };
   let pofChanged = false;
   const POST_OE_FIXED_IDS = ["elections_received", "oe_changes_processed", "carrier_bill_audited", "lineup_updated", "oe_wrapup_email"];
-  // Map postOEFixed key → task library label for assignee lookup
   const POF_LABEL_MAP = {
-    "elections_received":   "Elections Received?",
-    "oe_changes_processed": "OE Changes Processed?",
-    "carrier_bill_audited": "Carrier Bill Audited?",
-    "lineup_updated":       "Lineup Updated?",
-    "oe_wrapup_email":      "OE Wrap-Up Email Sent?",
+    "elections_received":"Elections Received?", "oe_changes_processed":"OE Changes Processed?",
+    "carrier_bill_audited":"Carrier Bill Audited?", "lineup_updated":"Lineup Updated?",
+    "oe_wrapup_email":"OE Wrap-Up Email Sent?",
   };
   POST_OE_FIXED_IDS.forEach(id => {
-    // Apply due date rule if one exists
     const rule = getRuleForTemplate("t_" + id, tasksDb, dueDateRules);
     if (rule) {
       const anchorDate = getAnchorDate(rule.anchor, clientData);
-      if (anchorDate) {
-        const updated2 = applyRuleToTask(pof[id], rule, anchorDate);
-        if (updated2 !== pof[id]) { pof[id] = updated2; pofChanged = true; }
-      }
+      if (anchorDate) { const u2 = applyRuleToTask(pof[id], rule, anchorDate); if (u2 !== pof[id]) { pof[id]=u2; pofChanged=true; } }
     }
-    // Backfill assignee from task library if currently unassigned
     if (!pof[id]?.assignee) {
-      const label = POF_LABEL_MAP[id];
-      const tmpl = label ? tasksDb.find(t => t.label === label) : null;
-      if (tmpl?.defaultAssignee) {
-        const resolved = resolveAssignee(tmpl.defaultAssignee, clientData.team);
-        if (resolved) { pof[id] = { ...(pof[id] || {}), assignee: resolved }; pofChanged = true; }
-      }
+      const tmpl = POF_LABEL_MAP[id] ? tasksDb.find(t => t.label === POF_LABEL_MAP[id]) : null;
+      if (tmpl?.defaultAssignee) { const r2 = resolveAssignee(tmpl.defaultAssignee, clientData.team); if (r2) { pof[id]={...(pof[id]||{}),assignee:r2}; pofChanged=true; } }
     }
   });
   if (pofChanged) updated = { ...updated, postOEFixed: pof };
@@ -1763,7 +1759,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
     { id: "info",        label: "Client Information" },
     { id: "eligibility", label: "Eligibility" },
     { id: "benefits",    label: "Benefits" },
-    { id: "tasks",       label: "Tasks" },
+    { id: "tasks",       label: "Miscellaneous Tasks" },
   ];
   const TASK_TABS = [
     { id: "preRenewal",   label: "Pre-Renewal",       accent: "#92400e", bg: "#fffbeb", border: "#fde68a" },
@@ -6199,7 +6195,6 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 };
 
                 return fixedTasks.map(task => {
-                  // Look up defaultAssignee from the task library by label
                   const tmpl = (tasksDb||[]).find(t => t.label === task.label);
                   const resolvedDefault = tmpl?.defaultAssignee ? resolveAssignee(tmpl.defaultAssignee, data.team) : "";
                   const defaultAssignee = resolvedDefault || (task.id === "oe_changes_processed" ? coord : "");
@@ -7802,10 +7797,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
           const existingTask = getTaskObj(updated, r);
           const existingFus = (existingTask?.followUps || []);
           const newFus = r.followUps.filter(fu => !existingFus.find(ef => ef.id === fu.id));
-          fields.followUps = [
-            ...existingFus.map(ef => { const rev = r.followUps.find(f => f.id === ef.id); return rev || ef; }),
-            ...newFus,
-          ];
+          fields.followUps = [...existingFus.map(ef => { const rv = r.followUps.find(f => f.id === ef.id); return rv || ef; }), ...newFus];
         }
         // Track due date history
         if (r.newDue && r.newDue !== r.oldDue && r.oldDue) {
@@ -8556,6 +8548,7 @@ function applyDataFixes(c) {
     fixed.miscTasks = fixed.miscTasks.filter(t =>
       !t._standardTemplateId || !PRERENEWAL_FIXED_LABELS.has(t.title)
     );
+    fixed.miscTasks = fixed.miscTasks.filter(t => t.category !== 'Transactions');
   }
 
   // Permanently strip any postOETasks entries that duplicate postOEFixed labels
@@ -8564,7 +8557,7 @@ function applyDataFixes(c) {
     "Lineup Updated?", "OE Wrap-Up Email Sent?", "New Carrier Submission Census Created?",
   ]);
   if (Array.isArray(fixed.postOETasks)) {
-    fixed.postOETasks = fixed.postOETasks.filter(t => !POST_OE_FIXED_LABELS.has(t.title));
+    fixed.postOETasks = fixed.postOETasks.filter(t => !POST_OE_FIXED_LABELS.has(t.title) && !POST_OE_FIXED_LABELS.has(t.label));
   }
 
   // Ensure miscTasks entries have followUps array (older entries won't have it)
@@ -9597,7 +9590,7 @@ export default function App() {
       }
       if (tasks) {
         // Only seed DEFAULT_TASKS_DATA on first-ever load (empty library).
-        // Never re-insert them if they've been intentionally deleted via Admin.
+        // Never re-insert them if they have been intentionally deleted via Admin.
         if (tasks.length === 0) {
           DEFAULT_TASKS_DATA.forEach(t => upsertTask(t));
           setTasksDataRaw(DEFAULT_TASKS_DATA);
@@ -10022,18 +10015,14 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
     setTasksDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       persistTasksData_DEPRECATED(next);
+      // Sync each task to Supabase
       const nextArr = Array.isArray(next) ? next : [];
       nextArr.forEach(t => upsertTask(t));
-      // Re-apply DDR AND sync standard tasks (including assignees) to all clients
+      // Re-apply DDR AND sync standard tasks to all clients whenever task templates change
       setClients(prevClients => {
         const ddr = loadDueDateRules_DEPRECATED();
-        const updated = prevClients.map(c => {
-          const withDDR = applyDueDateRulesToClient(c, next, ddr);
-          return syncStandardTasks(withDDR, next);
-        });
-        updated.forEach((c, i) => {
-          if (JSON.stringify(c) !== JSON.stringify(prevClients[i])) upsertClient(c);
-        });
+        const updated = prevClients.map(c => syncStandardTasks(applyDueDateRulesToClient(c, next, ddr), next));
+        updated.forEach((c, i) => { if (JSON.stringify(c) !== JSON.stringify(prevClients[i])) upsertClient(c); });
         return updated;
       });
       return next;
@@ -10132,7 +10121,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
     { id: "renewals",     label: "Renewals",      icon: "↻" },
     { id: "compliance",   label: "Compliance",    icon: "✓" },
     { id: "transactions", label: "Transactions",  icon: "⇄" },
-    { id: "tasks",        label: "Tasks",         icon: "▣" },
+    { id: "tasks",        label: "Miscellaneous Tasks", icon: "▣" },
     { id: "meetings",     label: "Meetings",      icon: "◈" },
     ...(isLead ? [{ id: "reports", label: "Reports", icon: "▤" }] : []),
     ...(isLead ? [{ id: "admin",   label: "Admin",   icon: "⚙" }] : []),
@@ -11580,37 +11569,49 @@ function ReportsView({ clients, currentUser, teams, carriersData, onBack }) {
 
       {/* ── Commission Summary Tab ── */}
       {tab === "commission" && (() => {
-        // Calculate estimated commission from carrier rules + enrolled counts
+        const TIERS = ["ee","es","ec","ff"];
         const rows = clients.map(c => {
-          const medCarrier = (c.benefitCarriers||{}).medical||(c.carriers||[])[0]||"";
-          const enrolled = Number((c.benefitEnrolled||{}).medical) || Number((c.enrolled||{}).medical) || 0;
-          const funding = c.fundingMethod||"";
-          // Find carrier commission rule
+          const medCarrier = (c.benefitCarriers||{}).medical || (c.carriers||[])[0] || "";
+          const funding = c.fundingMethod || "";
           const carrierDef = (carriersData||[]).find(cd => cd.name === medCarrier || cd.id === medCarrier);
-          let commRule = null;
-          if (carrierDef?.commissionRules) {
-            commRule = carrierDef.commissionRules.find(r => {
-              const segOk = !r.segment || r.segment === c.marketSize;
-              const fundOk = !r.funding || r.funding === funding || r.funding === "All";
-              return segOk && fundOk;
-            }) || carrierDef.commissionRules[0];
+          const commRule = carrierDef?.commissionRules?.find(r => {
+            const segOk = !r.segment || r.segment === c.marketSize || r.segment === "All";
+            const fundOk = !r.funding || r.funding === funding || r.funding === "All" || r.fundingMethod === funding || r.fundingMethod === "All";
+            return segOk && fundOk;
+          }) || carrierDef?.commissionRules?.[0] || null;
+          let estMonthly = 0, totalEnrolled = 0;
+          const bComm = c.benefitCommissions || {}, bPlans = c.benefitPlans || {};
+          const bEnrolled = c.benefitEnrolled || {}, bActive = c.benefitActive || {};
+          BENEFITS_SCHEMA.forEach(cat => {
+            if (!bActive[cat.id]) return;
+            const comm = bComm[cat.id] || {};
+            const commType = comm.type || "", commAmt = parseFloat(comm.amount) || 0;
+            if (!commType || !commAmt) return;
+            const plans = bPlans[cat.id] || [];
+            const planMonthly = plans.reduce((ps, pl) => ps + TIERS.reduce((ts, k) => ts + ((parseFloat((pl.rates||{})[k])||0) * (parseInt((pl.enrolled||{})[k])||0)), 0), 0);
+            const planEnrolled = plans.reduce((s, pl) => s + TIERS.reduce((ts, k) => ts + (parseInt((pl.enrolled||{})[k])||0), 0), 0);
+            const catEnrolled = planEnrolled || parseInt(bEnrolled[cat.id]) || 0;
+            if (cat.id === "medical") totalEnrolled = catEnrolled;
+            const monthly = commType === "PEPM" ? commAmt * catEnrolled
+              : (commType === "Flat %" || commType === "Flat" || commType === "Graded" || commType === "Pct") ? planMonthly * (commAmt / 100) : 0;
+            estMonthly += monthly;
+          });
+          if (estMonthly === 0 && commRule) {
+            const enrolled = totalEnrolled || parseInt(bEnrolled.medical) || 0;
+            const amt = parseFloat(commRule.amount) || 0;
+            if (commRule.type === "PEPM" && amt && enrolled) estMonthly = amt * enrolled;
           }
-          let estMonthly = null;
-          if (commRule) {
-            if (commRule.type === "PEPM" && commRule.amount && enrolled) {
-              estMonthly = commRule.amount * enrolled;
-            } else if (commRule.type === "Pct" && commRule.amount && c.premiumMonthly) {
-              estMonthly = commRule.amount / 100 * Number(c.premiumMonthly);
-            }
-          }
-          const estAnnual = estMonthly ? estMonthly * 12 : null;
-          return { client: c.name, team: c.team, carrier: medCarrier, funding, enrolled, commRule, estMonthly, estAnnual, market: c.marketSize };
+          const estAnnual = estMonthly > 0 ? estMonthly * 12 : null;
+          const ruleLabel = (() => {
+            const bc = Object.entries(bComm).filter(([k,v]) => bActive[k] && v.type && v.amount);
+            if (bc.length > 0) { const med = bComm.medical; if (med?.type && med?.amount) return `${med.type} ${med.amount}${med.type==="Flat %"||med.type==="Pct"?"%":"/mo"}`; return `${bc.length} benefit${bc.length>1?"s":""}`; }
+            if (commRule) return `${commRule.type} ${commRule.amount}${commRule.type==="Flat %"||commRule.type==="Pct"?"%":"/mo"}`;
+            return null;
+          })();
+          return { client: c.name, team: c.team, carrier: medCarrier, funding, enrolled: totalEnrolled, ruleLabel, estMonthly: estMonthly||null, estAnnual, market: c.marketSize };
         });
         const totalAnnual = rows.reduce((s, r) => s + (r.estAnnual||0), 0);
-        const byTeamComm = teams.map(t => ({
-          team: t.label,
-          total: rows.filter(r => r.team === t.id || r.team === t.label).reduce((s,r) => s+(r.estAnnual||0),0),
-        }));
+        const byTeamComm = teams.map(t => ({ team: t.label, total: rows.filter(r => r.team === t.id || r.team === t.label).reduce((s,r) => s+(r.estAnnual||0),0) }));
         const fmt = n => n ? "$" + Math.round(n).toLocaleString() : "—";
         return (
           <div>
@@ -11618,7 +11619,7 @@ function ReportsView({ clients, currentUser, teams, carriersData, onBack }) {
               <div style={{ background: "#f0fdf4", borderRadius: 12, padding: "16px 18px", border: "1.5px solid #86efac" }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>Est. Total Annual Commission</div>
                 <div style={{ fontSize: 26, fontWeight: 900, color: "#166534", marginTop: 6 }}>{fmt(totalAnnual)}</div>
-                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Based on carrier rules × enrolled counts</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Based on benefit commissions × enrolled counts</div>
               </div>
               {byTeamComm.map(t => (
                 <div key={t.team} style={{ background: "#eff6ff", borderRadius: 12, padding: "16px 18px", border: "1.5px solid #93c5fd" }}>
@@ -11630,17 +11631,22 @@ function ReportsView({ clients, currentUser, teams, carriersData, onBack }) {
             </div>
             <div style={{ ...card }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: "#475569", letterSpacing: "0.5px", textTransform: "uppercase", marginBottom: 10 }}>Client Commission Detail</div>
+              {rows.every(r => !r.estAnnual) && (
+                <div style={{ padding: "20px", textAlign: "center", color: "#94a3b8", fontSize: 13, fontStyle: "italic" }}>
+                  No commission data found. Enter benefit commissions and enrolled counts in each client's Benefits tab.
+                </div>
+              )}
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr>{["Client","Carrier","Market","Funding","Enrolled","Comm. Rule","Est. Monthly","Est. Annual"].map(h=><th key={h} style={{...th}}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {rows.filter(r=>r.enrolled>0||r.commRule).sort((a,b)=>(b.estAnnual||0)-(a.estAnnual||0)).map((r,i)=>(
+                  {rows.filter(r=>r.estAnnual||r.ruleLabel).sort((a,b)=>(b.estAnnual||0)-(a.estAnnual||0)).map((r,i)=>(
                     <tr key={r.client} style={{background:i%2?"#f8fafc":"#fff"}}>
                       <td style={{...td,fontWeight:700}}>{r.client}</td>
                       <td style={{...tdMuted}}>{r.carrier||"—"}</td>
                       <td style={{...tdMuted}}>{r.market||"—"}</td>
                       <td style={{...tdMuted}}>{r.funding||"—"}</td>
                       <td style={{...td}}>{r.enrolled||"—"}</td>
-                      <td style={{...tdMuted}}>{r.commRule ? `${r.commRule.type} ${r.commRule.amount}${r.commRule.type==="Pct"?"%":"/mo"}` : "—"}</td>
+                      <td style={{...tdMuted}}>{r.ruleLabel||"—"}</td>
                       <td style={{...td,fontWeight:700,color:"#065f46"}}>{fmt(r.estMonthly)}</td>
                       <td style={{...td,fontWeight:800,color:"#166534"}}>{fmt(r.estAnnual)}</td>
                     </tr>
@@ -12011,7 +12017,7 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
 
   const NAV_ITEMS = [
     { id: "plans",          icon: "📋", label: "Plans" },
-    { id: "tasks",          icon: "✅", label: "Tasks" },
+    { id: "tasks",          icon: "✅", label: "Miscellaneous Tasks" },
     { id: "taskTypes",      icon: "🏷️",  label: "Task Types" },
     { id: "ddr",            icon: "📅", label: "Due Date Rules" },
     { id: "anchors",        icon: "⚓", label: "Anchor Events" },
@@ -15228,6 +15234,7 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
       id: newId, label: "", category: activeCategory,
       markets: ["ACA","Mid-Market","Large"],
       defaultAssignee: "", dueDateRule: "", order: maxOrder + 10,
+      isStandard: true,
     };
     setEditingId(newId);
     setEditData(blank);
