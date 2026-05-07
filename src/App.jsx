@@ -162,7 +162,9 @@ function syncStandardTasks(client, tasksDb) {
         existing.find(t => !t._standardTemplateId && (t.title === tmpl.label || t.label === tmpl.label)) ||
         allGroups.flatMap(g => client[g] || []).find(t => !t._standardTemplateId && (t.title === tmpl.label || t.label === tmpl.label));
       return found
-        ? { ...found, _standardTemplateId: tmpl.id, title: tmpl.label }
+        ? { ...found, _standardTemplateId: tmpl.id, title: tmpl.label,
+            assignee: found.assignee || resolveAssignee(tmpl.defaultAssignee || "", client.team) || "",
+          }
         : {
             id: "std_" + tmpl.id + "_" + client.id,
             _standardTemplateId: tmpl.id,
@@ -732,13 +734,33 @@ function applyDueDateRulesToClient(clientData, tasksDb, dueDateRules) {
   const pof = { ...(updated.postOEFixed || {}) };
   let pofChanged = false;
   const POST_OE_FIXED_IDS = ["elections_received", "oe_changes_processed", "carrier_bill_audited", "lineup_updated", "oe_wrapup_email"];
+  // Map postOEFixed key → task library label for assignee lookup
+  const POF_LABEL_MAP = {
+    "elections_received":   "Elections Received?",
+    "oe_changes_processed": "OE Changes Processed?",
+    "carrier_bill_audited": "Carrier Bill Audited?",
+    "lineup_updated":       "Lineup Updated?",
+    "oe_wrapup_email":      "OE Wrap-Up Email Sent?",
+  };
   POST_OE_FIXED_IDS.forEach(id => {
+    // Apply due date rule if one exists
     const rule = getRuleForTemplate("t_" + id, tasksDb, dueDateRules);
-    if (!rule) return;
-    const anchorDate = getAnchorDate(rule.anchor, clientData);
-    if (!anchorDate) return;
-    const updated2 = applyRuleToTask(pof[id], rule, anchorDate);
-    if (updated2 !== pof[id]) { pof[id] = updated2; pofChanged = true; }
+    if (rule) {
+      const anchorDate = getAnchorDate(rule.anchor, clientData);
+      if (anchorDate) {
+        const updated2 = applyRuleToTask(pof[id], rule, anchorDate);
+        if (updated2 !== pof[id]) { pof[id] = updated2; pofChanged = true; }
+      }
+    }
+    // Backfill assignee from task library if currently unassigned
+    if (!pof[id]?.assignee) {
+      const label = POF_LABEL_MAP[id];
+      const tmpl = label ? tasksDb.find(t => t.label === label) : null;
+      if (tmpl?.defaultAssignee) {
+        const resolved = resolveAssignee(tmpl.defaultAssignee, clientData.team);
+        if (resolved) { pof[id] = { ...(pof[id] || {}), assignee: resolved }; pofChanged = true; }
+      }
+    }
   });
   if (pofChanged) updated = { ...updated, postOEFixed: pof };
 
@@ -6177,7 +6199,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 };
 
                 return fixedTasks.map(task => {
-                  const defaultAssignee = (task.id === "oe_changes_processed") ? coord : "";
+                  // Look up defaultAssignee from the task library by label
+                  const tmpl = (tasksDb||[]).find(t => t.label === task.label);
+                  const resolvedDefault = tmpl?.defaultAssignee ? resolveAssignee(tmpl.defaultAssignee, data.team) : "";
+                  const defaultAssignee = resolvedDefault || (task.id === "oe_changes_processed" ? coord : "");
                   const stored = pof[task.id] || {};
                   const status = stored.status || "Not Started";
                   const isDone = status === "Complete";
@@ -7773,6 +7798,15 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
         if (r.newDue)    fields.dueDate = r.newDue;
         if (r.newStatus) fields.status  = r.newStatus;
         if (r.reviewNotes) fields.meetingNotes = r.reviewNotes;
+        if (r.followUps && r.followUps.length > 0) {
+          const existingTask = getTaskObj(updated, r);
+          const existingFus = (existingTask?.followUps || []);
+          const newFus = r.followUps.filter(fu => !existingFus.find(ef => ef.id === fu.id));
+          fields.followUps = [
+            ...existingFus.map(ef => { const rev = r.followUps.find(f => f.id === ef.id); return rev || ef; }),
+            ...newFus,
+          ];
+        }
         // Track due date history
         if (r.newDue && r.newDue !== r.oldDue && r.oldDue) {
           fields._dueDateHistory = [
@@ -8102,6 +8136,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                                       label: t.label, category: t.category,
                                       oldDue: t.dueDate || "", newDue: t.dueDate || "",
                                       newStatus: t.status || "Not Started", reviewNotes: "",
+                                      followUps: t.followUps || [],
                                     }] }));
                                   } else {
                                     setForm(p => ({ ...p, taskReviews: p.taskReviews.filter(r => r.key !== key) }));
@@ -8202,6 +8237,25 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                                       borderColor: slipped ? "#f59e0b" : undefined,
                                       background: slipped ? "#fffbeb" : undefined }} />
                                 </label>
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                  <FollowUpBlock
+                                    followUps={rev.followUps || []}
+                                    onAdd={() => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r =>
+                                      r.key === key ? { ...r, followUps: [...(r.followUps||[]), { id: Date.now(), date: new Date().toISOString().split("T")[0], note: "" }] } : r
+                                    )}))}
+                                    onChangeDate={(fi, v) => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r => {
+                                      if (r.key !== key) return r;
+                                      const fus = [...(r.followUps||[])]; fus[fi] = {...fus[fi], date: v}; return { ...r, followUps: fus };
+                                    })}))}
+                                    onChangeNote={(fi, v) => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r => {
+                                      if (r.key !== key) return r;
+                                      const fus = [...(r.followUps||[])]; fus[fi] = {...fus[fi], note: v}; return { ...r, followUps: fus };
+                                    })}))}
+                                    onRemove={(fi) => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r =>
+                                      r.key === key ? { ...r, followUps: (r.followUps||[]).filter((_,i) => i !== fi) } : r
+                                    )}))}
+                                  />
+                                </div>
                               </div>
                             )}
                           </div>
@@ -9542,12 +9596,14 @@ export default function App() {
         setCarriersDataRaw(merged);
       }
       if (tasks) {
-        // Backfill any DEFAULT_TASKS_DATA entries missing from Supabase
-        const taskIds = new Set(tasks.map(t => t.id));
-        const missing = DEFAULT_TASKS_DATA.filter(d => !taskIds.has(d.id));
-        const finalTasks = missing.length > 0 ? [...tasks, ...missing] : tasks;
-        if (missing.length > 0) missing.forEach(t => upsertTask(t));
-        setTasksDataRaw(finalTasks);
+        // Only seed DEFAULT_TASKS_DATA on first-ever load (empty library).
+        // Never re-insert them if they've been intentionally deleted via Admin.
+        if (tasks.length === 0) {
+          DEFAULT_TASKS_DATA.forEach(t => upsertTask(t));
+          setTasksDataRaw(DEFAULT_TASKS_DATA);
+        } else {
+          setTasksDataRaw(tasks);
+        }
       }
       if (ddr) {
         const ddrIds = new Set(ddr.map(r => r.id));
@@ -9966,14 +10022,19 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
     setTasksDataRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       persistTasksData_DEPRECATED(next);
-      // Sync each task to Supabase
       const nextArr = Array.isArray(next) ? next : [];
       nextArr.forEach(t => upsertTask(t));
-      // Re-apply DDR to all clients when task templates change (due dates only)
-      // Standard task syncing is handled explicitly by syncAllClientsToTasks
+      // Re-apply DDR AND sync standard tasks (including assignees) to all clients
       setClients(prevClients => {
         const ddr = loadDueDateRules_DEPRECATED();
-        return prevClients.map(c => applyDueDateRulesToClient(c, next, ddr));
+        const updated = prevClients.map(c => {
+          const withDDR = applyDueDateRulesToClient(c, next, ddr);
+          return syncStandardTasks(withDDR, next);
+        });
+        updated.forEach((c, i) => {
+          if (JSON.stringify(c) !== JSON.stringify(prevClients[i])) upsertClient(c);
+        });
+        return updated;
       });
       return next;
     });
@@ -14574,19 +14635,15 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
           </label>
           </div>
-          {(t.followUps||[]).length > 0 && (
-            <div style={{ padding: "6px 12px 10px", borderTop: "1px solid #f1f5f9" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 6 }}>Follow-ups</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {(t.followUps||[]).map((fu, fi) => (
-                  <div key={fu.id || fi} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: "#fffbeb", borderRadius: 6, border: "1px solid #fde68a" }}>
-                    <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600, flexShrink: 0 }}>📅 {formatDate(fu.date)}</span>
-                    <span style={{ fontSize: 11, color: "#475569", flex: 1 }}>{fu.note || "—"}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div style={{ padding: "4px 12px 10px", borderTop: "1px solid #f1f5f9" }}>
+            <FollowUpBlock
+              followUps={t.followUps || []}
+              onAdd={() => updateTaskFields({ followUps: [...(t.followUps||[]), { id: Date.now(), date: new Date().toISOString().split("T")[0], note: "" }] })}
+              onChangeDate={(fi, v) => { const fus = [...(t.followUps||[])]; fus[fi] = {...fus[fi], date: v}; updateTaskFields({ followUps: fus }); }}
+              onChangeNote={(fi, v) => { const fus = [...(t.followUps||[])]; fus[fi] = {...fus[fi], note: v}; updateTaskFields({ followUps: fus }); }}
+              onRemove={(fi) => updateTaskFields({ followUps: (t.followUps||[]).filter((_,i) => i !== fi) })}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -16078,7 +16135,13 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
     done: allRenewalTasks.filter(t => t?.status === 'Complete' || t?.status === 'N/A').length,
     total: allRenewalTasks.length 
   };
-  const postOECount     = countTasks(data.postOEFixed || {});
+  const postOEFixedTasks = Object.values(data.postOEFixed || {});
+  const postOEArrTasks   = data.postOETasks || [];
+  const allPostOETasks   = [...postOEFixedTasks, ...postOEArrTasks];
+  const postOECount = {
+    done:  allPostOETasks.filter(t => { const s = typeof t === 'object' ? t?.status : t; return s === 'Complete' || s === 'N/A'; }).length,
+    total: allPostOETasks.length,
+  };
   const complianceCount = countTasks(data.compliance || {});
   const miscCount       = { done: 0, total: (data.miscTasks || []).length };
   const txnCount        = { done: 0, total: (data.transactions || []).length };
