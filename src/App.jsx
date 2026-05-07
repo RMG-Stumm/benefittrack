@@ -1575,6 +1575,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   }
 
   // setTask updates a single field within a task object
+  // and immediately persists to Supabase so other views see the change
   function setTask(group, id, field, val, taskLabel, category) {
     setData(p => {
       const existing = p[group]?.[id];
@@ -1599,11 +1600,23 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           newValue:   val ?? "",
         });
       }
-      return { ...p, [group]: { ...p[group], [id]: updated } };
+      const next = { ...p, [group]: { ...p[group], [id]: updated } };
+      return next;
     });
+    setIsDirty(true);
   }
 
-  // Ensure task objects are fully hydrated (backwards compat: old tasks were plain strings)
+  // Auto-save when dirty — debounced 1.5s, same pattern as ClientProfile
+  useEffect(() => {
+    if (!isDirty) return;
+    const timer = setTimeout(() => {
+      onSave(data);
+      setIsDirty(false);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [data, isDirty]);
+
+  // OE helpers — work with the new structured openEnrollment object
   function getTask(group, id, tasksDb) {
     const t = data[group]?.[id];
     // Resolve default assignee from task DB by matching on task id
@@ -3099,8 +3112,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 "std":"Income Protection","ltd":"Income Protection","idi":"Income Protection",
                 "nydbl_pfl":"Statutory Income",
                 "worksite_accident":"Worksite","worksite_cancer":"Worksite","worksite_ci":"Worksite","worksite_hospital":"Worksite",
-                "eap":"Wellness",
-                "identity_theft":"Lifestyle","prepaid_legal":"Lifestyle","pet_insurance":"Lifestyle",
+                "eap":"Supplemental",
+                "identity_theft":"Supplemental","prepaid_legal":"Supplemental","pet_insurance":"Supplemental","telehealth":"Supplemental",
                 "fsa":"Spending Accounts","hsa_funding":"Spending Accounts","hra":"Spending Accounts","commuter":"Spending Accounts",
               };
               const entriesWithCat = allRenderableEntries.map(e => ({
@@ -6138,7 +6151,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
 
                 const pof = data.postOEFixed || {};
                 const coord = getCoordinator(data.team);
-                const setPOF = (taskId, field, val, taskLabel) => setData(p => {
+                const setPOF = (taskId, field, val, taskLabel) => {
+                  setIsDirty(true);
+                  setData(p => {
                   const base = p.postOEFixed?.[taskId] || {};
                   const plannedDueDate = field === "dueDate" && !base.plannedDueDate && val
                     ? val : base.plannedDueDate;
@@ -6150,14 +6165,16 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       field, oldValue: base[field] ?? "", newValue: val ?? "",
                     });
                   }
-                  return {
+                  const next = {
                     ...p,
                     postOEFixed: {
                       ...(p.postOEFixed || {}),
                       [taskId]: { ...base, [field]: val, ...(plannedDueDate ? { plannedDueDate } : {}) },
                     },
                   };
+                  return next;
                 });
+                };
 
                 return fixedTasks.map(task => {
                   const defaultAssignee = (task.id === "oe_changes_processed") ? coord : "";
@@ -9531,23 +9548,6 @@ export default function App() {
         const finalTasks = missing.length > 0 ? [...tasks, ...missing] : tasks;
         if (missing.length > 0) missing.forEach(t => upsertTask(t));
         setTasksDataRaw(finalTasks);
-
-        // Sync standard tasks into all clients now that we have both clients and tasks
-        if (clients) {
-          const ddrToUse = ddr || [];
-          const synced = clients.map(applyDataFixes).map(c => {
-            const withDDR = applyDueDateRulesToClient(c, finalTasks, ddrToUse);
-            return syncStandardTasks(withDDR, finalTasks);
-          });
-          setClientsRaw(synced);
-          // Persist any that changed
-          synced.forEach((c, i) => {
-            const orig = clients[i];
-            if (orig && JSON.stringify(c.renewalTasks) !== JSON.stringify(orig.renewalTasks)) {
-              upsertClient(c);
-            }
-          });
-        }
       }
       if (ddr) {
         const ddrIds = new Set(ddr.map(r => r.id));
@@ -9718,7 +9718,11 @@ export default function App() {
   }, [clients]);
 
   // View: "dashboard" | "clients" | "renewals" | "teams"
-  const [view, setView] = useState(() => sessionStorage.getItem("bt_view") || "dashboard");
+  const [view, setView] = useState(() => {
+    const saved = sessionStorage.getItem("bt_view") || "dashboard";
+    // "client" view requires selectedClient state which doesn't survive refresh
+    return saved === "client" ? "clients" : saved;
+  });
   const changeView = (v) => { setView(v); sessionStorage.setItem("bt_view", v); };
   const [dashNav, setDashNav] = useState({}); // { assignee, window, cat } — pre-sets for OpenTasksView
   function navToTasks(opts={}) { setDashNav(opts); changeView("overdue"); }
@@ -9822,15 +9826,36 @@ export default function App() {
   }
 
   // Plans library — user-managed list of benefit plans selectable when configuring client benefits
-  const [plansLibrary, setPlansLibraryRaw] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("benefittrack_plans_v1") || "[]"); }
+  // Category migration map — old → new
+const PLAN_CATEGORY_MIGRATION = {
+  "Tax-Advantaged": "Spending Accounts",
+  "Wellness": "Supplemental",
+  "Lifestyle": "Supplemental",
+};
+// Specific plan overrides
+function migratePlanCategory(plan) {
+  if (plan.planName === "Telehealth" && plan.category === "Core Health") return { ...plan, category: "Supplemental" };
+  if (plan.planName === "EAP" && plan.category === "Wellness") return { ...plan, category: "Supplemental" };
+  if (["Identity Theft","Prepaid Legal","Pet Insurance"].includes(plan.planName) && plan.category === "Lifestyle") return { ...plan, category: "Supplemental" };
+  if (PLAN_CATEGORY_MIGRATION[plan.category]) return { ...plan, category: PLAN_CATEGORY_MIGRATION[plan.category] };
+  return plan;
+}
+
+const [plansLibrary, setPlansLibraryRaw] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("benefittrack_plans_v1") || "[]");
+      // Migrate legacy categories on load
+      return saved.map(migratePlanCategory);
+    }
     catch { return []; }
   });
   function setPlansLibrary(updater) {
     setPlansLibraryRaw(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      try { localStorage.setItem("benefittrack_plans_v1", JSON.stringify(next)); } catch(e) {}
-      return next;
+      // Apply category migration on every save
+      const migrated = Array.isArray(next) ? next.map(migratePlanCategory) : next;
+      try { localStorage.setItem("benefittrack_plans_v1", JSON.stringify(migrated)); } catch(e) {}
+      return migrated;
     });
   }
 
@@ -9888,6 +9913,18 @@ export default function App() {
     try { const s = JSON.parse(localStorage.getItem("benefittrack_funding_v1") || "[]"); return s.length ? s : FUNDING_METHODS.map((label, i) => ({ id: "fund_"+i, label, order: i, builtin: true })); } catch { return FUNDING_METHODS.map((label, i) => ({ id: "fund_"+i, label, order: i, builtin: true })); }
   });
   function setFundingLibrary(updater) { setFundingLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_funding_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
+  const DEFAULT_BILLING_METHODS = ["Composite","Age-banded","N/A"];
+  const [billingMethodsLibrary, setBillingMethodsLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_billing_v1") || "[]"); return s.length ? s : DEFAULT_BILLING_METHODS.map((label, i) => ({ id: "bill_"+i, label, order: i, builtin: true })); } catch { return DEFAULT_BILLING_METHODS.map((label, i) => ({ id: "bill_"+i, label, order: i, builtin: true })); }
+  });
+  function setBillingMethodsLibrary(updater) { setBillingMethodsLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_billing_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
+
+  const DEFAULT_CONTRIBUTION_METHODS = ["Employer-Paid","Contributory","Voluntary","Split","N/A"];
+  const [contributionMethodsLibrary, setContributionMethodsLibraryRaw] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem("benefittrack_contribution_v1") || "[]"); return s.length ? s : DEFAULT_CONTRIBUTION_METHODS.map((label, i) => ({ id: "contrib_"+i, label, order: i, builtin: true })); } catch { return DEFAULT_CONTRIBUTION_METHODS.map((label, i) => ({ id: "contrib_"+i, label, order: i, builtin: true })); }
+  });
+  function setContributionMethodsLibrary(updater) { setContributionMethodsLibraryRaw(prev => { const next = typeof updater === "function" ? updater(prev) : updater; try { localStorage.setItem("benefittrack_contribution_v1", JSON.stringify(next)); } catch(e) {} return next; }); }
 
   // Employer Types library
   const [employerTypesLibrary, setEmployerTypesLibraryRaw] = useState(() => {
@@ -10481,14 +10518,33 @@ export default function App() {
                 const compTotal = myClients.reduce((s,c) => s + Object.values(c.compliance||{}).filter(t=>t&&typeof t==="object").length, 0);
                 const compDone  = myClients.reduce((s,c) => s + Object.values(c.compliance||{}).filter(t=>t&&t.status==="Complete").length, 0);
                 const compPct   = compTotal > 0 ? Math.round((compDone/compTotal)*100) : null;
-                // Est annual commission (sum across all clients)
+                // Est annual commission — read from each client's actual benefitCommissions + plans
                 let estAnnual = 0;
+                const DASH_TIER_KEYS = { "4tier":["ee","es","ec","ff"], "3tier":["ee","es","ff"], "2tier":["ee","ff"] };
                 myClients.forEach(c => {
-                  const medCarrier = (c.benefitCarriers||{}).medical||(c.carriers||[])[0]||"";
-                  const enrolled = Number((c.benefitEnrolled||{}).medical)||0;
-                  const carrierDef = (carriersData||[]).find(cd=>cd.name===medCarrier||cd.id===medCarrier);
-                  const commRule = carrierDef?.commissionRules?.find(r=>!r.segment||r.segment===c.marketSize)||carrierDef?.commissionRules?.[0];
-                  if (commRule?.type==="PEPM"&&commRule.amount&&enrolled) estAnnual += commRule.amount*enrolled*12;
+                  const activeIds = Object.keys(c.benefitActive||{}).filter(id => (c.benefitActive||{})[id]);
+                  activeIds.forEach(benefitId => {
+                    const comm = (c.benefitCommissions||{})[benefitId] || {};
+                    if (!comm.type || !comm.amount) return;
+                    const plans = (c.benefitPlans||{})[benefitId] || [];
+                    const tierMode = (c.benefitTierMode||{})[benefitId] || "4tier";
+                    const tierKeys = DASH_TIER_KEYS[tierMode] || DASH_TIER_KEYS["4tier"];
+                    const isUnitRate = ["basic_life","std","ltd"].includes(benefitId);
+                    const mp = plans.reduce((s, pl) => {
+                      if (isUnitRate) {
+                        const uSize = benefitId==="basic_life"?1000:benefitId==="std"?10:100;
+                        return s + (parseFloat(pl.unitRate)||0) * (parseFloat(pl.volume)||0) / uSize;
+                      }
+                      return s + tierKeys.reduce((ss,k) => ss + (parseFloat((pl.rates||{})[k])||0) * (parseInt((pl.enrolled||{})[k])||0), 0);
+                    }, 0);
+                    const enrolled = plans.length > 0
+                      ? plans.reduce((s,pl) => s + tierKeys.reduce((ss,k) => ss+(parseInt((pl.enrolled||{})[k])||0),0), 0)
+                      : parseInt((c.benefitEnrolled||{})[benefitId])||0;
+                    let monthly = 0;
+                    if (comm.type === "PEPM") monthly = (parseFloat(comm.amount)||0) * enrolled;
+                    else if (comm.type === "Flat %" || comm.type === "Graded") monthly = mp * ((parseFloat(comm.amount)||0) / 100);
+                    estAnnual += monthly * 12;
+                  });
                 });
                 return (
                   <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:12,marginBottom:20}}>
@@ -10724,7 +10780,7 @@ export default function App() {
 
         {/* ── OPEN TASKS VIEW ── */}
         {view === "overdue" && (
-          <OpenTasksView clients={clients} onOpenClient={openClient} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
+          <OpenTasksView clients={clients} onOpenClient={openClient} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} onClearDashNav={() => setDashNav({})} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
         )}
 
 
@@ -11016,6 +11072,10 @@ export default function App() {
             onSaveMarkets={setMarketsLibrary}
             fundingLibrary={fundingLibrary}
             onSaveFunding={setFundingLibrary}
+            billingMethodsLibrary={billingMethodsLibrary}
+            onSaveBillingMethods={setBillingMethodsLibrary}
+            contributionMethodsLibrary={contributionMethodsLibrary}
+            onSaveContributionMethods={setContributionMethodsLibrary}
             employerTypesLibrary={employerTypesLibrary}
             onSaveEmployerTypes={setEmployerTypesLibrary}
             situsLibrary={situsLibrary}
@@ -11071,6 +11131,7 @@ export default function App() {
           renewals={renewals}
           renewalStages={renewalStages}
           initialSection={deepLinkSection}
+          plansLibrary={plansLibrary}
           onUpdateRenewal={r => {
             setRenewals(prev => prev.map(x => x.id === r.id ? r : x));
             upsertRenewal(r);
@@ -11759,7 +11820,7 @@ function TeamEditModal({ team, onSave, onDelete, onClose, currentUser }) {
 }
 
 // ── Benefits constants ────────────────────────────────────────────────────────
-const BENEFITS_DB_CATEGORIES = ["Core Health","Life & AD&D","Income Protection","Statutory Income","Worksite","Wellness","Lifestyle","Spending Accounts"];
+const BENEFITS_DB_CATEGORIES = ["Core Health","Life & AD&D","Income Protection","Income Protection","Worksite","Spending Accounts","Supplemental","Statutory Income","Wellness","Lifestyle"];
 
 const BENEFITS_DB_OPTIONS = {
   planDesign: {
@@ -11879,103 +11940,120 @@ const LIB_FOOTER = {
 };
 
 // ── AdminView ─────────────────────────────────────────────────────────────────
-function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, salespersonsLibrary, onSaveSalespersons, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
+function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, salespersonsLibrary, onSaveSalespersons, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, billingMethodsLibrary, onSaveBillingMethods, contributionMethodsLibrary, onSaveContributionMethods, employerTypesLibrary, onSaveEmployerTypes, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
   const [adminTab, setAdminTab] = useState("plans");
 
-  const tabs = [
-    { id: "plans",         label: "📋 Plans" },
-    { id: "taskTypes",     label: "🏷️ Task Types" },
-    { id: "tasks",         label: "✅ Tasks" },
-    { id: "anchors",       label: "⚓ Anchor Events" },
-    { id: "ddr",           label: "📅 Due Date Rules" },
-    { id: "salespersons",  label: "👤 Salespersons" },
-    { id: "markets",       label: "📊 Markets" },
-    { id: "funding",       label: "💰 Funding" },
-    { id: "employerTypes", label: "🏢 Employer Types" },
-    { id: "situs",         label: "📍 Situs" },
-    { id: "txnTypes",      label: "🔄 Transaction Types" },
-    { id: "benefitsDb",    label: "💊 Benefits DB" },
-    { id: "carriers",      label: "🏢 Carriers" },
-  ];
-
-  const tileStyle = (active) => ({
-    padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-    cursor: "pointer", border: "none", fontFamily: "inherit",
-    background: active ? "#fff" : "transparent",
-    color: active ? "#1d4ed8" : "#64748b",
-    boxShadow: active ? "0 1px 4px rgba(0,0,0,.1)" : "none",
-    transition: "all .15s", whiteSpace: "nowrap",
-  });
-
-  // Merge hardcoded DDR_ANCHORS with user-defined anchor events library
-  // Library entries take precedence; hardcoded ones are always available as fallback
   const allAnchors = [
     ...DDR_ANCHORS,
     ...(anchorEventsLibrary || []).filter(a => !DDR_ANCHORS.find(d => d.id === a.id)),
   ];
 
-  return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 0" }}>
-      {/* Sticky header + tab bar */}
-      <div style={{
-        position: "sticky", top: 0, zIndex: 50,
-        background: "#f8fafc", paddingBottom: 16,
-        borderBottom: "1px solid #e2e8f0", marginBottom: 28,
-      }}>
-        {/* Header */}
-        <div style={{ marginBottom: 12, paddingTop: 4 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>⚙️ Admin</div>
-          <div style={{ fontSize: 13, color: "#64748b" }}>Manage libraries, reference data, and system configuration.</div>
-        </div>
+  const NAV_ITEMS = [
+    { id: "plans",          icon: "📋", label: "Plans" },
+    { id: "tasks",          icon: "✅", label: "Tasks" },
+    { id: "taskTypes",      icon: "🏷️",  label: "Task Types" },
+    { id: "ddr",            icon: "📅", label: "Due Date Rules" },
+    { id: "anchors",        icon: "⚓", label: "Anchor Events" },
+    { id: "carriers",       icon: "🏢", label: "Carriers" },
+    { id: "funding",        icon: "💳", label: "Funding Methods" },
+    { id: "billing",        icon: "🧾", label: "Billing Methods" },
+    { id: "contribution",   icon: "💰", label: "Contribution Methods" },
+    { id: "markets",        icon: "📊", label: "Markets" },
+    { id: "employerTypes",  icon: "🏭", label: "Employer Types" },
+    { id: "situs",          icon: "📍", label: "Situs" },
+    { id: "salespersons",   icon: "👤", label: "Salespersons" },
+    { id: "txnTypes",       icon: "🔄", label: "Transaction Types" },
+  ];
 
-        {/* Tab bar */}
-        <div style={{ display: "flex", flexWrap: "wrap", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 2 }}>
-          {tabs.map(t => (
-            <button key={t.id}
-              onClick={() => t.id === "carriers" ? onNavigateCarriers() : setAdminTab(t.id)}
-              style={tileStyle(adminTab === t.id && t.id !== "carriers")}>
-              {t.label}
-            </button>
-          ))}
+  return (
+    <div style={{ display: "flex", minHeight: "calc(100vh - 54px)", background: "#f4f7f9" }}>
+
+      {/* ── Admin left sidebar — flat list ── */}
+      <div style={{
+        width: 200, flexShrink: 0, background: "#1e2d3d",
+        borderRight: "1px solid #162230",
+        display: "flex", flexDirection: "column",
+        position: "sticky", top: 54, height: "calc(100vh - 54px)", overflowY: "auto",
+      }}>
+        <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid #2a3f52" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a9ab5", letterSpacing: "1px", textTransform: "uppercase" }}>Admin</div>
+        </div>
+        <div style={{ padding: "6px 0" }}>
+          {NAV_ITEMS.map(item => {
+            const active = adminTab === item.id;
+            return (
+              <button key={item.id}
+                onClick={() => item.id === "carriers" ? onNavigateCarriers() : setAdminTab(item.id)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 9,
+                  padding: "8px 16px", border: "none", textAlign: "left",
+                  background: active ? "rgba(75,120,150,0.25)" : "transparent",
+                  color: active ? "#7ec8f0" : "#94b4c8",
+                  fontFamily: "inherit", fontSize: 12.5, fontWeight: active ? 700 : 400,
+                  cursor: "pointer",
+                  borderLeft: active ? "3px solid #4b98c0" : "3px solid transparent",
+                  transition: "all .12s",
+                }}
+                onMouseEnter={e => { if (!active) { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.color = "#b8d0de"; } }}
+                onMouseLeave={e => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#94b4c8"; } }}>
+                <span style={{ fontSize: 14, width: 18, textAlign: "center", flexShrink: 0 }}>{item.icon}</span>
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {adminTab === "plans" && (
-        <PlansLibraryView plansLibrary={plansLibrary} onSave={onSavePlansLibrary} currentUser={currentUser} />
-      )}
-      {adminTab === "taskTypes" && (
-        <TaskTypesLibraryView taskTypesLibrary={taskTypesLibrary} onSave={onSaveTaskTypes} currentUser={currentUser} />
-      )}
-      {adminTab === "tasks" && (
-        <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} currentUser={currentUser} />
-      )}
-      {adminTab === "anchors" && (
-        <AnchorEventsLibraryView anchorEventsLibrary={anchorEventsLibrary} onSave={onSaveAnchorEvents} currentUser={currentUser} />
-      )}
-      {adminTab === "ddr" && (
-        <DdrLibraryView dueDateRules={dueDateRules} onSave={onSaveDueDateRules} allAnchors={allAnchors} currentUser={currentUser} />
-      )}
-      {adminTab === "salespersons" && (
-        <SimpleLibraryView title="Salespersons" items={salespersonsLibrary} onSave={onSaveSalespersons} currentUser={currentUser} hasAbbr={false} description="Salespeople available in the client salesperson dropdown." />
-      )}
-      {adminTab === "markets" && (
-        <SimpleLibraryView title="Markets" items={marketsLibrary} onSave={onSaveMarkets} currentUser={currentUser} hasAbbr={false} description="Market size categories used to classify clients and filter tasks." />
-      )}
-      {adminTab === "funding" && (
-        <SimpleLibraryView title="Funding Methods" items={fundingLibrary} onSave={onSaveFunding} currentUser={currentUser} hasAbbr={false} description="Funding method options available when setting up a client." />
-      )}
-      {adminTab === "employerTypes" && (
-        <SimpleLibraryView title="Employer Types" items={employerTypesLibrary} onSave={onSaveEmployerTypes} currentUser={currentUser} hasAbbr={false} description="Employer type classifications used in carrier contacts." />
-      )}
-      {adminTab === "situs" && (
-        <SimpleLibraryView title="Situs States" items={situsLibrary} onSave={onSaveSitus} currentUser={currentUser} hasAbbr={true} description="States available as group situs options for clients." />
-      )}
-      {adminTab === "txnTypes" && (
-        <SimpleLibraryView title="Transaction Types" items={transactionTypesLibrary} onSave={onSaveTransactionTypes} currentUser={currentUser} hasAbbr={false} description="Types of enrollment transactions available when logging member changes." />
-      )}
-      {adminTab === "benefitsDb" && (
-        <BenefitsDbView benefitsDb={benefitsDb} onSave={onSaveBenefitsDb} currentUser={currentUser} />
-      )}
+      {/* ── Admin content area ── */}
+      <div style={{ flex: 1, padding: "28px 32px", overflowY: "auto", maxWidth: 1100 }}>
+        {adminTab === "plans" && (
+          <PlansLibraryView plansLibrary={plansLibrary} onSave={onSavePlansLibrary} currentUser={currentUser} />
+        )}
+        {adminTab === "taskTypes" && (
+          <TaskTypesLibraryView taskTypesLibrary={taskTypesLibrary} onSave={onSaveTaskTypes} currentUser={currentUser} />
+        )}
+        {adminTab === "tasks" && (
+          <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} currentUser={currentUser} />
+        )}
+        {adminTab === "anchors" && (
+          <AnchorEventsLibraryView anchorEventsLibrary={anchorEventsLibrary} onSave={onSaveAnchorEvents} currentUser={currentUser} />
+        )}
+        {adminTab === "ddr" && (
+          <DueDateRulesView dueDateRules={dueDateRules} onSave={onSaveDueDateRules} allAnchors={allAnchors} currentUser={currentUser} />
+        )}
+        {adminTab === "funding" && (
+          <SimpleLibraryView title="Funding Methods" items={fundingLibrary} onSave={onSaveFunding} currentUser={currentUser}
+            description="Funding method options available on client benefit lines (Medical, Dental, Vision). Drives billing method constraints." />
+        )}
+        {adminTab === "billing" && (
+          <SimpleLibraryView title="Billing Methods" items={billingMethodsLibrary} onSave={onSaveBillingMethods} currentUser={currentUser}
+            description="Billing method options. Composite is available to all groups. Age-banded is available to ACA and Mid-Market grandfathered groups only." />
+        )}
+        {adminTab === "contribution" && (
+          <SimpleLibraryView title="Contribution Methods" items={contributionMethodsLibrary} onSave={onSaveContributionMethods} currentUser={currentUser}
+            description="Contribution method options for benefit lines. No funding or market restrictions apply." />
+        )}
+        {adminTab === "salespersons" && (
+          <SimpleLibraryView title="Salespersons" items={salespersonsLibrary} onSave={onSaveSalespersons} currentUser={currentUser}
+            description="Team members listed as salespersons on client records." />
+        )}
+        {adminTab === "markets" && (
+          <SimpleLibraryView title="Market Segments" items={marketsLibrary} onSave={onSaveMarkets} currentUser={currentUser}
+            description="Market size classifications used on client records." />
+        )}
+        {adminTab === "employerTypes" && (
+          <SimpleLibraryView title="Employer Types" items={employerTypesLibrary} onSave={onSaveEmployerTypes} currentUser={currentUser}
+            description="Employer type classifications." />
+        )}
+        {adminTab === "situs" && (
+          <SimpleLibraryView title="Group Situs States" items={situsLibrary} onSave={onSaveSitus} currentUser={currentUser}
+            hasAbbr description="States where groups are sitused." />
+        )}
+        {adminTab === "txnTypes" && (
+          <SimpleLibraryView title="Transaction Types" items={transactionTypesLibrary} onSave={onSaveTransactionTypes} currentUser={currentUser}
+            description="Types of member transactions tracked on client records." />
+        )}
+      </div>
     </div>
   );
 }
@@ -12100,175 +12178,378 @@ function SimpleLibraryView({ title, items, onSave, currentUser, hasAbbr, descrip
 // ── PlansLibraryView ──────────────────────────────────────────────────────────
 const PLAN_BENEFIT_CATEGORIES = [
   "Core Health", "Life & AD&D", "Income Protection",
-  "Statutory Income", "Worksite", "Wellness", "Lifestyle", "Spending Accounts",
+  "Worksite", "Spending Accounts", "Supplemental",
+  "Statutory Income",
 ];
 
 const PLAN_TYPES_BY_CATEGORY = {
   "Core Health":        ["PPO", "HMO", "EPO", "HDHP", "Indemnity", "DMO", "Other"],
   "Life & AD&D":        ["Flat $", "Salary Multiple", "Increments", "Other"],
   "Income Protection":  ["% of Income", "Benefit Increments", "Other"],
-  "Statutory Income":   ["State-Defined", "Other"],
   "Worksite":           ["Fixed Schedule", "Lump Sum", "Per Diem", "Other"],
+  "Spending Accounts":  ["Health FSA", "Limited FSA", "Dependent Care FSA", "Transportation FSA", "Parking", "Commuter", "HSA", "HRA", "Other"],
+  "Supplemental":       ["Embedded", "Stand-alone", "Other"],
+  "Statutory Income":   ["State-Defined", "Other"],
   "Wellness":           ["Embedded", "Stand-alone", "Other"],
   "Lifestyle":          ["Embedded", "Stand-alone", "Other"],
-  "Spending Accounts":     ["Health FSA", "Limited FSA", "Dependent Care FSA", "HSA", "HRA", "Commuter", "Other"],
 };
 
-// Default plans seeded from Benefits DB — one entry per plan design variant
+// Default plans seeded from Benefits DB — fully populated with regulatory details
 const DEFAULT_PLANS_LIBRARY = [
-  // Core Health — Medical
-  { planName: "Medical", category: "Core Health", planType: "PPO",       notes: "" },
-  { planName: "Medical", category: "Core Health", planType: "HMO",       notes: "" },
-  { planName: "Medical", category: "Core Health", planType: "EPO",       notes: "" },
-  { planName: "Medical", category: "Core Health", planType: "HDHP",      notes: "" },
-  { planName: "Medical", category: "Core Health", planType: "Indemnity", notes: "" },
-  // Core Health — Dental
-  { planName: "Dental", category: "Core Health", planType: "PPO",       notes: "" },
-  { planName: "Dental", category: "Core Health", planType: "DMO",       notes: "" },
-  { planName: "Dental", category: "Core Health", planType: "Indemnity", notes: "" },
-  // Core Health — Vision
-  { planName: "Vision", category: "Core Health", planType: "PPO",   notes: "" },
-  { planName: "Vision", category: "Core Health", planType: "Other", notes: "" },
-  // Core Health — Telehealth
-  { planName: "Telehealth", category: "Core Health", planType: "Embedded",    notes: "" },
-  { planName: "Telehealth", category: "Core Health", planType: "Stand-alone", notes: "" },
-  // Life & AD&D
-  { planName: "Basic Life/AD&D", category: "Life & AD&D", planType: "Flat $",          notes: "" },
-  { planName: "Basic Life/AD&D", category: "Life & AD&D", planType: "Salary Multiple", notes: "" },
-  { planName: "Voluntary Life/AD&D", category: "Life & AD&D", planType: "Increments",  notes: "" },
-  { planName: "AD&D",                category: "Life & AD&D", planType: "Increments",  notes: "" },
-  // Income Protection
-  { planName: "STD", category: "Income Protection", planType: "% of Income",        notes: "" },
-  { planName: "STD", category: "Income Protection", planType: "Benefit Increments", notes: "" },
-  { planName: "LTD", category: "Income Protection", planType: "% of Income",        notes: "" },
-  { planName: "LTD", category: "Income Protection", planType: "Benefit Increments", notes: "" },
-  { planName: "IDI", category: "Income Protection", planType: "% of Income",        notes: "" },
-  // Statutory Income
-  { planName: "NYDBL & PFL", category: "Statutory Income", planType: "State-Defined", notes: "Contribution rules vary by state" },
-  // Worksite
-  { planName: "Accident",           category: "Worksite", planType: "Fixed Schedule", notes: "" },
-  { planName: "Cancer",             category: "Worksite", planType: "Lump Sum",       notes: "" },
-  { planName: "Critical Illness",   category: "Worksite", planType: "Lump Sum",       notes: "" },
-  { planName: "Hospital Indemnity", category: "Worksite", planType: "Per Diem",       notes: "" },
-  // Wellness
-  { planName: "EAP", category: "Wellness", planType: "Embedded",    notes: "" },
-  { planName: "EAP", category: "Wellness", planType: "Stand-alone", notes: "" },
-  // Lifestyle
-  { planName: "Identity Theft", category: "Lifestyle", planType: "Embedded", notes: "" },
-  { planName: "Prepaid Legal",   category: "Lifestyle", planType: "Embedded", notes: "" },
-  { planName: "Pet Insurance",   category: "Lifestyle", planType: "Other",    notes: "" },
-  // Tax-Advantaged
-  { planName: "FSA", category: "Spending Accounts", planType: "Health FSA",         notes: "" },
-  { planName: "FSA", category: "Spending Accounts", planType: "Limited FSA",        notes: "" },
-  { planName: "FSA", category: "Spending Accounts", planType: "Dependent Care FSA", notes: "" },
-  { planName: "HSA", category: "Spending Accounts", planType: "HSA",                notes: "Must be paired with HDHP" },
-  { planName: "HRA", category: "Spending Accounts", planType: "HRA",                notes: "" },
-  { planName: "Commuter", category: "Spending Accounts", planType: "Commuter",      notes: "" },
-].map((p, i) => ({ ...p, id: "seed_" + i + "_" + p.planName.toLowerCase().replace(/[^a-z0-9]+/g, "_") + "_" + p.planType.toLowerCase().replace(/[^a-z0-9]+/g, "_") }));
+  // ── Core Health — Medical ──
+  { planName:"Medical", category:"Core Health", planType:"PPO",       fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  { planName:"Medical", category:"Core Health", planType:"PPO",       fundingMethod:"Level-Funded",  billingMethod:"Self Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"Self-funded arrangement with stop-loss" },
+  { planName:"Medical", category:"Core Health", planType:"PPO",       fundingMethod:"Self-Funded",   billingMethod:"Self Bill",   contributionMethod:"Contributory",   taxCode:"105(h)",    erisa:"Yes", ndt:"Required",  notes:"ACA nondiscrimination rules apply" },
+  { planName:"Medical", category:"Core Health", planType:"HMO",       fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  { planName:"Medical", category:"Core Health", planType:"EPO",       fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  { planName:"Medical", category:"Core Health", planType:"HDHP",      fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"223",       erisa:"Yes", ndt:"N/A",       notes:"HSA-eligible; IRS minimum deductible applies" },
+  { planName:"Medical", category:"Core Health", planType:"HDHP",      fundingMethod:"Self-Funded",   billingMethod:"Self Bill",   contributionMethod:"Contributory",   taxCode:"223",       erisa:"Yes", ndt:"Required",  notes:"HSA-eligible self-funded plan" },
+  { planName:"Medical", category:"Core Health", planType:"Indemnity",  fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  // ── Core Health — Dental ──
+  { planName:"Dental",  category:"Core Health", planType:"PPO",       fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  { planName:"Dental",  category:"Core Health", planType:"DMO",       fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"Capitation-based; referrals required" },
+  { planName:"Dental",  category:"Core Health", planType:"Indemnity",  fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  // ── Core Health — Vision ──
+  { planName:"Vision",  category:"Core Health", planType:"PPO",       fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Contributory",   taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  { planName:"Vision",  category:"Core Health", planType:"Other",     fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Voluntary",       taxCode:"125",       erisa:"Yes", ndt:"N/A",       notes:"" },
+  // ── Life & AD&D ──
+  { planName:"Basic Life/AD&D",     category:"Life & AD&D", planType:"Flat $",          fundingMethod:"Fully Insured", billingMethod:"List Bill", contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"§79 imputed income applies over $50K" },
+  { planName:"Basic Life/AD&D",     category:"Life & AD&D", planType:"Salary Multiple", fundingMethod:"Fully Insured", billingMethod:"List Bill", contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"§79 imputed income applies over $50K" },
+  { planName:"Voluntary Life/AD&D", category:"Life & AD&D", planType:"Increments",      fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary",      taxCode:"125",  erisa:"Yes", ndt:"N/A",      notes:"EOI may be required above guaranteed issue" },
+  { planName:"AD&D",                category:"Life & AD&D", planType:"Increments",      fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary",      taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"Stand-alone AD&D" },
+  // ── Income Protection — STD ──
+  { planName:"STD", category:"Income Protection", planType:"% of Income",        fundingMethod:"Fully Insured", billingMethod:"List Bill", contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"Benefits taxable if employer-paid" },
+  { planName:"STD", category:"Income Protection", planType:"% of Income",        fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary",      taxCode:"125",  erisa:"Yes", ndt:"N/A",      notes:"Benefits tax-free if employee-paid" },
+  { planName:"STD", category:"Income Protection", planType:"Benefit Increments", fundingMethod:"Fully Insured", billingMethod:"List Bill", contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"" },
+  // ── Income Protection — LTD ──
+  { planName:"LTD", category:"Income Protection", planType:"% of Income",        fundingMethod:"Fully Insured", billingMethod:"List Bill", contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"Benefits taxable if employer-paid" },
+  { planName:"LTD", category:"Income Protection", planType:"% of Income",        fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary",      taxCode:"125",  erisa:"Yes", ndt:"N/A",      notes:"Benefits tax-free if employee-paid" },
+  { planName:"LTD", category:"Income Protection", planType:"Benefit Increments", fundingMethod:"Fully Insured", billingMethod:"List Bill", contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"" },
+  // ── Income Protection — IDI ──
+  { planName:"IDI", category:"Income Protection", planType:"% of Income",        fundingMethod:"Fully Insured", billingMethod:"Direct Bill", contributionMethod:"Voluntary",    taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Individual disability income — not employer-sponsored ERISA" },
+  // ── Income Protection — NYDBL & PFL ──
+  { planName:"NYDBL & PFL", category:"Income Protection", planType:"State-Defined", fundingMethod:"State-Funded", billingMethod:"Salary Deduction", contributionMethod:"Split",  taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"NY state-mandated; employee contribution rate set annually" },
+  // ── Worksite ──
+  { planName:"Critical Illness",   category:"Worksite", planType:"Lump Sum",       fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary", taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Cancer diagnosis rider often included" },
+  { planName:"Cancer",             category:"Worksite", planType:"Lump Sum",       fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary", taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"" },
+  { planName:"Personal Accident",  category:"Worksite", planType:"Fixed Schedule",  fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary", taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Accident-only; not subject to ERISA if voluntary" },
+  { planName:"Hospital Indemnity", category:"Worksite", planType:"Per Diem",        fundingMethod:"Fully Insured", billingMethod:"Self Bill", contributionMethod:"Voluntary", taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Pre-tax if paired with §125 cafeteria plan" },
+  // ── Spending Accounts ──
+  { planName:"Health FSA",             category:"Spending Accounts", planType:"Health FSA",         fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Split",      taxCode:"125",  erisa:"Yes", ndt:"Required",  notes:"Use-it-or-lose-it; rollover up to IRS limit" },
+  { planName:"Limited Purpose FSA",    category:"Spending Accounts", planType:"Limited FSA",        fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Voluntary",  taxCode:"125",  erisa:"Yes", ndt:"Required",  notes:"HSA-compatible; vision & dental only" },
+  { planName:"Dependent Care FSA",     category:"Spending Accounts", planType:"Dependent Care FSA", fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Voluntary",  taxCode:"129",  erisa:"Yes", ndt:"Required",  notes:"§129 — separate from health FSA limits" },
+  { planName:"Transportation FSA",     category:"Spending Accounts", planType:"Transportation FSA", fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Voluntary",  taxCode:"132(f)", erisa:"No", ndt:"N/A",      notes:"Transit & vanpool — monthly IRS limit applies" },
+  { planName:"Parking",                category:"Spending Accounts", planType:"Transportation FSA", fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Voluntary",  taxCode:"132(f)", erisa:"No", ndt:"N/A",      notes:"Monthly IRS limit applies; separate from transit" },
+  { planName:"Commuter",               category:"Spending Accounts", planType:"Commuter",           fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Voluntary",  taxCode:"132(f)", erisa:"No", ndt:"N/A",      notes:"Combined transit + parking limit" },
+  { planName:"HSA Funding",            category:"Spending Accounts", planType:"HSA",                fundingMethod:"Self-Funded", billingMethod:"Salary Deduction", contributionMethod:"Split",      taxCode:"223",  erisa:"No",  ndt:"N/A",      notes:"Must be paired with IRS-qualified HDHP; annual contribution limit applies" },
+  { planName:"HRA",                    category:"Spending Accounts", planType:"HRA",                fundingMethod:"Self-Funded", billingMethod:"Self Bill",         contributionMethod:"Employer-Paid", taxCode:"105", erisa:"Yes", ndt:"Required", notes:"Employer-only funding; various HRA types (ICHRA, QSEHRA, EBHRA)" },
+  // ── Supplemental ──
+  { planName:"EAP",              category:"Supplemental", planType:"Embedded",    fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Embedded in health plan — no stand-alone ERISA plan" },
+  { planName:"EAP",              category:"Supplemental", planType:"Stand-alone", fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"Stand-alone EAP — ERISA welfare benefit plan" },
+  { planName:"Telehealth",       category:"Supplemental", planType:"Embedded",    fundingMethod:"Fully Insured", billingMethod:"List Bill",   contributionMethod:"Employer-Paid", taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Embedded in health carrier contract" },
+  { planName:"Telehealth",       category:"Supplemental", planType:"Stand-alone", fundingMethod:"Fully Insured", billingMethod:"Direct Bill", contributionMethod:"Voluntary",      taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"" },
+  { planName:"Identity Theft",   category:"Supplemental", planType:"Embedded",    fundingMethod:"Fully Insured", billingMethod:"Self Bill",   contributionMethod:"Voluntary",      taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Voluntary; not subject to ERISA" },
+  { planName:"Prepaid Legal",    category:"Supplemental", planType:"Embedded",    fundingMethod:"Fully Insured", billingMethod:"Self Bill",   contributionMethod:"Voluntary",      taxCode:"N/A",  erisa:"Yes", ndt:"N/A",      notes:"ERISA welfare benefit plan if employer-sponsored" },
+  { planName:"Pet Insurance",    category:"Supplemental", planType:"Other",       fundingMethod:"Fully Insured", billingMethod:"Self Bill",   contributionMethod:"Voluntary",      taxCode:"N/A",  erisa:"No",  ndt:"N/A",      notes:"Not subject to ERISA; payroll deduction convenience" },
+].map((p, i) => ({
+  ...p,
+  id: "seed_" + i + "_" + p.planName.toLowerCase().replace(/[^a-z0-9]+/g,"_") + "_" + (p.planType||"").toLowerCase().replace(/[^a-z0-9]+/g,"_"),
+  variantOrder: i,
+  planOrder: 0,
+}));
 
 function PlansLibraryView({ plansLibrary, onSave, currentUser }) {
-  const [filterCat, setFilterCat] = useState("All");
-  const [editingId, setEditingId] = useState(null);
-  const [editData, setEditData]   = useState(null);
-  const [search, setSearch]       = useState("");
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [activeGroup, setActiveGroup] = useState(PLAN_BENEFIT_CATEGORIES[0]);
+  const [activePlan,  setActivePlan]  = useState(null);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [addingGroup,  setAddingGroup]  = useState(false);
+  const [newPlanName,  setNewPlanName]  = useState("");
+  const [addingPlan,   setAddingPlan]   = useState(false);
+  const [customGroups, setCustomGroups] = useState(() => {
+    const existing = (plansLibrary || []).map(p => p.category).filter(c => !PLAN_BENEFIT_CATEGORIES.includes(c));
+    return [...new Set(existing)];
+  });
 
-  function populateFromDefaults() {
-    const manualPlans = (plansLibrary || []).filter(p => !p.id.startsWith("seed_"));
-    if (!confirm(`This will add ${DEFAULT_PLANS_LIBRARY.length} default plans from the Benefits DB. Any plans you've added manually will not be affected. Continue?`)) return;
-    onSave([...manualPlans, ...DEFAULT_PLANS_LIBRARY]);
+  const allGroups = [...PLAN_BENEFIT_CATEGORIES, ...customGroups];
+
+  // Plans in selected group, sorted by order
+  const groupPlans = (plansLibrary || [])
+    .filter(p => p.category === activeGroup)
+    .sort((a,b) => (a.order||0) - (b.order||0));
+
+  // Variants for selected plan (plans with same planName and category)
+  const planVariants = activePlan
+    ? (plansLibrary || [])
+        .filter(p => p.category === activeGroup && p.planName === activePlan)
+        .sort((a,b) => (a.variantOrder||0) - (b.variantOrder||0))
+    : [];
+
+  // Unique plan names in group
+  const planNames = [...new Set(groupPlans.map(p => p.planName))].sort((a,b) => {
+    const oa = groupPlans.find(p => p.planName===a)?.planOrder||0;
+    const ob = groupPlans.find(p => p.planName===b)?.planOrder||0;
+    return oa - ob;
+  });
+
+  function addGroup() {
+    if (!newGroupName.trim()) return;
+    setCustomGroups(p => [...p, newGroupName.trim()]);
+    setActiveGroup(newGroupName.trim());
+    setActivePlan(null);
+    setNewGroupName(""); setAddingGroup(false);
   }
 
-  function startAdd() {
-    const p = { id: generateId(), planName: "", category: "Core Health", planType: "PPO", notes: "" };
-    setEditingId(p.id); setEditData(p);
+  function addPlan() {
+    if (!newPlanName.trim()) return;
+    const maxOrder = planNames.length;
+    const id = "plan_" + Date.now();
+    onSave(prev => [...(prev||[]), {
+      id, planName: newPlanName.trim(), category: activeGroup,
+      planType: "Other", fundingMethod: "", billingMethod: "",
+      contributionMethod: "", taxCode: "", erisa: "", ndt: "", notes: "",
+      planOrder: maxOrder, variantOrder: 0,
+    }]);
+    setActivePlan(newPlanName.trim());
+    setNewPlanName(""); setAddingPlan(false);
   }
-  function startEdit(plan) { setEditingId(plan.id); setEditData({ ...plan }); }
-  function cancelEdit() { setEditingId(null); setEditData(null); }
-  function savePlan() {
-    if (!editData.planName.trim()) return;
-    onSave(prev => {
-      const exists = (prev || []).find(p => p.id === editData.id);
-      return exists ? prev.map(p => p.id === editData.id ? editData : p) : [...(prev || []), editData];
-    });
-    cancelEdit();
+
+  function addVariant() {
+    const id = "plan_" + Date.now();
+    const maxVO = planVariants.reduce((m,p) => Math.max(m, p.variantOrder||0), 0);
+    const planTypeOpts = PLAN_TYPES_BY_CATEGORY[activeGroup] || ["Other"];
+    onSave(prev => [...(prev||[]), {
+      id, planName: activePlan, category: activeGroup,
+      planType: planTypeOpts[0], fundingMethod: "Fully Insured",
+      billingMethod: "List Bill", contributionMethod: "Employer-Paid",
+      taxCode: "", erisa: "Yes", ndt: "N/A", notes: "",
+      planOrder: planNames.indexOf(activePlan), variantOrder: maxVO + 10,
+    }]);
   }
-  function deletePlan(id) {
-    if (!confirm("Delete this plan from the library?")) return;
+
+  function updateVariant(id, field, val) {
+    onSave(prev => prev.map(p => p.id === id ? {...p, [field]: val} : p));
+  }
+
+  function deleteVariant(id) {
+    if (!confirm("Delete this variant?")) return;
     onSave(prev => prev.filter(p => p.id !== id));
   }
 
-  const categories = ["All", ...PLAN_BENEFIT_CATEGORIES];
-  const filtered = (plansLibrary || []).filter(p => {
-    const catMatch = filterCat === "All" || p.category === filterCat;
-    const searchMatch = !search || p.planName.toLowerCase().includes(search.toLowerCase()) || (p.planType || "").toLowerCase().includes(search.toLowerCase());
-    return catMatch && searchMatch;
-  });
-  const planTypeOptions = PLAN_TYPES_BY_CATEGORY[editData?.category] || ["Other"];
+  function moveVariant(id, dir) {
+    const sorted = [...planVariants].sort((a,b) => (a.variantOrder||0)-(b.variantOrder||0));
+    const idx = sorted.findIndex(p => p.id === id);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+    const a = sorted[idx], b = sorted[swapIdx];
+    const ao = a.variantOrder||0, bo = b.variantOrder||0;
+    onSave(prev => prev.map(p => {
+      if (p.id === a.id) return {...p, variantOrder: bo};
+      if (p.id === b.id) return {...p, variantOrder: ao};
+      return p;
+    }));
+  }
+
+  function movePlan(name, dir) {
+    const names = [...planNames];
+    const idx = names.indexOf(name);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= names.length) return;
+    const swapName = names[swapIdx];
+    onSave(prev => prev.map(p => {
+      if (p.planName === name && p.category === activeGroup) return {...p, planOrder: swapIdx};
+      if (p.planName === swapName && p.category === activeGroup) return {...p, planOrder: idx};
+      return p;
+    }));
+  }
+
+  const FUNDING_OPTS = ["Fully Insured","Level-Funded","Self-Funded","State-Funded","N/A"];
+  const BILLING_OPTS = ["List Bill","Self Bill","Direct Bill","Salary Deduction","N/A"];
+  const CONTRIB_OPTS = ["Employer-Paid","Contributory","Voluntary","Split","N/A"];
+  const ERISA_OPTS   = ["Yes","No","Governmental","Church Plan","N/A"];
+  const NDT_OPTS     = ["N/A","Required","ACP/ADP","415 Limit","Top-Heavy","Other"];
+
+  const colStyle = { padding: "4px 6px" };
+  const thStyle  = { padding: "6px 8px", fontSize: 9, fontWeight: 500, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".04em", textAlign: "left", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" };
 
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search plans…" style={{ ...LIB_INPUT, marginTop: 0, width: 220 }} />
-        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...LIB_INPUT, marginTop: 0, width: 200 }}>
-          {categories.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button onClick={startAdd} style={LIB_BTN_PRIMARY}>+ Add Plan</button>
-          <button onClick={populateFromDefaults} style={LIB_BTN_SECONDARY}>⬇ Populate from Benefits DB</button>
+    <div style={{ display: "flex", height: "calc(100vh - 140px)", gap: 0 }}>
+
+      {/* L2 — Groups */}
+      <div style={{ width: 140, flexShrink: 0, borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", background: "#f8fafc" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", padding: "10px 14px 6px", letterSpacing: "1px", textTransform: "uppercase" }}>Group</div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {allGroups.map(g => (
+            <div key={g} onClick={() => { setActiveGroup(g); setActivePlan(null); }}
+              style={{ padding: "7px 14px", fontSize: 12, cursor: "pointer", fontWeight: activeGroup === g ? 700 : 400,
+                color: activeGroup === g ? "#1e40af" : "#475569",
+                background: activeGroup === g ? "#eff6ff" : "transparent",
+                borderLeft: activeGroup === g ? "2px solid #3b82f6" : "2px solid transparent" }}>
+              {g}
+            </div>
+          ))}
+          {addingGroup ? (
+            <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+              <input autoFocus value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addGroup(); if (e.key === "Escape") setAddingGroup(false); }}
+                placeholder="Group name…" style={{ fontSize: 11, padding: "4px 6px", border: "1px solid #93c5fd", borderRadius: 6, width: "100%" }} />
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={addGroup} style={{ flex: 1, fontSize: 10, padding: "3px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}>Add</button>
+                <button onClick={() => setAddingGroup(false)} style={{ flex: 1, fontSize: 10, padding: "3px", background: "#f1f5f9", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 4, cursor: "pointer" }}>✕</button>
+              </div>
+            </div>
+          ) : canEdit && (
+            <div onClick={() => setAddingGroup(true)}
+              style={{ padding: "7px 14px", fontSize: 11, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, borderTop: "1px solid #f1f5f9", marginTop: 4 }}>
+              + Add group
+            </div>
+          )}
         </div>
       </div>
 
-      {editingId && editData && (
-        <div style={LIB_FORM_CARD}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
-            {(plansLibrary || []).find(p => p.id === editingId) ? "Edit Plan" : "New Plan"}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <label style={LIB_LABEL}>Plan Name *<input value={editData.planName} onChange={e => setEditData(p => ({ ...p, planName: e.target.value }))} placeholder="e.g. Medical, Dental…" style={LIB_INPUT} /></label>
-            <label style={LIB_LABEL}>Benefit Category
-              <select value={editData.category} onChange={e => setEditData(p => ({ ...p, category: e.target.value, planType: (PLAN_TYPES_BY_CATEGORY[e.target.value] || ["Other"])[0] }))} style={LIB_INPUT}>
-                {PLAN_BENEFIT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-            <label style={LIB_LABEL}>Plan Type
-              <select value={editData.planType} onChange={e => setEditData(p => ({ ...p, planType: e.target.value }))} style={LIB_INPUT}>
-                {planTypeOptions.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </label>
-          </div>
-          <label style={LIB_LABEL}>Notes<input value={editData.notes || ""} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))} placeholder="Optional notes…" style={LIB_INPUT} /></label>
-          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-            <button onClick={savePlan} style={LIB_BTN_SAVE}>Save Plan</button>
-            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
-        <div style={LIB_EMPTY}>{(plansLibrary || []).length === 0 ? "No plans in the library yet. Click \"+ Add Plan\" to get started." : "No plans match your filter."}</div>
-      ) : (
-        <div style={LIB_TABLE_WRAP}>
-          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1.5fr auto", gap: 12 }}>
-            {["Plan Name", "Category", "Type", "Notes", ""].map((h, i) => <div key={i} style={LIB_TH}>{h}</div>)}
-          </div>
-          {filtered.map((plan, idx) => (
-            <div key={plan.id} style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1.5fr auto", padding: "10px 16px", gap: 12, alignItems: "center", borderBottom: idx < filtered.length - 1 ? "1px solid #f1f5f9" : "none", background: editingId === plan.id ? "#f0f5fa" : "#fff" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>{plan.planName}</div>
-              <div><span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "#dce8f2", color: "#3e5878" }}>{plan.category}</span></div>
-              <div style={{ fontSize: 12, color: "#475569" }}>{plan.planType}</div>
-              <div style={{ fontSize: 12, color: plan.notes ? "#475569" : "#94a3b8", fontStyle: plan.notes ? "normal" : "italic" }}>{plan.notes || "—"}</div>
-              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                <button onClick={() => startEdit(plan)} style={LIB_BTN_EDIT}>Edit</button>
-                <button onClick={() => deletePlan(plan.id)} style={LIB_BTN_DELETE}>✕</button>
+      {/* L3 — Plan names */}
+      <div style={{ width: 155, flexShrink: 0, borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", background: "#fff" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", padding: "10px 14px 6px", letterSpacing: "1px", textTransform: "uppercase" }}>Plan</div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {planNames.map((name, ni) => (
+            <div key={name}
+              style={{ display: "flex", alignItems: "center", padding: "0 6px 0 0",
+                background: activePlan === name ? "#eff6ff" : "transparent",
+                borderLeft: activePlan === name ? "2px solid #3b82f6" : "2px solid transparent" }}>
+              <div onClick={() => setActivePlan(name)}
+                style={{ flex: 1, padding: "7px 10px", fontSize: 12, cursor: "pointer",
+                  fontWeight: activePlan === name ? 700 : 400,
+                  color: activePlan === name ? "#1e40af" : "#475569" }}>
+                {name}
               </div>
+              {canEdit && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                  <button onClick={() => movePlan(name, -1)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "1px 3px", fontSize: 9, lineHeight: 1 }}>▲</button>
+                  <button onClick={() => movePlan(name, 1)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "1px 3px", fontSize: 9, lineHeight: 1 }}>▼</button>
+                </div>
+              )}
             </div>
           ))}
+          {addingPlan ? (
+            <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+              <input autoFocus value={newPlanName} onChange={e => setNewPlanName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addPlan(); if (e.key === "Escape") setAddingPlan(false); }}
+                placeholder="Plan name…" style={{ fontSize: 11, padding: "4px 6px", border: "1px solid #93c5fd", borderRadius: 6, width: "100%" }} />
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={addPlan} style={{ flex: 1, fontSize: 10, padding: "3px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}>Add</button>
+                <button onClick={() => setAddingPlan(false)} style={{ flex: 1, fontSize: 10, padding: "3px", background: "#f1f5f9", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 4, cursor: "pointer" }}>✕</button>
+              </div>
+            </div>
+          ) : canEdit && (
+            <div onClick={() => setAddingPlan(true)}
+              style={{ padding: "7px 14px", fontSize: 11, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, borderTop: "1px solid #f1f5f9", marginTop: 4 }}>
+              + Add plan
+            </div>
+          )}
         </div>
-      )}
-      <div style={LIB_FOOTER}>{(plansLibrary || []).length} plan{(plansLibrary || []).length !== 1 ? "s" : ""} in library{filterCat !== "All" || search ? ` · ${filtered.length} shown` : ""}</div>
+      </div>
+
+      {/* L4 — Variants */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: "#fff" }}>
+        {!activePlan ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 13 }}>
+            Select a plan from the list to manage its variants
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: "10px 16px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>{activePlan}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{activeGroup} · {planVariants.length} variant{planVariants.length !== 1 ? "s" : ""} · drag ↕ to reorder</div>
+              </div>
+              {canEdit && (
+                <button onClick={addVariant}
+                  style={{ padding: "6px 14px", borderRadius: 8, background: "#eff6ff", color: "#1e40af", border: "1px solid #bfdbfe", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add variant
+                </button>
+              )}
+            </div>
+
+            <div style={{ flex: 1, overflowX: "auto", overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "auto" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc" }}>
+                    <th style={{ ...thStyle, width: 28 }}></th>
+                    <th style={{ ...thStyle, minWidth: 140 }}>Variant / Design Type</th>
+                    <th style={{ ...thStyle, minWidth: 100 }}>Tax Code</th>
+                    <th style={{ ...thStyle, minWidth: 70 }}>ERISA</th>
+                    <th style={{ ...thStyle, minWidth: 100 }}>NDT</th>
+                    <th style={{ ...thStyle, minWidth: 180 }}>Notes</th>
+                    <th style={{ ...thStyle, width: 50 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {planVariants.map((v, vi) => (
+                    <tr key={v.id} style={{ borderBottom: "1px solid #f1f5f9", background: vi % 2 ? "#f8fafc" : "#fff" }}>
+                      <td style={{ ...colStyle, textAlign: "center", color: "#cbd5e1" }}>
+                        {canEdit && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                            <button onClick={() => moveVariant(v.id, -1)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "1px 4px", fontSize: 10, lineHeight: 1 }}>▲</button>
+                            <button onClick={() => moveVariant(v.id, 1)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "1px 4px", fontSize: 10, lineHeight: 1 }}>▼</button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={colStyle}>
+                        <select value={v.planType || "Other"} onChange={e => updateVariant(v.id, "planType", e.target.value)}
+                          style={{ fontSize: 11, padding: "3px 4px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%", fontWeight: 600, color: "#0f172a", background: "#fff" }}
+                          disabled={!canEdit}>
+                          {(PLAN_TYPES_BY_CATEGORY[activeGroup] || ["Other"]).map(t => <option key={t}>{t}</option>)}
+                        </select>
+                      </td>
+                      <td style={colStyle}>
+                        <input value={v.taxCode || ""} onChange={e => updateVariant(v.id, "taxCode", e.target.value)}
+                          placeholder="e.g. 125" style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit} />
+                      </td>
+                      <td style={colStyle}>
+                        <select value={v.erisa || ""} onChange={e => updateVariant(v.id, "erisa", e.target.value)}
+                          style={{ fontSize: 11, padding: "3px 4px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit}>
+                          <option value="">—</option>
+                          {ERISA_OPTS.map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td style={colStyle}>
+                        <select value={v.ndt || ""} onChange={e => updateVariant(v.id, "ndt", e.target.value)}
+                          style={{ fontSize: 11, padding: "3px 4px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit}>
+                          <option value="">—</option>
+                          {NDT_OPTS.map(o => <option key={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td style={colStyle}>
+                        <input value={v.notes || ""} onChange={e => updateVariant(v.id, "notes", e.target.value)}
+                          placeholder="Notes…" style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit} />
+                      </td>
+                      <td style={{ ...colStyle, textAlign: "center" }}>
+                        {canEdit && (
+                          <button onClick={() => deleteVariant(v.id)}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "#f87171", fontSize: 14, padding: "2px 6px" }}>✕</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {planVariants.length === 0 && (
+                    <tr><td colSpan="7" style={{ padding: "24px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+                      No variants yet. Click "+ Add variant" to add one.
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ padding: "8px 16px", borderTop: "1px solid #f1f5f9", background: "#f8fafc", fontSize: 11, color: "#94a3b8", flexShrink: 0 }}>
+              Variant order syncs to client benefit records automatically
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
+
 // ── TaskTypesLibraryView ──────────────────────────────────────────────────────
 function TaskTypesLibraryView({ taskTypesLibrary, onSave, currentUser }) {
   const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
@@ -12381,199 +12662,386 @@ function TaskTypesLibraryView({ taskTypesLibrary, onSave, currentUser }) {
 }
 
 // ── TasksLibraryView ─────────────────────────────────────────────────────────
-function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, marketsLibrary, fundingLibrary, currentUser }) {
+function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, currentUser }) {
   const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
-  const [activeCategory, setActiveCategory] = useState("Pre-Renewal");
-  const [editingId, setEditingId] = useState(null);
-  const [editData, setEditData] = useState(null);
 
-  const CHIP = ({ label, active, onClick, color = "#4a7fa5" }) => (
-    <button type="button" onClick={onClick} style={{
-      padding: "3px 10px", borderRadius: 99, fontSize: 11, fontWeight: active ? 700 : 500,
-      border: `1.5px solid ${active ? color : "#e2e8f0"}`,
-      background: active ? "#dce8f0" : "#fff",
-      color: active ? "#2d4a6b" : "#64748b",
-      cursor: "pointer", fontFamily: "inherit", transition: "all .12s",
-    }}>{label}</button>
-  );
+  const FIXED_CATEGORIES = ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing","Transactions"];
+  const customCats = [...new Set((tasks||[]).map(t=>t.category).filter(c=>!FIXED_CATEGORIES.includes(c)))];
+  const allCats = [...FIXED_CATEGORIES, ...customCats];
 
-  const categoryColors = {
-    "Pre-Renewal":     { bg: "#dce8f2", text: "#3e5878", border: "#507c9c" },
-    "Renewal":         { bg: "#d6e4f0", text: "#2d4a6b", border: "#3e5878" },
-    "Open Enrollment": { bg: "#dde7c7", text: "#54652d", border: "#7a8a3d" },
-    "Post-OE":         { bg: "#e8efd5", text: "#3d4f20", border: "#54652d" },
-    "Compliance":      { bg: "#eef0e0", text: "#7a8a3d", border: "#7a8a3d" },
-    "Miscellaneous":   { bg: "#edf2f7", text: "#3e5878", border: "#507c9c" },
-    "Ongoing":         { bg: "#d8e6d0", text: "#54652d", border: "#7a8a3d" },
-    "Transactions":    { bg: "#fce7f3", text: "#9d174d", border: "#f472b6" },
-  };
+  const [activeCategory, setActiveCategory] = useState(FIXED_CATEGORIES[0]);
+  const [activeTaskId,   setActiveTaskId]   = useState(null);
+  const [addingCat,      setAddingCat]      = useState(false);
+  const [newCatName,     setNewCatName]     = useState("");
+  const [addingTask,     setAddingTask]     = useState(false);
+  const [newTaskLabel,   setNewTaskLabel]   = useState("");
 
-  const filtered = (tasks || []).filter(t => t.category === activeCategory).sort((a, b) => (a.order||0) - (b.order||0));
+  const categoryTasks = (tasks||[]).filter(t=>t.category===activeCategory).sort((a,b)=>(a.order||0)-(b.order||0));
+  const activeTask = categoryTasks.find(t=>t.id===activeTaskId) || null;
 
-  function startNew() {
-    const newId = "t_" + Date.now();
-    const maxOrder = filtered.reduce((m, t) => Math.max(m, t.order||0), 0);
-    const blank = { id: newId, label: "", category: activeCategory, markets: ["ACA","Mid-Market","Large"], defaultAssignee: "", dueDateRule: "", order: maxOrder + 10 };
-    setEditingId(newId); setEditData(blank);
+  function addCategory() {
+    if (!newCatName.trim()) return;
+    setActiveCategory(newCatName.trim());
+    setActiveTaskId(null);
+    setNewCatName(""); setAddingCat(false);
   }
-  function startEdit(task) { setEditingId(task.id); setEditData(JSON.parse(JSON.stringify(task))); }
-  function cancelEdit() { setEditingId(null); setEditData(null); }
-  function saveEdit() {
-    if (!editData.label.trim()) return;
-    onSave(prev => {
-      const exists = prev.find(t => t.id === editData.id);
-      const next = exists ? prev.map(t => t.id === editData.id ? editData : t) : [...prev, editData];
-      if (editData.isStandard && onSyncClients) setTimeout(() => onSyncClients(next), 0);
-      return next;
-    });
-    cancelEdit();
+
+  function addTask() {
+    if (!newTaskLabel.trim()) return;
+    const id = "t_" + Date.now();
+    const maxOrder = categoryTasks.reduce((m,t)=>Math.max(m,t.order||0),0);
+    const newTask = { id, label: newTaskLabel.trim(), category: activeCategory,
+      markets: ["ACA","Mid-Market","Large"], funding: [], defaultAssignee: "",
+      dueDateRule: "", notes: "", isStandard: true, order: maxOrder + 10 };
+    onSave(prev => [...(prev||[]), newTask]);
+    setActiveTaskId(id);
+    setNewTaskLabel(""); setAddingTask(false);
   }
-  function deleteTask(id) {
-    if (confirm("Delete this task?")) { onSave(prev => prev.filter(t => t.id !== id)); if (editingId === id) cancelEdit(); }
+
+  function updateTask(field, val) {
+    if (!activeTaskId) return;
+    onSave(prev => prev.map(t => t.id === activeTaskId ? {...t, [field]: val} : t));
   }
-  function moveTask(id, dir) {
-    onSave(prev => {
-      const cat = prev.filter(t => t.category === activeCategory).sort((a,b) => (a.order||0)-(b.order||0));
-      const idx = cat.findIndex(t => t.id === id); const swapIdx = idx + dir;
-      if (swapIdx < 0 || swapIdx >= cat.length) return prev;
-      const a = cat[idx], b = cat[swapIdx], ao = a.order||0, bo = b.order||0;
-      return prev.map(t => { if (t.id === a.id) return {...t, order: bo}; if (t.id === b.id) return {...t, order: ao}; return t; });
-    });
-  }
+
   function toggleArr(field, val) {
-    const cur = editData[field] || [];
-    setEditData(p => ({ ...p, [field]: cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val] }));
+    if (!activeTask) return;
+    const cur = activeTask[field] || [];
+    updateTask(field, cur.includes(val) ? cur.filter(x=>x!==val) : [...cur, val]);
   }
 
-  const ruleLabel = (id) => (dueDateRules || []).find(r => r.id === id)?.label || "Manual";
-  const CARRIERS = ["BCBS","Aetna","UnitedHealthcare","Cigna","Humana","Kaiser","Delta Dental","MetLife","Guardian","Principal","Sun Life","Unum","Lincoln Financial","Hartford","Mutual of Omaha","Symetra","Reliance Standard","Anthem","CVS Health","Other"];
+  function deleteTask(id) {
+    if (!confirm("Delete this task from the library?")) return;
+    onSave(prev => prev.filter(t=>t.id!==id));
+    if (activeTaskId === id) setActiveTaskId(null);
+  }
+
+  function moveTask(id, dir) {
+    const sorted = [...categoryTasks].sort((a,b)=>(a.order||0)-(b.order||0));
+    const idx = sorted.findIndex(t=>t.id===id);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+    const a = sorted[idx], b = sorted[swapIdx];
+    onSave(prev => prev.map(t => {
+      if (t.id === a.id) return {...t, order: b.order||0};
+      if (t.id === b.id) return {...t, order: a.order||0};
+      return t;
+    }));
+  }
+
+  const MARKETS  = ["ACA","Mid-Market","Large"];
+  const FUNDINGS = ["Fully Insured","Level-Funded","Self-Funded"];
+  const ROLES    = ["Account Executive","Account Manager","Account Coordinator","Team Lead","VP","Lead","Salesperson"];
+  const ruleLabel = id => (dueDateRules||[]).find(r=>r.id===id)?.label || "Manual";
+
+  const fieldStyle = { fontSize: 12, padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: 7, width: "100%", fontFamily: "inherit" };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: ".3px", display: "block", marginBottom: 4 };
 
   return (
-    <div>
-      {/* Toolbar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1 }}>
-          {TASK_CATEGORIES_DB.map(cat => {
-            const cc = categoryColors[cat] || categoryColors["Miscellaneous"];
-            const active = activeCategory === cat;
+    <div style={{ display: "flex", height: "calc(100vh - 140px)", gap: 0 }}>
+
+      {/* L2 — Categories */}
+      <div style={{ width: 155, flexShrink: 0, borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", background: "#f8fafc" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", padding: "10px 14px 6px", letterSpacing: "1px", textTransform: "uppercase" }}>Category</div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {allCats.map(cat => {
+            const count = (tasks||[]).filter(t=>t.category===cat).length;
             return (
-              <button key={cat} type="button" onClick={() => { setActiveCategory(cat); cancelEdit(); }} style={{
-                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
-                border: `1.5px solid ${active ? cc.border : "#e2e8f0"}`,
-                background: active ? cc.bg : "#fff", color: active ? cc.text : "#64748b", cursor: "pointer",
-              }}>
-                {cat} <span style={{ fontSize: 10, opacity: 0.7 }}>({(tasks||[]).filter(t => t.category === cat).length})</span>
-              </button>
+              <div key={cat} onClick={() => { setActiveCategory(cat); setActiveTaskId(null); }}
+                style={{ padding: "7px 14px", fontSize: 12, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  fontWeight: activeCategory===cat ? 700 : 400,
+                  color: activeCategory===cat ? "#1e40af" : "#475569",
+                  background: activeCategory===cat ? "#eff6ff" : "transparent",
+                  borderLeft: activeCategory===cat ? "2px solid #3b82f6" : "2px solid transparent" }}>
+                <span>{cat}</span>
+                <span style={{ fontSize: 10, color: "#94a3b8" }}>{count}</span>
+              </div>
             );
           })}
+          {addingCat ? (
+            <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+              <input autoFocus value={newCatName} onChange={e=>setNewCatName(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")addCategory();if(e.key==="Escape")setAddingCat(false);}}
+                placeholder="Category name…" style={{ fontSize: 11, padding: "4px 6px", border: "1px solid #93c5fd", borderRadius: 6, width: "100%" }} />
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={addCategory} style={{ flex:1, fontSize:10, padding:"3px", background:"#3b82f6", color:"#fff", border:"none", borderRadius:4, cursor:"pointer" }}>Add</button>
+                <button onClick={()=>setAddingCat(false)} style={{ flex:1, fontSize:10, padding:"3px", background:"#f1f5f9", color:"#64748b", border:"1px solid #e2e8f0", borderRadius:4, cursor:"pointer" }}>✕</button>
+              </div>
+            </div>
+          ) : canEdit && (
+            <div onClick={()=>setAddingCat(true)}
+              style={{ padding:"7px 14px", fontSize:11, color:"#94a3b8", cursor:"pointer", display:"flex", alignItems:"center", gap:4, borderTop:"1px solid #f1f5f9", marginTop:4 }}>
+              + Add category
+            </div>
+          )}
         </div>
-        {canEdit && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={() => { if (confirm("Reset all tasks to built-in defaults?")) { onSave(DEFAULT_TASKS_DATA); cancelEdit(); } }}
-              style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:700, border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", cursor:"pointer", fontFamily:"inherit" }}>
-              ↺ Reset Defaults
-            </button>
-            <button type="button" onClick={startNew} style={LIB_BTN_PRIMARY}>+ Add Task</button>
+      </div>
+
+      {/* L3 — Task list */}
+      <div style={{ width: 200, flexShrink: 0, borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", background: "#fff" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", padding: "10px 14px 6px", letterSpacing: "1px", textTransform: "uppercase" }}>Tasks</div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {categoryTasks.map((task, ti) => (
+            <div key={task.id}
+              style={{ display: "flex", alignItems: "center",
+                background: activeTaskId===task.id ? "#eff6ff" : "transparent",
+                borderLeft: activeTaskId===task.id ? "2px solid #3b82f6" : "2px solid transparent" }}>
+              <div onClick={()=>setActiveTaskId(task.id)}
+                style={{ flex:1, padding:"7px 10px 7px 12px", fontSize:12, cursor:"pointer",
+                  fontWeight: activeTaskId===task.id ? 700 : 400,
+                  color: activeTaskId===task.id ? "#1e40af" : "#475569" }}>
+                {task.label}
+              </div>
+              {canEdit && (
+                <div style={{ display:"flex", flexDirection:"column", paddingRight:4 }}>
+                  <button onClick={()=>moveTask(task.id,-1)} style={{ background:"none",border:"none",cursor:"pointer",color:"#94a3b8",padding:"1px 3px",fontSize:9,lineHeight:1 }}>▲</button>
+                  <button onClick={()=>moveTask(task.id,1)} style={{ background:"none",border:"none",cursor:"pointer",color:"#94a3b8",padding:"1px 3px",fontSize:9,lineHeight:1 }}>▼</button>
+                </div>
+              )}
+            </div>
+          ))}
+          {categoryTasks.length === 0 && (
+            <div style={{ padding:"12px 14px", fontSize:11, color:"#94a3b8", fontStyle:"italic" }}>No tasks in this category</div>
+          )}
+          {addingTask ? (
+            <div style={{ padding:"6px 10px", display:"flex", flexDirection:"column", gap:4, borderTop:"1px solid #f1f5f9", marginTop:4 }}>
+              <input autoFocus value={newTaskLabel} onChange={e=>setNewTaskLabel(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")addTask();if(e.key==="Escape")setAddingTask(false);}}
+                placeholder="Task label…" style={{ fontSize:11, padding:"4px 6px", border:"1px solid #93c5fd", borderRadius:6, width:"100%" }} />
+              <div style={{ display:"flex", gap:4 }}>
+                <button onClick={addTask} style={{ flex:1, fontSize:10, padding:"3px", background:"#3b82f6", color:"#fff", border:"none", borderRadius:4, cursor:"pointer" }}>Add</button>
+                <button onClick={()=>setAddingTask(false)} style={{ flex:1, fontSize:10, padding:"3px", background:"#f1f5f9", color:"#64748b", border:"1px solid #e2e8f0", borderRadius:4, cursor:"pointer" }}>✕</button>
+              </div>
+            </div>
+          ) : canEdit && (
+            <div onClick={()=>setAddingTask(true)}
+              style={{ padding:"7px 14px", fontSize:11, color:"#94a3b8", cursor:"pointer", display:"flex", alignItems:"center", gap:4, borderTop:"1px solid #f1f5f9", marginTop:4 }}>
+              + Add task
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* L4 — Task detail */}
+      <div style={{ flex:1, padding: activeTask ? "20px 24px" : 0, overflowY:"auto", background:"#fff", minWidth:0 }}>
+        {!activeTask ? (
+          <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:"#94a3b8", fontSize:13 }}>
+            Select a task to view and edit its settings
+          </div>
+        ) : (
+          <div>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:20 }}>
+              <div>
+                <div style={{ fontSize:16, fontWeight:800, color:"#0f172a" }}>{activeTask.label}</div>
+                <div style={{ fontSize:11, color:"#94a3b8", marginTop:2 }}>{activeCategory} task</div>
+              </div>
+              {canEdit && (
+                <button onClick={()=>deleteTask(activeTask.id)}
+                  style={{ padding:"5px 12px", borderRadius:7, border:"1px solid #fca5a5", background:"#fee2e2", color:"#dc2626", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                  Delete task
+                </button>
+              )}
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+              <div>
+                <label style={labelStyle}>Label</label>
+                <input value={activeTask.label} onChange={e=>updateTask("label",e.target.value)}
+                  style={fieldStyle} disabled={!canEdit} />
+              </div>
+              <div>
+                <label style={labelStyle}>Default Assignee Role</label>
+                <select value={activeTask.defaultAssignee||""} onChange={e=>updateTask("defaultAssignee",e.target.value)}
+                  style={fieldStyle} disabled={!canEdit}>
+                  <option value="">— Unassigned —</option>
+                  {ROLES.map(r=><option key={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom:16 }}>
+              <label style={labelStyle}>Due Date Rule</label>
+              <select value={activeTask.dueDateRule||""} onChange={e=>updateTask("dueDateRule",e.target.value)}
+                style={fieldStyle} disabled={!canEdit}>
+                <option value="">Manual (no auto-date)</option>
+                {(dueDateRules||[]).map(r=><option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+              <div>
+                <label style={labelStyle}>Applicable Markets</label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
+                  {MARKETS.map(m=>(
+                    <label key={m} style={{ display:"flex", alignItems:"center", gap:4, fontSize:12, color:"#475569", cursor:canEdit?"pointer":"default" }}>
+                      <input type="checkbox" checked={(activeTask.markets||[]).includes(m)}
+                        onChange={()=>canEdit&&toggleArr("markets",m)} />
+                      {m}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Applicable Funding</label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
+                  {FUNDINGS.map(f=>(
+                    <label key={f} style={{ display:"flex", alignItems:"center", gap:4, fontSize:12, color:"#475569", cursor:canEdit?"pointer":"default" }}>
+                      <input type="checkbox" checked={!(activeTask.funding||[]).length || (activeTask.funding||[]).includes(f)}
+                        onChange={()=>canEdit&&toggleArr("funding",f)} />
+                      {f}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom:16 }}>
+              <label style={labelStyle}>Notes</label>
+              <textarea value={activeTask.notes||""} onChange={e=>updateTask("notes",e.target.value)}
+                rows={2} placeholder="Internal notes about this task…"
+                style={{ ...fieldStyle, resize:"vertical" }} disabled={!canEdit} />
+            </div>
+
+            <div style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+              <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:"#475569", cursor:canEdit?"pointer":"default" }}>
+                <input type="checkbox" checked={!!activeTask.isStandard}
+                  onChange={e=>canEdit&&updateTask("isStandard",e.target.checked)} />
+                Standard task (auto-added to matching client records)
+              </label>
+              {canEdit && (
+                <button onClick={()=>{if(onSyncClients)onSyncClients(tasks);}}
+                  style={{ padding:"5px 12px", borderRadius:7, border:"1px solid #bfdbfe", background:"#eff6ff", color:"#1e40af", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                  Sync to all clients
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
-
-      {/* Edit form */}
-      {editingId && editData && (
-        <div style={LIB_FORM_CARD}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
-            {(tasks||[]).find(t => t.id === editingId) ? "Edit Task" : "New Task"}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <label style={LIB_LABEL}>Task Label *
-              <input value={editData.label} onChange={e => setEditData(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Renewal Download" style={LIB_INPUT} />
-            </label>
-            <label style={LIB_LABEL}>Category
-              <select value={editData.category} onChange={e => setEditData(p => ({ ...p, category: e.target.value }))} style={LIB_INPUT}>
-                {TASK_CATEGORIES_DB.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-            <label style={LIB_LABEL}>Default Assignee Role
-              <select value={editData.defaultAssignee || ""} onChange={e => setEditData(p => ({ ...p, defaultAssignee: e.target.value }))} style={LIB_INPUT}>
-                <option value="">— Unassigned —</option>
-                {TASK_ROLES.map(r => <option key={r}>{r}</option>)}
-              </select>
-            </label>
-          </div>
-          <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 9, background: editData.isStandard ? "#eff6ff" : "#f8fafc", border: `1.5px solid ${editData.isStandard ? "#93c5fd" : "#e2e8f0"}`, marginBottom: 12 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-              <input type="checkbox" checked={!!editData.isStandard} onChange={e => setEditData(p => ({ ...p, isStandard: e.target.checked }))} style={{ accentColor: "#3b82f6", width: 16, height: 16 }} />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: editData.isStandard ? "#1d4ed8" : "#475569" }}>Standard Task</div>
-                <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>Auto-assign to all matching clients</div>
-              </div>
-            </label>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <div>
-              <div style={{ ...LIB_LABEL, marginBottom: 6 }}>Markets</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {[...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(m => <CHIP key={m} label={m} active={(editData.markets||[]).includes(m)} onClick={() => toggleArr("markets", m)} />)}
-              </div>
-            </div>
-            <div>
-              <div style={{ ...LIB_LABEL, marginBottom: 6 }}>Funding</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {[...(fundingLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label).map(f => <CHIP key={f} label={f} active={(editData.funding||[]).includes(f)} onClick={() => toggleArr("funding", f)} color="#f59e0b" />)}
-              </div>
-            </div>
-            <label style={LIB_LABEL}>Due Date Rule
-              <select value={editData.dueDateRule || ""} onChange={e => setEditData(p => ({ ...p, dueDateRule: e.target.value }))} style={LIB_INPUT}>
-                <option value="">None / Manual</option>
-                {(dueDateRules || []).map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-              </select>
-            </label>
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-            <button onClick={saveEdit} style={LIB_BTN_SAVE}>Save Task</button>
-            <button onClick={cancelEdit} style={LIB_BTN_CANCEL}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* Tasks table */}
-      {filtered.length === 0 ? (
-        <div style={LIB_EMPTY}>No {activeCategory} tasks yet. Click "+ Add Task" to get started.</div>
-      ) : (
-        <div style={LIB_TABLE_WRAP}>
-          <div style={{ ...LIB_TABLE_HEADER, display: "grid", gridTemplateColumns: "3fr 130px 160px 180px 90px 110px", gap: 0 }}>
-            {["Task", "Type", "Assignee", "Due Date Rule", "Standard", ""].map((h, i) => (
-              <div key={i} style={{ ...LIB_TH, padding: "0 12px" }}>{h}</div>
-            ))}
-          </div>
-          {filtered.map((task, idx) => {
-            const cc = categoryColors[task.category] || categoryColors["Miscellaneous"];
-            return (
-              <div key={task.id} style={{ display: "grid", gridTemplateColumns: "3fr 130px 160px 180px 90px 110px", gap: 0, padding: "10px 16px", alignItems: "center", borderBottom: idx < filtered.length - 1 ? "1px solid #f1f5f9" : "none", background: editingId === task.id ? "#f0f5fa" : "#fff" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", paddingRight: 12 }}>{task.label}</div>
-                <div style={{ paddingRight: 12 }}><span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: cc.bg, color: cc.text }}>{task.category}</span></div>
-                <div style={{ fontSize: 12, color: "#475569", paddingRight: 12 }}>{task.defaultAssignee || "—"}</div>
-                <div style={{ fontSize: 12, color: "#64748b", paddingRight: 12 }}>{ruleLabel(task.dueDateRule)}</div>
-                <div style={{ paddingRight: 12 }}>{task.isStandard && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#dbeafe", color: "#1d4ed8" }}>Standard</span>}</div>
-                <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
-                  <button onClick={() => moveTask(task.id, -1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move up">↑</button>
-                  <button onClick={() => moveTask(task.id, 1)} style={{ ...LIB_BTN_EDIT, padding: "3px 7px" }} title="Move down">↓</button>
-                  <button onClick={() => startEdit(task)} style={LIB_BTN_EDIT}>Edit</button>
-                  <button onClick={() => deleteTask(task.id)} style={LIB_BTN_DELETE}>✕</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div style={LIB_FOOTER}>{filtered.length} task{filtered.length !== 1 ? "s" : ""} in {activeCategory}</div>
     </div>
   );
 }
 
-// ── AnchorEventsLibraryView ───────────────────────────────────────────────────
-// Default anchor events seeded from DDR_ANCHORS constant
-const DEFAULT_ANCHOR_EVENTS = DDR_ANCHORS.map(a => ({ ...a, builtin: true }));
+function DueDateRulesView({ dueDateRules, onSave, allAnchors, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = useState(null);
+  const [editData,  setEditData]  = useState(null);
+
+  function startNew() {
+    const id = "ddr_" + Date.now();
+    setEditingId(id);
+    setEditData({ id, label:"", anchor:"", offset:0, unit:"days", direction:"before", notes:"", order: (dueDateRules||[]).length });
+  }
+  function startEdit(rule) { setEditingId(rule.id); setEditData({...rule}); }
+  function cancelEdit() { setEditingId(null); setEditData(null); }
+  function saveRule() {
+    if (!editData.label.trim()) return;
+    onSave(prev => {
+      const exists = (prev||[]).find(r=>r.id===editData.id);
+      return exists ? prev.map(r=>r.id===editData.id?editData:r) : [...(prev||[]),editData];
+    });
+    cancelEdit();
+  }
+  function deleteRule(id) {
+    if (!confirm("Delete this due date rule?")) return;
+    onSave(prev => prev.filter(r=>r.id!==id));
+  }
+
+  const fieldStyle = { fontSize:12, padding:"5px 8px", border:"1px solid #e2e8f0", borderRadius:7, fontFamily:"inherit" };
+  const labelStyle = { fontSize:11, fontWeight:700, color:"#64748b", letterSpacing:".3px", display:"block", marginBottom:4 };
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#0f172a" }}>Due Date Rules</div>
+          <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>Auto-compute task due dates based on anchor events (e.g. renewal date)</div>
+        </div>
+        {canEdit && (
+          <button onClick={startNew}
+            style={{ padding:"7px 16px", borderRadius:8, background:"#eff6ff", color:"#1e40af", border:"1px solid #bfdbfe", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+            + Add Rule
+          </button>
+        )}
+      </div>
+
+      {editingId && editData && (
+        <div style={{ background:"#f0f7ff", border:"1.5px solid #bfdbfe", borderRadius:10, padding:"16px 20px", marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:800, color:"#1e40af", marginBottom:14 }}>
+            {(dueDateRules||[]).find(r=>r.id===editingId) ? "Edit Rule" : "New Rule"}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 2fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <label style={labelStyle}>Rule Name *
+              <input value={editData.label} onChange={e=>setEditData(p=>({...p,label:e.target.value}))}
+                placeholder="e.g. 30 days before renewal" style={{...fieldStyle,width:"100%"}} />
+            </label>
+            <label style={labelStyle}>Anchor Event
+              <select value={editData.anchor||""} onChange={e=>setEditData(p=>({...p,anchor:e.target.value}))} style={{...fieldStyle,width:"100%"}}>
+                <option value="">— Select anchor —</option>
+                {(allAnchors||["Renewal Date","OE Start","OE End","Effective Date"]).map(a=><option key={a}>{a}</option>)}
+              </select>
+            </label>
+            <label style={labelStyle}>Offset
+              <input type="number" value={editData.offset||0} onChange={e=>setEditData(p=>({...p,offset:parseInt(e.target.value)||0}))}
+                style={{...fieldStyle,width:"100%"}} />
+            </label>
+            <label style={labelStyle}>Unit
+              <select value={editData.unit||"days"} onChange={e=>setEditData(p=>({...p,unit:e.target.value}))} style={{...fieldStyle,width:"100%"}}>
+                <option value="days">Days</option>
+                <option value="weeks">Weeks</option>
+                <option value="months">Months</option>
+              </select>
+            </label>
+            <label style={labelStyle}>Direction
+              <select value={editData.direction||"before"} onChange={e=>setEditData(p=>({...p,direction:e.target.value}))} style={{...fieldStyle,width:"100%"}}>
+                <option value="before">Before</option>
+                <option value="after">After</option>
+              </select>
+            </label>
+          </div>
+          <label style={{...labelStyle,marginBottom:6}}>Notes
+            <input value={editData.notes||""} onChange={e=>setEditData(p=>({...p,notes:e.target.value}))}
+              placeholder="Optional description…" style={{...fieldStyle,width:"100%"}} />
+          </label>
+          <div style={{ display:"flex", gap:8, marginTop:14 }}>
+            <button onClick={saveRule} style={{ padding:"6px 16px", borderRadius:7, background:"#3b82f6", color:"#fff", border:"none", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Save</button>
+            <button onClick={cancelEdit} style={{ padding:"6px 16px", borderRadius:7, background:"#f1f5f9", color:"#64748b", border:"1px solid #e2e8f0", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {(dueDateRules||[]).length === 0 ? (
+        <div style={{ padding:"32px", textAlign:"center", color:"#94a3b8", fontSize:13 }}>
+          No rules yet. Click "+ Add Rule" to create your first due date rule.
+        </div>
+      ) : (
+        <div style={{ border:"1px solid #e2e8f0", borderRadius:10, overflow:"hidden" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 2fr 1.5fr 1.5fr auto", gap:0,
+            padding:"8px 16px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0",
+            fontSize:10, fontWeight:700, color:"#94a3b8", letterSpacing:".5px", textTransform:"uppercase" }}>
+            {["Rule Name","Anchor Event","Offset","Notes",""].map((h,i)=><div key={i}>{h}</div>)}
+          </div>
+          {(dueDateRules||[]).sort((a,b)=>(a.order||0)-(b.order||0)).map((rule,ri)=>(
+            <div key={rule.id} style={{ display:"grid", gridTemplateColumns:"2fr 2fr 1.5fr 1.5fr auto", gap:0,
+              padding:"10px 16px", alignItems:"center", borderBottom:ri<(dueDateRules||[]).length-1?"1px solid #f1f5f9":"none",
+              background: editingId===rule.id ? "#f0f7ff" : ri%2?"#f8fafc":"#fff" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>{rule.label}</div>
+              <div style={{ fontSize:12, color:"#475569" }}>{rule.anchor||"—"}</div>
+              <div style={{ fontSize:12, color:"#475569" }}>{rule.offset||0} {rule.unit||"days"} {rule.direction||"before"}</div>
+              <div style={{ fontSize:11, color:rule.notes?"#64748b":"#94a3b8", fontStyle:rule.notes?"normal":"italic" }}>{rule.notes||"—"}</div>
+              <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}>
+                {canEdit && <>
+                  <button onClick={()=>startEdit(rule)} style={{ padding:"3px 10px", borderRadius:6, border:"1px solid #e2e8f0", background:"#fff", color:"#475569", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>Edit</button>
+                  <button onClick={()=>deleteRule(rule.id)} style={{ padding:"3px 8px", borderRadius:6, border:"1px solid #fca5a5", background:"#fee2e2", color:"#dc2626", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>✕</button>
+                </>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AnchorEventsLibraryView({ anchorEventsLibrary, onSave, currentUser }) {
   const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
@@ -13891,7 +14359,7 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
       );
       push(autoLabel, "Renewal", t, "renewalTasksAuto", key);
     });
-    (c.renewalTasks || []).forEach((t, i) => push(t.title || "Unnamed", "Renewal", t, "renewalTasks", null, i));
+    (c.renewalTasks || []).forEach((t, i) => push(t.title || "Unnamed", "Renewal", t, "renewalTasks", t.id || t._standardTemplateId || String(i), i));
   }
   // Open Enrollment
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Open Enrollment") {
@@ -13919,7 +14387,7 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
       { id: "lineup_updated",       label: "Lineup Updated?" },
       { id: "oe_wrapup_email",      label: "OE Wrap-Up Email Sent?" },
     ].forEach(def => push(def.label, "Post-OE", (c.postOEFixed || {})[def.id], "postOEFixed", def.id));
-    (c.postOETasks || []).forEach((t, i) => push(t.title || "Unnamed", "Post-OE", t, "postOETasks", null, i));
+    (c.postOETasks || []).forEach((t, i) => push(t.title || "Unnamed", "Post-OE", t, "postOETasks", t.id || t._standardTemplateId || String(i), i));
   }
   // Compliance
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Compliance") {
@@ -13930,7 +14398,7 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
   }
   // Miscellaneous
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Miscellaneous" || categoryFilter === "Miscellaneous") {
-    (c.miscTasks || []).forEach((t, i) => push(t.title || "Unnamed", "Miscellaneous", t, "miscTasks", null, i));
+    (c.miscTasks || []).forEach((t, i) => push(t.title || "Unnamed", "Miscellaneous", t, "miscTasks", t.id || String(i), i));
   }
   // Transactions
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Transactions") {
@@ -13998,7 +14466,14 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
       updated.openEnrollment = { ...updated.openEnrollment, tasks: { ...(updated.openEnrollment?.tasks || {}), [t.taskId]: { ...base, ...fields } } };
     } else if (t.group === "postOETasks" || t.group === "miscTasks" || t.group === "renewalTasks") {
       const arr = [...(updated[t.group] || [])];
-      arr[t.arrayIndex] = { ...arr[t.arrayIndex], ...fields };
+      // Find by stable ID first, fall back to arrayIndex
+      const idx = t.taskId
+        ? arr.findIndex(item => item.id === t.taskId || item._standardTemplateId === t.taskId)
+        : -1;
+      const finalIdx = idx >= 0 ? idx : t.arrayIndex;
+      if (finalIdx >= 0 && finalIdx < arr.length) {
+        arr[finalIdx] = { ...arr[finalIdx], ...fields };
+      }
       updated[t.group] = arr;
     } else if (t.group === "renewalMeeting") {
       updated.renewalMeeting = { ...(updated.renewalMeeting || {}), ...fields };
@@ -14024,7 +14499,15 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
       <div onClick={e => { e.stopPropagation(); setExpandedTask(taskOpen ? null : taskKey); }}
         style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", userSelect: "none" }}>
         <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: pastDue ? "#f43f5e" : dot }} />
-        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#0f172a" }}>{t.label}</span>
+        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#0f172a", display: "flex", alignItems: "center", gap: 5 }}>
+          {t.label}
+          {(t.notes || (t.followUps||[]).length > 0) && (
+            <span title={`${t.notes ? "Has notes" : ""}${t.notes && (t.followUps||[]).length ? " · " : ""}${(t.followUps||[]).length ? `${(t.followUps||[]).length} follow-up${(t.followUps||[]).length > 1 ? "s" : ""}` : ""}`}
+              style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "#fef3c7", color: "#92400e", fontWeight: 700, flexShrink: 0 }}>
+              📝{(t.followUps||[]).length > 0 ? ` ${(t.followUps||[]).length}` : ""}
+            </span>
+          )}
+        </span>
         {t.assignee && !taskOpen && (
           <span style={{ fontSize: 10, fontWeight: 700, color: "#3e5878", background: "#e8f0f7", borderRadius: 99, padding: "1px 7px" }}>
             {t.assignee}
@@ -14055,8 +14538,8 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 
       {/* Expanded edit panel */}
       {taskOpen && (
-        <div onClick={e => e.stopPropagation()}
-          style={{ padding: "8px 12px 12px", borderTop: "1px solid #dbeafe",
+        <div onClick={e => e.stopPropagation()}>
+          <div style={{ padding: "8px 12px 12px", borderTop: "1px solid #dbeafe",
             display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Assignee
@@ -14090,6 +14573,20 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
               placeholder="Notes…"
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
           </label>
+          </div>
+          {(t.followUps||[]).length > 0 && (
+            <div style={{ padding: "6px 12px 10px", borderTop: "1px solid #f1f5f9" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 6 }}>Follow-ups</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {(t.followUps||[]).map((fu, fi) => (
+                  <div key={fu.id || fi} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: "#fffbeb", borderRadius: 6, border: "1px solid #fde68a" }}>
+                    <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600, flexShrink: 0 }}>📅 {formatDate(fu.date)}</span>
+                    <span style={{ fontSize: 11, color: "#475569", flex: 1 }}>{fu.note || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -14098,7 +14595,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, marketsLibrary, fundingLibrary, onBack }) {
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, onClearDashNav, marketsLibrary, fundingLibrary, onBack }) {
   const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const isRestricted = currentUser && !isLead && (userTeams||[]).length > 0;
   const [expandedTask, setExpandedTask] = useState(null);
@@ -14115,9 +14612,12 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const [ovAssignee, setOvAssignee] = useState(dashNav?.assignee || (!isLead && currentUser?.name ? currentUser.name : "All"));
   const [ovStatus,   setOvStatus]   = useState("All");
   const [ovSort,     setOvSort]     = useState("renewal");
-  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "90");
+  const [ovWindow,   setOvWindow]   = useState(dashNav?.window || "all");
   const [expanded,   setExpanded]   = useState({});
   function toggleExpand(id) { setExpanded(p => ({ ...p, [id]: !p[id] })); }
+
+  // Clear dashNav after reading it so stale nav state doesn't persist on remount
+  useEffect(() => { if (onClearDashNav) onClearDashNav(); }, []);
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
 
@@ -14236,7 +14736,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
   const activeFilters = [ovTeam,ovMarket,ovCarrier,ovSitus,ovFunding,ovCat,ovStatus]
     .filter(v => v !== "All").length
     + (ovAssignee !== defaultAssignee ? 1 : 0)
-    + (ovWindow !== "90" ? 1 : 0);
+    + (ovWindow !== "all" ? 1 : 0);
 
   const windowOptions = [
     { v: "all",              label: "All Clients" },
@@ -14266,7 +14766,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             {activeFilters > 0 && (
               <button onClick={() => {
                 setOvTeam(isRestricted ? userTeamId : "All"); setOvMarket("All"); setOvCarrier("All"); setOvSitus("All");
-                setOvFunding("All"); setOvCat("All"); setOvAssignee(!isLead && currentUser?.name ? currentUser.name : "All"); setOvStatus("All"); setOvWindow("90");
+                setOvFunding("All"); setOvCat("All"); setOvAssignee(!isLead && currentUser?.name ? currentUser.name : "All"); setOvStatus("All"); setOvWindow("all");
               }} style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: "#ef4444",
                 background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
                 Clear {activeFilters} filter{activeFilters > 1 ? "s" : ""}
@@ -15456,7 +15956,7 @@ function RenewalsKanban({ clients, teams, currentUser, userTeams, onOpenClient, 
 
 // ── Client Profile (Full Page) ────────────────────────────────────────────────
 
-function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal, initialSection }) {
+function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal, initialSection, plansLibrary }) {
   const [activeSection, setActiveSection] = React.useState(initialSection || "overview");
 
   const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
@@ -15479,7 +15979,29 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
 
   // Sync when client prop changes externally
   React.useEffect(() => {
-    setData(JSON.parse(JSON.stringify(client)));
+    const fresh = JSON.parse(JSON.stringify(client));
+    // Silent task re-sync: reorder tasks to match current library order
+    if (tasksDb?.length) {
+      const reorder = (arr, category) => {
+        if (!arr?.length) return arr;
+        const libTasks = tasksDb.filter(t => t.category === category && t.isStandard)
+          .sort((a,b) => (a.order||0)-(b.order||0));
+        if (!libTasks.length) return arr;
+        const standard = libTasks.map(lt => arr.find(t =>
+          t._standardTemplateId === lt.id ||
+          (!t._standardTemplateId && (t.title === lt.label || t.label === lt.label))
+        )).filter(Boolean);
+        const manual = arr.filter(t => !libTasks.some(lt =>
+          t._standardTemplateId === lt.id ||
+          (!t._standardTemplateId && (t.title === lt.label || t.label === lt.label))
+        ));
+        return [...standard, ...manual];
+      };
+      fresh.renewalTasks = reorder(fresh.renewalTasks, "Renewal");
+      fresh.postOETasks  = reorder(fresh.postOETasks,  "Post-OE");
+      fresh.miscTasks    = reorder(fresh.miscTasks,    "Miscellaneous");
+    }
+    setData(fresh);
     setIsDirty(false);
   }, [client.id]);
 
@@ -15695,6 +16217,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             data={data} set={set} setData={setData}
             carriersData={carriersData} currentUser={currentUser}
             applyPreRenewalRules={applyPreRenewalRules}
+            plansLibrary={plansLibrary}
           />
         )}
 
@@ -15707,6 +16230,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -15719,6 +16243,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -15731,6 +16256,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -15743,6 +16269,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -15755,6 +16282,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -15767,6 +16295,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -15779,6 +16308,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            markDirty={() => setIsDirty(true)}
           />
         )}
 
@@ -16164,7 +16694,7 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
 // Full editor with BENEFIT_GROUPS sub-navigation in the left sidebar
 
 function ClientBenefits({ data, set, setData, carriersData, currentUser,
-  setBenefitCarrier, otherCarrierText, setOtherCarrierText, applyPreRenewalRules }) {
+  setBenefitCarrier, otherCarrierText, setOtherCarrierText, applyPreRenewalRules, plansLibrary }) {
 
   const [activeGroup, setActiveGroup] = React.useState("core");
   const [activeBenefit, setActiveBenefit] = React.useState(null);
@@ -16402,6 +16932,7 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
                 updatePlan={updatePlan}
                 setPlans={setPlans}
                 groupColor={currentGroup.color}
+                plansLibrary={plansLibrary}
                 onRemove={() => {
                   toggleBenefit(selectedBenefit.id, false);
                   setActiveBenefit(activeBenefitsInGroup.find(b => b.id !== selectedBenefit.id)?.id || null);
@@ -16419,7 +16950,8 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
 // ── Individual Benefit Line Editor ────────────────────────────────────────────
 
 function BenefitLineEditor({ benefit, data, set, setData, carriersData,
-  carriersFor, updatePlan, setPlans, groupColor, onRemove, applyPreRenewalRules }) {
+  carriersFor, updatePlan, setPlans, groupColor, onRemove, applyPreRenewalRules,
+  plansLibrary }) {
 
   const catId = benefit.id;
   const currentCarrier = (data.benefitCarriers || {})[catId] || "";
@@ -16428,6 +16960,102 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
   const notes          = (data.benefitNotes || {})[catId] || "";
   const commission     = (data.benefitCommissions || {})[catId] || {};
   const plans          = (data.benefitPlans || {})[catId] || [];
+
+  // ── Funding / Billing / Contribution / Regulatory per-benefit fields ──────
+  const benefitFunding      = (data.benefitFunding      || {})[catId] || "";
+  const benefitBilling      = (data.benefitBilling      || {})[catId] || "";
+  const benefitContribution = (data.benefitContribution || {})[catId] || "";
+  const benefitTaxCode      = (data.benefitTaxCode      || {})[catId] || "";
+  const benefitErisa        = (data.benefitErisa        || {})[catId] || "";
+  const benefitNdt          = (data.benefitNdt          || {})[catId] || "";
+  const isGrandfathered     = !!(data.benefitGrandfathered || {})[catId];
+
+  function setField(field, val) {
+    setData(p => ({ ...p, [field]: { ...(p[field]||{}), [catId]: val } }));
+  }
+
+  // ── Billing method constraints ──────────────────────────────────────────
+  const marketSize   = data.marketSize || "";
+  const fundingForConstraint = benefitFunding || data.fundingMethod || "";
+  const isACA        = marketSize === "ACA";
+  const isLF_SF      = ["Level-Funded","Self-Funded"].includes(fundingForConstraint);
+  const isGFACA      = marketSize === "Mid-Market" && isGrandfathered;
+
+  let allowedBillingMethods;
+  if (isLF_SF) {
+    allowedBillingMethods = ["Composite"];
+  } else if (isACA) {
+    allowedBillingMethods = ["Composite","Age-banded"];
+  } else {
+    allowedBillingMethods = ["Composite","Age-banded","N/A"];
+  }
+  const billingLocked = isLF_SF || isGFACA;
+
+  // CMS age brackets for age-banded billing
+  const CMS_AGE_BRACKETS = [
+    "≤14","15","16","17","18","19","20","21-24","25","26","27","28","29",
+    "30","31","32","33","34","35","36","37","38","39","40","41","42","43",
+    "44","45","46","47","48","49","50","51","52","53","54","55","56","57",
+    "58","59","60","61","62","63","64","65+"
+  ];
+  const ageBandedRates = (data.benefitAgeBandedRates || {})[catId] || {};
+  const isAgeBandedBilling = benefitBilling === "Age-banded";
+
+  // ── Auto-populate Tax Code / ERISA / NDT from Plans library ──────────────
+  React.useEffect(() => {
+    if (!plansLibrary?.length) return;
+    if (benefitTaxCode && benefitErisa && benefitNdt) return; // already set
+    const currentPlanType = plans[0]?.planType || "";
+    const planName = benefit.label || "";
+    // Map benefit id to plan name for lookup
+    const BENEFIT_TO_PLANNAME = {
+      medical: "Medical", dental: "Dental", vision: "Vision",
+      basic_life: "Basic Life/AD&D", vol_life: "Voluntary Life/AD&D",
+      std: "STD", ltd: "LTD", idi: "IDI",
+      worksite_ci: "Critical Illness", worksite_cancer: "Cancer",
+      worksite_accident: "Personal Accident", worksite_hospital: "Hospital Indemnity",
+      eap: "EAP", fsa_health: "Health FSA", fsa_limited: "Limited Purpose FSA",
+      fsa_dependent: "Dependent Care FSA", fsa_transport: "Transportation FSA",
+      parking: "Parking", commuter: "Commuter", hsa_funding: "HSA Funding", hra: "HRA",
+      identity_theft: "Identity Theft", prepaid_legal: "Prepaid Legal", pet_insurance: "Pet Insurance",
+    };
+    const targetPlanName = BENEFIT_TO_PLANNAME[catId] || planName;
+    const match = plansLibrary.find(p =>
+      p.planName === targetPlanName &&
+      (!currentPlanType || p.planType === currentPlanType)
+    ) || plansLibrary.find(p => p.planName === targetPlanName);
+    if (match) {
+      if (!benefitTaxCode && match.taxCode)  setField("benefitTaxCode", match.taxCode);
+      if (!benefitErisa   && match.erisa)    setField("benefitErisa",   match.erisa);
+      if (!benefitNdt     && match.ndt)      setField("benefitNdt",     match.ndt);
+    }
+  }, [catId, plans[0]?.planType, plansLibrary]);
+
+  // When funding changes, enforce billing constraints
+  function handleFundingChange(val) {
+    setField("benefitFunding", val);
+    const newIsLF_SF = ["Level-Funded","Self-Funded"].includes(val);
+    if (newIsLF_SF && benefitBilling !== "Composite") {
+      setField("benefitBilling", "Composite");
+    }
+  }
+
+  // When billing switches to/from age-banded, warn user
+  function handleBillingChange(val) {
+    if (val === "Age-banded" && benefitBilling !== "Age-banded") {
+      if (plans.length > 0 && plans.some(p => Object.values(p.rates||{}).some(r => r))) {
+        if (!confirm("Switching to Age-banded billing will replace composite rates with per-age EE rates. Continue?")) return;
+      }
+    }
+    if (val !== "Age-banded" && benefitBilling === "Age-banded") {
+      if (Object.keys(ageBandedRates).length > 0) {
+        if (!confirm("Switching away from Age-banded billing will clear the age-banded rate grid. Continue?")) return;
+        setData(p => ({ ...p, benefitAgeBandedRates: { ...(p.benefitAgeBandedRates||{}), [catId]: {} } }));
+      }
+    }
+    setField("benefitBilling", val);
+  }
+
   const [otherText, setOtherText] = React.useState("");
 
   const carrierOptions = carriersFor(catId);
@@ -16474,6 +17102,36 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
       return s + activeTiers.reduce((ss,t) => ss + (parseInt(enr[t.k])||0), 0);
     }, 0);
   }, [plans, tierMode]);
+
+  // Auto-populate commission type/rate from carrier rules if not already set
+  React.useEffect(() => {
+    if (!currentCarrier || !carriersData?.length) return;
+    const existing = (data.benefitCommissions || {})[catId];
+    if (existing?.type && existing?.amount) return; // already set
+    const BENEFIT_MAP = {
+      medical:"Medical", dental:"Dental", vision:"Vision",
+      basic_life:"Basic Life/AD&D", vol_life:"Vol Life",
+      std:"STD", ltd:"LTD", worksite_ci:"Worksite",
+      worksite_cancer:"Worksite", worksite_accident:"Worksite",
+      worksite_hospital:"Worksite", eap:"EAP",
+      fsa_health:"FSA", fsa_limited:"FSA", hsa_funding:"HSA", hra:"HRA",
+    };
+    const carrierObj = carriersData.find(c => c.name === currentCarrier);
+    if (!carrierObj?.commissionRules?.length) return;
+    const benefitName = BENEFIT_MAP[catId] || catId;
+    const match = carrierObj.commissionRules.find(r => r.benefit === benefitName && r.segment === (data.marketSize||"All"))
+      || carrierObj.commissionRules.find(r => r.benefit === benefitName)
+      || carrierObj.commissionRules.find(r => r.benefit === "All");
+    if (match?.amount) {
+      setData(p => ({
+        ...p,
+        benefitCommissions: {
+          ...(p.benefitCommissions || {}),
+          [catId]: { type: match.type, amount: match.amount },
+        },
+      }));
+    }
+  }, [currentCarrier, catId, carriersData]);
 
   function setCarrier(val) {
     setData(p => {
@@ -16568,17 +17226,111 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
             </label>
           </div>
 
-          {/* Row 2: Funding Method (medical), # Enrolled (auto-sum), Commission */}
-          <div style={{ display: "grid", gridTemplateColumns: isMedical ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12 }}>
-            {isMedical && (
+          {/* Row 2: Funding, Billing, Contribution, Grandfathered */}
+          {(isMedical || isDental || isVision) && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12, marginBottom: 12 }}>
               <label style={{ ...labelStyle }}>
                 Funding Method
-                <select value={data.fundingMethod || ""} onChange={e => set("fundingMethod", e.target.value)}
+                <select value={benefitFunding || data.fundingMethod || ""} onChange={e => handleFundingChange(e.target.value)}
                   style={{ ...inputStyle, marginTop: 3 }}>
-                  {["Fully Insured","Level-Funded","Self-Funded","COBRA Only"].map(f => <option key={f}>{f}</option>)}
+                  <option value="">— Select —</option>
+                  {["Fully Insured","Level-Funded","Self-Funded","State-Funded","COBRA Only"].map(f => <option key={f}>{f}</option>)}
                 </select>
               </label>
-            )}
+              <label style={{ ...labelStyle }}>
+                Billing Method
+                {billingLocked ? (
+                  <div style={{ ...inputStyle, marginTop: 3, background: "#f1f5f9", color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
+                    {benefitBilling || (isLF_SF ? "Composite" : "—")}
+                    <span style={{ fontSize: 9, color: "#94a3b8", marginLeft: 4 }}>🔒 locked</span>
+                  </div>
+                ) : (
+                  <select value={benefitBilling} onChange={e => handleBillingChange(e.target.value)}
+                    style={{ ...inputStyle, marginTop: 3 }}>
+                    <option value="">— Select —</option>
+                    {allowedBillingMethods.map(b => <option key={b}>{b}</option>)}
+                  </select>
+                )}
+              </label>
+              <label style={{ ...labelStyle }}>
+                Contribution Method
+                <select value={benefitContribution} onChange={e => setField("benefitContribution", e.target.value)}
+                  style={{ ...inputStyle, marginTop: 3 }}>
+                  <option value="">— Select —</option>
+                  {["Employer-Paid","Contributory","Voluntary","Split","N/A"].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </label>
+              {isACA && (
+                <label style={{ ...labelStyle, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Grandfathered</span>
+                  <input type="checkbox" checked={isGrandfathered}
+                    onChange={e => {
+                      setData(p => ({ ...p, benefitGrandfathered: { ...(p.benefitGrandfathered||{}), [catId]: e.target.checked } }));
+                      if (!e.target.checked) {
+                        // unlock billing
+                      }
+                    }} />
+                </label>
+              )}
+            </div>
+          )}
+
+          {/* Age-banded rate grid — EE only, CMS brackets */}
+          {isAgeBandedBilling && (
+            <div style={{ marginBottom: 12, border: "1px solid #bfdbfe", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ padding: "7px 12px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe",
+                fontSize: 11, fontWeight: 700, color: "#1e40af", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                Age-banded Rates (EE Only) — CMS Brackets
+                <span style={{ fontSize: 10, fontWeight: 400, color: "#64748b" }}>Enter monthly premium per age bracket</span>
+              </div>
+              <div style={{ padding: "8px 12px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 6 }}>
+                {CMS_AGE_BRACKETS.map(bracket => (
+                  <label key={bracket} style={{ fontSize: 10, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 2 }}>
+                    {bracket}
+                    <input type="number" step="0.01" min="0"
+                      value={ageBandedRates[bracket] || ""}
+                      onChange={e => setData(p => ({
+                        ...p, benefitAgeBandedRates: {
+                          ...(p.benefitAgeBandedRates||{}),
+                          [catId]: { ...(p.benefitAgeBandedRates?.[catId]||{}), [bracket]: e.target.value }
+                        }
+                      }))}
+                      placeholder="0.00"
+                      style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 5, width: "100%" }} />
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Row 3: Tax Code, ERISA, NDT */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <label style={{ ...labelStyle }}>
+              Tax Code
+              <input value={benefitTaxCode} onChange={e => setField("benefitTaxCode", e.target.value)}
+                placeholder="e.g. 125, 223, 79…"
+                style={{ ...inputStyle, marginTop: 3 }} />
+            </label>
+            <label style={{ ...labelStyle }}>
+              ERISA
+              <select value={benefitErisa} onChange={e => setField("benefitErisa", e.target.value)}
+                style={{ ...inputStyle, marginTop: 3 }}>
+                <option value="">— Select —</option>
+                {["Yes","No","Governmental","Church Plan","N/A"].map(o => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            <label style={{ ...labelStyle }}>
+              NDT Applicability
+              <select value={benefitNdt} onChange={e => setField("benefitNdt", e.target.value)}
+                style={{ ...inputStyle, marginTop: 3 }}>
+                <option value="">— Select —</option>
+                {["N/A","Required","ACP/ADP","415 Limit","Top-Heavy","Other"].map(o => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {/* Row 4 (was Row 2): # Enrolled and Commission */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label style={{ ...labelStyle }}>
               # Enrolled
               {enrolledFromPlans !== null ? (
@@ -16947,7 +17699,10 @@ function BenefitEmployeeClasses({ data, setData }) {
 // All state (data, set, setTask, etc.) is passed as props from ClientProfile.
 
 function ClientModalSection({ section, data, set, setData, setTask, getTask,
-  applyDDR, setWithDDR, oe, setOE, tasksDb, dueDateRules, carriersData, currentUser, teams }) {
+  applyDDR, setWithDDR, oe, setOE, tasksDb, dueDateRules, carriersData, currentUser, teams, markDirty }) {
+
+  // markDirty triggers ClientProfile's auto-save when setData is called directly
+  const dirty = markDirty || (() => {});
 
   // Resolve team members for assignee dropdowns
   const teamObj = teams?.find(t => t.id === data.team);
@@ -17084,7 +17839,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                   <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>
                     {taskDef.label}
                   </div>
-                  <select value={task.status}
+                  <select value={task.status || "Not Started"}
                     onChange={e => setTask("preRenewal", taskDef.id, "status", e.target.value, taskDef.label, "Pre-Renewal")}
                     style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
                       background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
@@ -17150,7 +17905,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                   gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8,
                   background: isDone ? "#f0fdf4" : "#f8fafc" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>{taskDef.label}</div>
-                  <select value={task.status}
+                  <select value={task.status || "Not Started"}
                     onChange={e => setTask("compliance", taskDef.id, "status", e.target.value, taskDef.label, "Compliance")}
                     style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
                       background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
@@ -17191,7 +17946,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
         const t = data.renewalMeeting || {};
         return { key: "renewalMeeting", label: tmpl.label,
           status: t.status, assignee: t.assignee, dueDate: t.dueDate, completedDate: t.completedDate,
-          onChange: (field, val) => setData(p => ({ ...p, renewalMeeting: { ...(p.renewalMeeting||{}), [field]: val } })) };
+          onChange: (field, val) => { dirty(); setData(p => ({ ...p, renewalMeeting: { ...(p.renewalMeeting||{}), [field]: val } })); } };
       }
       const arrIdx = (data.renewalTasks || []).findIndex(t => 
         t._standardTemplateId === tmpl.id ||
@@ -17201,6 +17956,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
         const t = data.renewalTasks[arrIdx];
         return { key: t.id || tmpl.id, label: tmpl.label,
           status: t.status, assignee: t.assignee, dueDate: t.dueDate, completedDate: t.completedDate,
+          notes: t.notes || "", followUps: t.followUps || [],
           onChange: (field, val) => { const arr = [...(data.renewalTasks||[])]; arr[arrIdx]={...arr[arrIdx],[field]:val}; set("renewalTasks",arr); } };
       }
       return null;
@@ -17224,7 +17980,8 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
     const autoEntries = Object.entries(data.renewalTasksAuto || {}).map(([key, t]) => ({
       key, label: carrierTaskLabel(key), isCarrier: true,
       status: t?.status, assignee: t?.assignee, dueDate: t?.dueDate, completedDate: t?.completedDate,
-      onChange: (field, val) => setData(p => ({ ...p, renewalTasksAuto: { ...p.renewalTasksAuto, [key]: { ...(p.renewalTasksAuto?.[key]||{}), [field]: val } } }))
+      notes: t?.notes || "", followUps: t?.followUps || [],
+      onChange: (field, val) => { dirty(); setData(p => ({ ...p, renewalTasksAuto: { ...p.renewalTasksAuto, [key]: { ...(p.renewalTasksAuto?.[key]||{}), [field]: val } } })); }
     }));
 
     const allTasks = [...flatTasks, ...autoEntries];
@@ -17233,30 +17990,54 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
 
     function RenewalTaskRow({ task }) {
       const isDone = task.status === "Complete" || task.status === "N/A";
+      const [expanded, setExpanded] = React.useState(false);
+      const hasNotes = !!(task.notes || (task.followUps||[]).length > 0);
       return (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
-          gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8, marginBottom: 4,
-          background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
-          borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733", display: "flex", alignItems: "center", gap: 6 }}>
-            {task.label}
-            {task.isCarrier && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 99, background: "#dbeafe", color: "#1e40af", fontWeight: 700 }}>carrier</span>}
+        <div style={{ marginBottom: 4, borderRadius: 8, border: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px 28px",
+            gap: 8, alignItems: "center", padding: "6px 8px",
+            background: isDone ? "#f0fdf4" : "#f8fafc" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733", display: "flex", alignItems: "center", gap: 6 }}>
+              {task.label}
+              {task.isCarrier && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 99, background: "#dbeafe", color: "#1e40af", fontWeight: 700 }}>carrier</span>}
+              {hasNotes && <span title="Has notes or follow-ups" style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "#fef3c7", color: "#92400e", fontWeight: 700 }}>
+                📝{(task.followUps||[]).length > 0 ? ` ${(task.followUps||[]).length}` : ""}
+              </span>}
+            </div>
+            <select value={task.status || "Not Started"} onChange={e => task.onChange("status", e.target.value)}
+              style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+              {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+            </select>
+            <select value={task.assignee || ""} onChange={e => task.onChange("assignee", e.target.value)}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+              <option value="">Unassigned</option>
+              {teamMembers.map(m => <option key={m}>{m}</option>)}
+            </select>
+            <input type="date" value={task.dueDate || ""} onChange={e => task.onChange("dueDate", e.target.value)}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+            <input type="date" value={task.completedDate || ""} onChange={e => task.onChange("completedDate", e.target.value)}
+              style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+            <button type="button" onClick={() => setExpanded(p => !p)}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#94a3b8", padding: "2px" }}>
+              {expanded ? "▲" : "▼"}
+            </button>
           </div>
-          <select value={task.status || "Not Started"} onChange={e => task.onChange("status", e.target.value)}
-            style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
-              background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
-              color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
-            {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
-          </select>
-          <select value={task.assignee || ""} onChange={e => task.onChange("assignee", e.target.value)}
-            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
-            <option value="">Unassigned</option>
-            {teamMembers.map(m => <option key={m}>{m}</option>)}
-          </select>
-          <input type="date" value={task.dueDate || ""} onChange={e => task.onChange("dueDate", e.target.value)}
-            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-          <input type="date" value={task.completedDate || ""} onChange={e => task.onChange("completedDate", e.target.value)}
-            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+          {expanded && (
+            <div style={{ padding: "8px 12px", borderTop: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, background: "#fff" }}>
+              <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notes</label>
+              <input type="text" value={task.notes || ""} onChange={e => task.onChange("notes", e.target.value)}
+                placeholder="Add notes…" style={{ ...inputStyle, marginTop: 0, fontSize: 11, width: "100%", boxSizing: "border-box", marginBottom: 8 }} />
+              <FollowUpBlock
+                followUps={task.followUps || []}
+                onAdd={() => task.onChange("followUps", [...(task.followUps||[]), { id: Date.now(), date: new Date().toISOString().split("T")[0], note: "" }])}
+                onChangeDate={(fi, v) => { const fus = [...(task.followUps||[])]; fus[fi] = {...fus[fi], date: v}; task.onChange("followUps", fus); }}
+                onChangeNote={(fi, v) => { const fus = [...(task.followUps||[])]; fus[fi] = {...fus[fi], note: v}; task.onChange("followUps", fus); }}
+                onRemove={(fi) => task.onChange("followUps", (task.followUps||[]).filter((_,i) => i !== fi))}
+              />
+            </div>
+          )}
         </div>
       );
     }
@@ -17373,24 +18154,24 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                   background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
                   borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>{taskDef.label}</div>
-                  <select value={task.status}
-                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, status: e.target.value } } }))}
+                  <select value={task.status || "Not Started"}
+                    onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, status: v } } }; }); }}
                     style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
                       background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
                       color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
                     {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
                   </select>
                   <select value={task.assignee || ""}
-                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, assignee: e.target.value } } }))}
+                    onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, assignee: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
                     <option value="">Unassigned</option>
                     {teamMembers.map(m => <option key={m}>{m}</option>)}
                   </select>
                   <input type="date" value={task.dueDate || ""}
-                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, dueDate: e.target.value } } }))}
+                    onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, dueDate: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                   <input type="date" value={task.completedDate || ""}
-                    onChange={e => setData(p => ({ ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...task, completedDate: e.target.value } } }))}
+                    onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, completedDate: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 </div>
               );
@@ -17407,33 +18188,57 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
             <div style={{ padding: "8px 10px" }}>
               {(data.postOETasks || []).map((task, idx) => {
                 const isDone = task.status === "Complete" || task.status === "N/A";
+                const hasNotes = !!(task.notes || (task.followUps||[]).length > 0);
+                const updatePOT = (field, val) => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],[field]:val}; set("postOETasks",t); };
                 return (
-                  <div key={task.id || idx} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
-                    gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8, marginBottom: 4,
-                    background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
-                    borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>
-                      {task.title || task.label || "Unnamed"}
+                  <div key={task.id || idx} style={{ borderRadius: 8, marginBottom: 4, border: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, overflow: "hidden" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px 28px",
+                      gap: 8, alignItems: "center", padding: "6px 8px",
+                      background: isDone ? "#f0fdf4" : "#f8fafc" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733", display: "flex", alignItems: "center", gap: 6 }}>
+                        {task.title || task.label || "Unnamed"}
+                        {hasNotes && <span title="Has notes or follow-ups" style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "#fef3c7", color: "#92400e", fontWeight: 700 }}>
+                          📝{(task.followUps||[]).length > 0 ? ` ${(task.followUps||[]).length}` : ""}
+                        </span>}
+                      </div>
+                      <select value={task.status || "Not Started"}
+                        onChange={e => updatePOT("status", e.target.value)}
+                        style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                          background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                          color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                        {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                      </select>
+                      <select value={task.assignee || ""}
+                        onChange={e => updatePOT("assignee", e.target.value)}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                        <option value="">Unassigned</option>
+                        {teamMembers.map(m => <option key={m}>{m}</option>)}
+                      </select>
+                      <input type="date" value={task.dueDate || ""}
+                        onChange={e => updatePOT("dueDate", e.target.value)}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                      <input type="date" value={task.completedDate || ""}
+                        onChange={e => updatePOT("completedDate", e.target.value)}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                      <button type="button" onClick={() => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],_expanded:!t[idx]._expanded}; set("postOETasks",t); }}
+                        style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#94a3b8", padding:"2px" }}>
+                        {task._expanded ? "▲" : "▼"}
+                      </button>
                     </div>
-                    <select value={task.status || "Not Started"}
-                      onChange={e => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],status:e.target.value}; set("postOETasks",t); }}
-                      style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
-                        background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
-                        color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
-                      {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
-                    </select>
-                    <select value={task.assignee || ""}
-                      onChange={e => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],assignee:e.target.value}; set("postOETasks",t); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
-                      <option value="">Unassigned</option>
-                      {teamMembers.map(m => <option key={m}>{m}</option>)}
-                    </select>
-                    <input type="date" value={task.dueDate || ""}
-                      onChange={e => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],dueDate:e.target.value}; set("postOETasks",t); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                    <input type="date" value={task.completedDate || ""}
-                      onChange={e => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],completedDate:e.target.value}; set("postOETasks",t); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                    {task._expanded && (
+                      <div style={{ padding: "8px 12px", borderTop: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, background: "#fff" }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notes</label>
+                        <input type="text" value={task.notes || ""} onChange={e => updatePOT("notes", e.target.value)}
+                          placeholder="Add notes…" style={{ ...inputStyle, marginTop: 0, fontSize: 11, width: "100%", boxSizing: "border-box", marginBottom: 8 }} />
+                        <FollowUpBlock
+                          followUps={task.followUps || []}
+                          onAdd={() => updatePOT("followUps", [...(task.followUps||[]), { id: Date.now(), date: new Date().toISOString().split("T")[0], note: "" }])}
+                          onChangeDate={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],date:v}; updatePOT("followUps",fus); }}
+                          onChangeNote={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],note:v}; updatePOT("followUps",fus); }}
+                          onRemove={(fi) => updatePOT("followUps", (task.followUps||[]).filter((_,i)=>i!==fi))}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -17466,36 +18271,65 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
         ) : (
           <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", padding: "14px 16px" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {tasks.map((task, idx) => (
-                <div key={task.id || idx} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 28px",
-                  gap: 8, alignItems: "center", padding: "6px 10px", borderRadius: 8,
-                  background: task.status === "Complete" ? "#f0fdf4" : "#f8fafc",
-                  border: `1px solid ${task.status === "Complete" ? "#bbf7d0" : "#e2e8f0"}` }}>
-                  <input type="text" value={task.title || ""}
-                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],title:e.target.value}; set("miscTasks",t); }}
-                    placeholder="Task description"
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
-                  <select value={task.status || "Not Started"}
-                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],status:e.target.value}; set("miscTasks",t); }}
-                    style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
-                      background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
-                      color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
-                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
-                  </select>
-                  <select value={task.assignee || ""}
-                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],assignee:e.target.value}; set("miscTasks",t); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
-                    <option value="">Unassigned</option>
-                    {teamMembers.map(m => <option key={m}>{m}</option>)}
-                  </select>
-                  <input type="date" value={task.dueDate || ""}
-                    onChange={e => { const t=[...tasks]; t[idx]={...t[idx],dueDate:e.target.value}; set("miscTasks",t); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                  <button onClick={() => { const t=tasks.filter((_,i)=>i!==idx); set("miscTasks",t); }}
-                    style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#991b1b",
-                      cursor: "pointer", fontSize: 12, padding: "4px 6px", fontFamily: "inherit" }}>✕</button>
-                </div>
-              ))}
+              {tasks.map((task, idx) => {
+                const isDone = task.status === "Complete";
+                const hasNotes = !!(task.notes || (task.followUps||[]).length > 0);
+                const updateMT = (field, val) => { const t=[...tasks]; t[idx]={...t[idx],[field]:val}; set("miscTasks",t); };
+                return (
+                  <div key={task.id || idx} style={{ borderRadius: 8, border: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, overflow: "hidden", marginBottom: 2 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 28px 28px",
+                      gap: 8, alignItems: "center", padding: "6px 10px",
+                      background: isDone ? "#f0fdf4" : "#f8fafc" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input type="text" value={task.title || ""}
+                          onChange={e => updateMT("title", e.target.value)}
+                          placeholder="Task description"
+                          style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", flex: 1 }} />
+                        {hasNotes && <span title="Has notes or follow-ups" style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "#fef3c7", color: "#92400e", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          📝{(task.followUps||[]).length > 0 ? ` ${(task.followUps||[]).length}` : ""}
+                        </span>}
+                      </div>
+                      <select value={task.status || "Not Started"}
+                        onChange={e => updateMT("status", e.target.value)}
+                        style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
+                          background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
+                          color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
+                        {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                      </select>
+                      <select value={task.assignee || ""}
+                        onChange={e => updateMT("assignee", e.target.value)}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
+                        <option value="">Unassigned</option>
+                        {teamMembers.map(m => <option key={m}>{m}</option>)}
+                      </select>
+                      <input type="date" value={task.dueDate || ""}
+                        onChange={e => updateMT("dueDate", e.target.value)}
+                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
+                      <button type="button" onClick={() => updateMT("_expanded", !task._expanded)}
+                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#94a3b8", padding: "2px" }}>
+                        {task._expanded ? "▲" : "▼"}
+                      </button>
+                      <button onClick={() => { const t=tasks.filter((_,i)=>i!==idx); set("miscTasks",t); }}
+                        style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#991b1b",
+                          cursor: "pointer", fontSize: 12, padding: "4px 6px", fontFamily: "inherit" }}>✕</button>
+                    </div>
+                    {task._expanded && (
+                      <div style={{ padding: "8px 12px", borderTop: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, background: "#fff" }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notes</label>
+                        <input type="text" value={task.notes || ""} onChange={e => updateMT("notes", e.target.value)}
+                          placeholder="Add notes…" style={{ ...inputStyle, marginTop: 0, fontSize: 11, width: "100%", boxSizing: "border-box", marginBottom: 8 }} />
+                        <FollowUpBlock
+                          followUps={task.followUps || []}
+                          onAdd={() => updateMT("followUps", [...(task.followUps||[]), { id: Date.now(), date: new Date().toISOString().split("T")[0], note: "" }])}
+                          onChangeDate={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],date:v}; updateMT("followUps",fus); }}
+                          onChangeNote={(fi, v) => { const fus=[...(task.followUps||[])]; fus[fi]={...fus[fi],note:v}; updateMT("followUps",fus); }}
+                          onRemove={(fi) => updateMT("followUps", (task.followUps||[]).filter((_,i)=>i!==fi))}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -18142,6 +18976,43 @@ function ClientBenefitsEditor({ data, set, setData, carriersData, currentUser, b
 // ── Commission View ───────────────────────────────────────────────────────────
 
 function CommissionView({ data, setData, carriersData }) {
+
+  // On mount: auto-populate any benefitCommissions entries that are missing
+  // by looking up the carrier's commission rules for each active benefit.
+  // This recovers clients whose commission type/rate was wiped.
+  React.useEffect(() => {
+    if (!carriersData?.length) return;
+    const BENEFIT_MAP = {
+      medical:"Medical", dental:"Dental", vision:"Vision",
+      basic_life:"Basic Life/AD&D", vol_life:"Vol Life",
+      std:"STD", ltd:"LTD", worksite_ci:"Worksite",
+      worksite_cancer:"Worksite", worksite_accident:"Worksite",
+      worksite_hospital:"Worksite", eap:"EAP",
+      fsa_health:"FSA", fsa_limited:"FSA", hsa_funding:"HSA", hra:"HRA",
+    };
+    const activeBenefits = BENEFITS_SCHEMA.filter(b => !!(data.benefitActive||{})[b.id]);
+    let needsUpdate = false;
+    const updatedComms = { ...(data.benefitCommissions || {}) };
+    activeBenefits.forEach(b => {
+      // Only fill in if currently empty
+      if (updatedComms[b.id]?.type && updatedComms[b.id]?.amount) return;
+      const carrierName = (data.benefitCarriers||{})[b.id];
+      if (!carrierName) return;
+      const carrierObj = carriersData.find(c => c.name === carrierName);
+      if (!carrierObj?.commissionRules?.length) return;
+      const benefitName = BENEFIT_MAP[b.id] || b.id;
+      const match = carrierObj.commissionRules.find(r => r.benefit === benefitName && r.segment === (data.marketSize||"All"))
+        || carrierObj.commissionRules.find(r => r.benefit === benefitName)
+        || carrierObj.commissionRules.find(r => r.benefit === "All");
+      if (match?.amount) {
+        updatedComms[b.id] = { type: match.type, amount: match.amount };
+        needsUpdate = true;
+      }
+    });
+    if (needsUpdate) {
+      setData(p => ({ ...p, benefitCommissions: updatedComms }));
+    }
+  }, [data.benefitActive, data.benefitCarriers, data.marketSize, carriersData]);
 
   // Calculate monthly premium for a benefit from its plans
   function calcMonthlyPremium(benefitId) {
