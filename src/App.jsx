@@ -157,6 +157,10 @@ function syncStandardTasks(client, tasksDb) {
       const clientCarriers = Object.values(c.benefitCarriers || {}).filter(Boolean);
       if (!tmpl.carriers.some(tc => clientCarriers.includes(tc))) return false;
     }
+    // New filters: Employer Size, Employer Type, Corporate Structure
+    if (tmpl.employerSizes?.length && c.employerSize && !tmpl.employerSizes.includes(c.employerSize)) return false;
+    if (tmpl.employerTypes?.length && c.employerType && !tmpl.employerTypes.includes(c.employerType)) return false;
+    if (tmpl.corpStructures?.length && c.corporateStructure && !tmpl.corpStructures.includes(c.corporateStructure)) return false;
     return true;
   }
 
@@ -7316,9 +7320,12 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
               const icons = { medical:"🏥", dental:"🦷", vision:"👁", basic_life:"🛡", vol_life:"🛡", std:"⚡", ltd:"⚡", worksite:"◈", fsa:"💳", hsa:"💳" };
               const icon = Object.entries(icons).find(([k]) => cat.id.startsWith(k)||cat.id.includes(k))?.[1] || "◈";
               return (
-                <div key={cat.id} style={{
+                <div key={cat.id}
+                  onClick={() => onEdit(client, `benefits:${cat.id}`)}
+                  style={{
                   display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
                   borderBottom: i < activeCategories.length-1 ? "1px solid #f1f5f9" : "none",
+                  cursor: "pointer",
                 }}>
                   <span style={{ fontSize: 14, width: 20, textAlign: "center", flexShrink: 0 }}>{icon}</span>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "#1e293b", flex: 1 }}>{cat.label}</span>
@@ -7365,8 +7372,16 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
               const done  = cat.tasks.filter(t=>t==="Complete"||t==="N/A").length;
               const total = cat.tasks.length;
               const pct   = total ? Math.round((done/total)*100) : 0;
+              const sectionMap = { preRenewal:"prerenewal", renewal:"renewal", oe:"oe", postOE:"postoe", compliance:"compliance" };
+              const section = sectionMap[cat.id] || "overview";
               return (
-                <div key={cat.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div key={cat.id}
+                  onClick={() => onEdit(client, section)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6,
+                    cursor: "pointer", borderRadius: 4, padding: "1px 0",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background="#f0f5fa"}
+                  onMouseLeave={e => e.currentTarget.style.background="transparent"}>
                   <span style={{ fontSize: 11, color: "#475569", width: 80, flexShrink: 0 }}>{cat.label}</span>
                   <div style={{ flex: 1, height: 5, borderRadius: 99, background: "#e2e8f0", overflow: "hidden" }}>
                     <div style={{ width: `${pct}%`, height: "100%", borderRadius: 99,
@@ -7388,8 +7403,12 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
             <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b",
               textTransform: "uppercase", letterSpacing: ".8px", marginBottom: 8 }}>Due Soon</div>
             {dueSoonItems.map((u, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                gap: 6, padding: "3px 0" }}>
+              <div key={i}
+                onClick={() => onEdit(client, "prerenewal")}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                gap: 6, padding: "3px 0", cursor: "pointer", borderRadius: 4 }}
+                onMouseEnter={e => e.currentTarget.style.background="#f0f5fa"}
+                onMouseLeave={e => e.currentTarget.style.background="transparent"}>
                 <span style={{ fontSize: 11, color: "#374151", flex: 1, textTransform: "capitalize",
                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.label}</span>
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, flexShrink: 0,
@@ -9531,6 +9550,7 @@ export default function App() {
   const [deepLinkTaskTab, setDeepLinkTaskTab]   = useState(null);
   const [deepLinkTaskId,  setDeepLinkTaskId]    = useState(null);
   const [deepLinkSection, setDeepLinkSection]   = useState(null);
+  const [deepLinkBenefit, setDeepLinkBenefit]   = useState(null);
   const [search, setSearch] = useState("");
   const [filterTeam, setFilterTeam] = useState("All");
   const [filterMarket, setFilterMarket] = useState("All");
@@ -9550,7 +9570,13 @@ export default function App() {
     if (!client) return;
     setPrevView(view);
     setSelectedClient(client);
-    if (section) setDeepLinkSection(section);
+    if (section && section.startsWith("benefits:")) {
+      setDeepLinkSection("benefits");
+      setDeepLinkBenefit(section.replace("benefits:", ""));
+    } else if (section) {
+      setDeepLinkSection(section);
+      setDeepLinkBenefit(null);
+    }
     changeView("client");
   }
 
@@ -10748,9 +10774,19 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
           />
         )}
 
-        {/* ── OPEN TASKS VIEW ── */}
-        {view === "overdue" && (
+        {/* ── TASKS VIEW (global) ── */}
+        {(view === "overdue" || view === "tasks") && (
           <OpenTasksView clients={clients} onOpenClient={openClient} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} onClearDashNav={() => setDashNav({})} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
+        )}
+
+        {/* ── COMPLIANCE VIEW (global) ── */}
+        {view === "compliance" && (
+          <GlobalComplianceView clients={clients} onOpenClient={openClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} tasksDb={tasksData} onUpdateTask={saveClient} />
+        )}
+
+        {/* ── TRANSACTIONS VIEW (global) ── */}
+        {view === "transactions" && (
+          <GlobalTransactionsView clients={clients} onOpenClient={openClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} transactionTypesLibrary={transactionTypesLibrary} onUpdateTask={saveClient} />
         )}
 
 
@@ -11097,7 +11133,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
         <ClientProfile
           client={clients.find(c => c.id === selectedClient.id) || selectedClient}
           onSave={saveClient}
-          onClose={() => { closeClient(); setDeepLinkSection(null); }}
+          onClose={() => { closeClient(); setDeepLinkSection(null); setDeepLinkBenefit(null); }}
           tasksDb={tasksData}
           carriersData={carriersData}
           dueDateRules={dueDateRules}
@@ -11106,6 +11142,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
           renewals={renewals}
           renewalStages={renewalStages}
           initialSection={deepLinkSection}
+          initialBenefit={deepLinkBenefit}
           plansLibrary={plansLibrary}
           marketsLibrary={marketsLibrary}
           fundingLibrary={fundingLibrary}
@@ -12054,7 +12091,7 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
           <TaskTypesLibraryView taskTypesLibrary={taskTypesLibrary} onSave={onSaveTaskTypes} currentUser={currentUser} />
         )}
         {adminTab === "tasks" && (
-          <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} currentUser={currentUser} taskTypesLibrary={taskTypesLibrary} />
+          <TasksLibraryView tasks={tasks} onSave={onSaveTasks} dueDateRules={dueDateRules} clients={clients} onSyncClients={onSyncClients} currentUser={currentUser} taskTypesLibrary={taskTypesLibrary} employerSizeLibrary={employerSizeLibrary} employerTypesLibrary={employerTypesLibrary} corporateStructureLibrary={corporateStructureLibrary} />
         )}
         {adminTab === "anchors" && (
           <AnchorEventsLibraryView anchorEventsLibrary={anchorEventsLibrary} onSave={onSaveAnchorEvents} currentUser={currentUser} />
@@ -12890,7 +12927,7 @@ function TaskTypesLibraryView({ taskTypesLibrary, onSave, currentUser }) {
 }
 
 // ── TasksLibraryView ─────────────────────────────────────────────────────────
-function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, currentUser, taskTypesLibrary }) {
+function TasksLibraryView({ tasks, onSave, dueDateRules, clients, onSyncClients, currentUser, taskTypesLibrary, employerSizeLibrary, employerTypesLibrary, corporateStructureLibrary }) {
   const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
 
   // Bug 7 fix: derive category list from taskTypesLibrary (respects order + additions)
@@ -14823,6 +14860,377 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
   );
 }
 
+// ── GlobalComplianceView ─────────────────────────────────────────────────────
+function GlobalComplianceView({ clients, onOpenClient, currentUser, userTeamId, userTeams, tasksDb, onUpdateTask }) {
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const isRestricted = currentUser && !isLead && (userTeams||[]).length > 0;
+
+  const [filterTeam,   setFilterTeam]   = React.useState(isRestricted ? userTeamId : "All");
+  const [filterStatus, setFilterStatus] = React.useState("open"); // open | all | complete
+  const [filterTask,   setFilterTask]   = React.useState("All");
+  const [filterClient, setFilterClient] = React.useState("");
+  const [sortBy,       setSortBy]       = React.useState("dueDate");
+
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Flatten all compliance tasks across all clients
+  const rows = React.useMemo(() => {
+    const out = [];
+    clients
+      .filter(c => !isRestricted || (userTeams||[]).includes(c.team))
+      .filter(c => filterTeam === "All" || c.team === filterTeam)
+      .filter(c => !filterClient || c.name.toLowerCase().includes(filterClient.toLowerCase()))
+      .forEach(c => {
+        COMPLIANCE_TASKS.forEach(def => {
+          if (def.id === "aca_filing" && isACAFilingExempt(c)) return;
+          const raw = (c.compliance || {})[def.id];
+          const t = typeof raw === "object" && raw !== null ? raw : { status: raw || "Not Started" };
+          const status = t.status || "Not Started";
+          if (filterStatus === "open" && (status === "Complete" || status === "N/A")) return;
+          if (filterStatus === "complete" && status !== "Complete") return;
+          if (filterTask !== "All" && def.id !== filterTask) return;
+          const due = t.dueDate || null;
+          const daysLeft = due ? Math.ceil((new Date(due+"T12:00:00") - today) / 86400000) : null;
+          const overdue = daysLeft !== null && daysLeft < 0 && status !== "Complete" && status !== "N/A";
+          out.push({ clientId: c.id, clientName: c.name, clientTeam: c.team,
+            renewalDate: c.renewalDate, taskId: def.id, taskLabel: def.label,
+            status, assignee: t.assignee || "", due, daysLeft, overdue,
+            completedDate: t.completedDate || "", client: c });
+        });
+      });
+
+    return out.sort((a, b) => {
+      if (sortBy === "client") return (a.clientName||"").localeCompare(b.clientName||"");
+      if (sortBy === "task")   return (a.taskLabel||"").localeCompare(b.taskLabel||"");
+      if (sortBy === "status") return (a.status||"").localeCompare(b.status||"");
+      // dueDate: overdue first, then soonest, null last
+      const ad = a.daysLeft === null ? 99999 : a.daysLeft;
+      const bd = b.daysLeft === null ? 99999 : b.daysLeft;
+      return ad - bd;
+    });
+  }, [clients, filterTeam, filterStatus, filterTask, filterClient, sortBy]);
+
+  const uniqueTeams = [...new Set(clients.map(c => c.team).filter(Boolean))].sort();
+  const statusStyles = {
+    "Complete":    { bg:"#dcfce7", color:"#166534" },
+    "In Progress": { bg:"#fef9c3", color:"#854d0e" },
+    "Not Started": { bg:"#f1f5f9", color:"#64748b" },
+    "N/A":         { bg:"#f1f5f9", color:"#64748b" },
+  };
+
+  const overdueCt = rows.filter(r => r.overdue).length;
+  const completeCt = rows.filter(r => r.status === "Complete").length;
+
+  return (
+    <div>
+      {/* Sticky header */}
+      <div style={{ position:"sticky", top:64, zIndex:40, background:"#f8fafc",
+        borderBottom:"1px solid #e2e8f0", paddingTop:28, paddingBottom:12,
+        marginBottom:14, boxShadow:"0 2px 8px rgba(0,0,0,.04)" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between",
+          marginBottom:12, flexWrap:"wrap", gap:10 }}>
+          <div>
+            <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontWeight:800,
+              fontSize:20, color:"#0f172a" }}>Compliance</div>
+            <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>
+              {rows.length} item{rows.length!==1?"s":""} across {[...new Set(rows.map(r=>r.clientId))].length} clients
+              {overdueCt > 0 && <span style={{ marginLeft:8, color:"#dc2626", fontWeight:700 }}>· {overdueCt} overdue</span>}
+            </div>
+          </div>
+          {/* Sort */}
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            {[["dueDate","Due Date"],["client","Client"],["task","Task"],["status","Status"]].map(([v,label]) => (
+              <button key={v} onClick={() => setSortBy(v)} style={{
+                padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:700,
+                border:`1.5px solid ${sortBy===v?"#4a7fa5":"#e2e8f0"}`,
+                background: sortBy===v?"#dce8f0":"#fff",
+                color: sortBy===v?"#2d4a6b":"#64748b",
+                cursor:"pointer", fontFamily:"inherit" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Filters */}
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <input value={filterClient} onChange={e=>setFilterClient(e.target.value)}
+            placeholder="Search client..."
+            style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8,
+              fontSize:12, fontFamily:"inherit", width:180 }} />
+          <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
+            style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:12, fontFamily:"inherit" }}>
+            <option value="open">Open Items</option>
+            <option value="all">All Statuses</option>
+            <option value="complete">Completed</option>
+          </select>
+          <select value={filterTask} onChange={e=>setFilterTask(e.target.value)}
+            style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:12, fontFamily:"inherit" }}>
+            <option value="All">All Tasks</option>
+            {COMPLIANCE_TASKS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+          {!isRestricted && (
+            <select value={filterTeam} onChange={e=>setFilterTeam(e.target.value)}
+              style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:12, fontFamily:"inherit" }}>
+              <option value="All">All Teams</option>
+              {uniqueTeams.map(t => <option key={t} value={t}>Team {t}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* Summary stat pills */}
+      <div style={{ display:"flex", gap:12, marginBottom:16 }}>
+        {[
+          { label:"Total Items", value:rows.length, bg:"#f1f5f9", color:"#475569" },
+          { label:"Overdue",     value:overdueCt,   bg:"#fee2e2", color:"#991b1b" },
+          { label:"In Progress", value:rows.filter(r=>r.status==="In Progress").length, bg:"#fef9c3", color:"#854d0e" },
+          { label:"Complete",    value:completeCt,  bg:"#dcfce7", color:"#166534" },
+          { label:"Not Started", value:rows.filter(r=>r.status==="Not Started").length, bg:"#f8fafc", color:"#64748b" },
+        ].map(s => (
+          <div key={s.label} style={{ padding:"10px 16px", borderRadius:10,
+            background:s.bg, border:"1px solid #e2e8f0", textAlign:"center", minWidth:90 }}>
+            <div style={{ fontSize:20, fontWeight:800, color:s.color }}>{s.value}</div>
+            <div style={{ fontSize:10, color:s.color, opacity:.8, textTransform:"uppercase",
+              letterSpacing:".5px", marginTop:2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      {rows.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"48px 0", color:"#94a3b8", fontSize:14 }}>
+          No compliance items match the current filters.
+        </div>
+      ) : (
+        <div style={{ background:"#fff", border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
+          {/* Table header */}
+          <div style={{ display:"grid", gridTemplateColumns:"1.8fr 2fr 120px 100px 100px 110px",
+            padding:"8px 16px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0",
+            fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".5px" }}>
+            {["Client","Task","Status","Assignee","Due","Renewal"].map(h => <div key={h}>{h}</div>)}
+          </div>
+          {rows.map((r, i) => {
+            const ss = statusStyles[r.status] || statusStyles["Not Started"];
+            return (
+              <div key={`${r.clientId}-${r.taskId}`}
+                style={{ display:"grid", gridTemplateColumns:"1.8fr 2fr 120px 100px 100px 110px",
+                  padding:"9px 16px", alignItems:"center",
+                  borderBottom: i < rows.length-1 ? "1px solid #f8fafc" : "none",
+                  background: r.overdue ? "#fff8f8" : "#fff",
+                  cursor:"pointer" }}
+                onClick={() => onOpenClient(r.client)}>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#1e293b" }}>{r.clientName}</div>
+                  {r.clientTeam && <div style={{ fontSize:10, color:"#94a3b8" }}>Team {r.clientTeam}</div>}
+                </div>
+                <div style={{ fontSize:12, color:"#475569" }}>{r.taskLabel}</div>
+                <div>
+                  <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99,
+                    background:ss.bg, color:ss.color }}>{r.status}</span>
+                </div>
+                <div style={{ fontSize:12, color:"#475569" }}>{r.assignee||"—"}</div>
+                <div style={{ fontSize:12,
+                  color: r.overdue?"#dc2626":r.daysLeft!==null&&r.daysLeft<=14?"#d97706":"#475569",
+                  fontWeight: r.overdue||r.daysLeft<=14?700:400 }}>
+                  {r.due ? (r.overdue ? `${Math.abs(r.daysLeft)}d over` : `${r.daysLeft}d`) : "—"}
+                </div>
+                <div style={{ fontSize:11, color:"#64748b" }}>
+                  {r.renewalDate ? new Date(r.renewalDate+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}) : "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── GlobalTransactionsView ────────────────────────────────────────────────────
+function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId, userTeams, transactionTypesLibrary, onUpdateTask }) {
+  const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const isRestricted = currentUser && !isLead && (userTeams||[]).length > 0;
+
+  const [filterTeam,   setFilterTeam]   = React.useState(isRestricted ? userTeamId : "All");
+  const [filterType,   setFilterType]   = React.useState("All");
+  const [filterStatus, setFilterStatus] = React.useState("All");
+  const [filterClient, setFilterClient] = React.useState("");
+  const [sortBy,       setSortBy]       = React.useState("receivedDate");
+
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const txnTypes = React.useMemo(() =>
+    (transactionTypesLibrary||[]).length
+      ? [...transactionTypesLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)
+      : []
+  , [transactionTypesLibrary]);
+
+  // Flatten all transactions across all clients
+  const rows = React.useMemo(() => {
+    const out = [];
+    clients
+      .filter(c => !isRestricted || (userTeams||[]).includes(c.team))
+      .filter(c => filterTeam === "All" || c.team === filterTeam)
+      .filter(c => !filterClient || c.name.toLowerCase().includes(filterClient.toLowerCase()))
+      .forEach(c => {
+        (c.transactions || []).forEach((t, i) => {
+          if (filterType !== "All" && t.changeType !== filterType) return;
+          if (filterStatus !== "All" && (t.status||"Not Started") !== filterStatus) return;
+          const received = t.receivedDate || t.date || null;
+          const due = t.dueDate || null;
+          const daysLeft = due ? Math.ceil((new Date(due+"T12:00:00") - today) / 86400000) : null;
+          const overdue = daysLeft !== null && daysLeft < 0 && t.status !== "Complete" && t.status !== "N/A";
+          out.push({ clientId:c.id, clientName:c.name, clientTeam:c.team,
+            memberName:t.memberName||"", changeType:t.changeType||t.label||"",
+            status:t.status||"Not Started", assignee:t.assignee||"",
+            received, due, daysLeft, overdue,
+            completedDate:t.completedDate||"",
+            notes:t.notes||"", client:c, idx:i });
+        });
+      });
+
+    return out.sort((a, b) => {
+      if (sortBy === "client") return (a.clientName||"").localeCompare(b.clientName||"");
+      if (sortBy === "type")   return (a.changeType||"").localeCompare(b.changeType||"");
+      if (sortBy === "status") return (a.status||"").localeCompare(b.status||"");
+      if (sortBy === "member") return (a.memberName||"").localeCompare(b.memberName||"");
+      // receivedDate: most recent first
+      const ad = a.received ? new Date(a.received).getTime() : 0;
+      const bd = b.received ? new Date(b.received).getTime() : 0;
+      return bd - ad;
+    });
+  }, [clients, filterTeam, filterType, filterStatus, filterClient, sortBy]);
+
+  const uniqueTeams = [...new Set(clients.map(c => c.team).filter(Boolean))].sort();
+  const uniqueStatuses = ["Not Started","In Progress","Complete","N/A"];
+  const statusStyles = {
+    "Complete":    { bg:"#dcfce7", color:"#166534" },
+    "In Progress": { bg:"#fef9c3", color:"#854d0e" },
+    "Not Started": { bg:"#f1f5f9", color:"#64748b" },
+    "N/A":         { bg:"#f1f5f9", color:"#64748b" },
+  };
+
+  return (
+    <div>
+      {/* Sticky header */}
+      <div style={{ position:"sticky", top:64, zIndex:40, background:"#f8fafc",
+        borderBottom:"1px solid #e2e8f0", paddingTop:28, paddingBottom:12,
+        marginBottom:14, boxShadow:"0 2px 8px rgba(0,0,0,.04)" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between",
+          marginBottom:12, flexWrap:"wrap", gap:10 }}>
+          <div>
+            <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontWeight:800,
+              fontSize:20, color:"#0f172a" }}>Transactions</div>
+            <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>
+              {rows.length} transaction{rows.length!==1?"s":""} across {[...new Set(rows.map(r=>r.clientId))].length} clients
+            </div>
+          </div>
+          {/* Sort */}
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            {[["receivedDate","Date"],["client","Client"],["type","Type"],["member","Member"],["status","Status"]].map(([v,label]) => (
+              <button key={v} onClick={() => setSortBy(v)} style={{
+                padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:700,
+                border:`1.5px solid ${sortBy===v?"#4a7fa5":"#e2e8f0"}`,
+                background: sortBy===v?"#dce8f0":"#fff",
+                color: sortBy===v?"#2d4a6b":"#64748b",
+                cursor:"pointer", fontFamily:"inherit" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Filters */}
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <input value={filterClient} onChange={e=>setFilterClient(e.target.value)}
+            placeholder="Search client..."
+            style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8,
+              fontSize:12, fontFamily:"inherit", width:180 }} />
+          <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+            style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:12, fontFamily:"inherit" }}>
+            <option value="All">All Types</option>
+            {txnTypes.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
+            style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:12, fontFamily:"inherit" }}>
+            <option value="All">All Statuses</option>
+            {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {!isRestricted && (
+            <select value={filterTeam} onChange={e=>setFilterTeam(e.target.value)}
+              style={{ padding:"5px 10px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:12, fontFamily:"inherit" }}>
+              <option value="All">All Teams</option>
+              {uniqueTeams.map(t => <option key={t} value={t}>Team {t}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* Summary stats */}
+      <div style={{ display:"flex", gap:12, marginBottom:16 }}>
+        {[
+          { label:"Total",       value:rows.length,                                        bg:"#f1f5f9", color:"#475569" },
+          { label:"In Progress", value:rows.filter(r=>r.status==="In Progress").length,   bg:"#fef9c3", color:"#854d0e" },
+          { label:"Complete",    value:rows.filter(r=>r.status==="Complete").length,       bg:"#dcfce7", color:"#166534" },
+          { label:"Not Started", value:rows.filter(r=>r.status==="Not Started").length,   bg:"#f8fafc", color:"#64748b" },
+        ].map(s => (
+          <div key={s.label} style={{ padding:"10px 16px", borderRadius:10, background:s.bg,
+            border:"1px solid #e2e8f0", textAlign:"center", minWidth:90 }}>
+            <div style={{ fontSize:20, fontWeight:800, color:s.color }}>{s.value}</div>
+            <div style={{ fontSize:10, color:s.color, opacity:.8, textTransform:"uppercase",
+              letterSpacing:".5px", marginTop:2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      {rows.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"48px 0", color:"#94a3b8", fontSize:14 }}>
+          No transactions match the current filters.
+        </div>
+      ) : (
+        <div style={{ background:"#fff", border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1.6fr 1.4fr 1.6fr 120px 100px 100px 100px",
+            padding:"8px 16px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0",
+            fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".5px" }}>
+            {["Client","Member","Type","Status","Assignee","Received","Due"].map(h => <div key={h}>{h}</div>)}
+          </div>
+          {rows.map((r, i) => {
+            const ss = statusStyles[r.status] || statusStyles["Not Started"];
+            return (
+              <div key={`${r.clientId}-${r.idx}`}
+                style={{ display:"grid", gridTemplateColumns:"1.6fr 1.4fr 1.6fr 120px 100px 100px 100px",
+                  padding:"9px 16px", alignItems:"center",
+                  borderBottom: i < rows.length-1 ? "1px solid #f8fafc" : "none",
+                  background: r.overdue ? "#fff8f8" : "#fff", cursor:"pointer" }}
+                onClick={() => onOpenClient(r.client)}>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#1e293b" }}>{r.clientName}</div>
+                  {r.clientTeam && <div style={{ fontSize:10, color:"#94a3b8" }}>Team {r.clientTeam}</div>}
+                </div>
+                <div style={{ fontSize:12, color:"#475569" }}>{r.memberName||"—"}</div>
+                <div style={{ fontSize:12, color:"#475569" }}>{r.changeType||"—"}</div>
+                <div>
+                  <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99,
+                    background:ss.bg, color:ss.color }}>{r.status}</span>
+                </div>
+                <div style={{ fontSize:12, color:"#475569" }}>{r.assignee||"—"}</div>
+                <div style={{ fontSize:11, color:"#64748b" }}>
+                  {r.received ? new Date(r.received+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}) : "—"}
+                </div>
+                <div style={{ fontSize:11,
+                  color:r.overdue?"#dc2626":r.daysLeft!==null&&r.daysLeft<=7?"#d97706":"#64748b",
+                  fontWeight:r.overdue?700:400 }}>
+                  {r.due ? new Date(r.due+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}) : "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
 function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, onClearDashNav, marketsLibrary, fundingLibrary, onBack }) {
@@ -15915,6 +16323,66 @@ function TasksView({ tasks, onSave, dueDateRules, onSaveDueDateRules, currentUse
               </div>
             </div>
 
+            {/* Employer Size filter */}
+            {(employerSizeLibrary||[]).length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Applies to Employer Size</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 5, fontStyle: "italic" }}>
+                  Leave blank to apply to all sizes
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {[...(employerSizeLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(s => (
+                    <CHIP key={s.label} label={s.label}
+                      active={(editData.employerSizes || []).includes(s.label)}
+                      onClick={() => setEditData(p => {
+                        const cur = p.employerSizes || [];
+                        return { ...p, employerSizes: cur.includes(s.label) ? cur.filter(x=>x!==s.label) : [...cur,s.label] };
+                      })} color="#0891b2" />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Employer Type filter */}
+            {(employerTypesLibrary||[]).length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Applies to Employer Type</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 5, fontStyle: "italic" }}>
+                  Leave blank to apply to all employer types
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {[...(employerTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(t => (
+                    <CHIP key={t.label} label={t.label}
+                      active={(editData.employerTypes || []).includes(t.label)}
+                      onClick={() => setEditData(p => {
+                        const cur = p.employerTypes || [];
+                        return { ...p, employerTypes: cur.includes(t.label) ? cur.filter(x=>x!==t.label) : [...cur,t.label] };
+                      })} color="#7c3aed" />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Corporate Structure filter */}
+            {(corporateStructureLibrary||[]).length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Applies to Corporate Structure</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 5, fontStyle: "italic" }}>
+                  Leave blank to apply to all structures
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {[...(corporateStructureLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(s => (
+                    <CHIP key={s.label} label={s.label}
+                      active={(editData.corpStructures || []).includes(s.label)}
+                      onClick={() => setEditData(p => {
+                        const cur = p.corpStructures || [];
+                        return { ...p, corpStructures: cur.includes(s.label) ? cur.filter(x=>x!==s.label) : [...cur,s.label] };
+                      })} color="#b45309" />
+                  ))}
+                </div>
+              </div>
+            )}
+
             <label style={{ ...labelStyle, marginTop: 12 }}>
               Default Assignee Role
               <select value={editData.defaultAssignee || ""}
@@ -16187,7 +16655,7 @@ function RenewalsKanban({ clients, teams, currentUser, userTeams, onOpenClient, 
 
 // ── Client Profile (Full Page) ────────────────────────────────────────────────
 
-function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal, initialSection, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary, contributionMethodsLibrary }) {
+function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal, initialSection, initialBenefit, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary, contributionMethodsLibrary }) {
   const [activeSection, setActiveSection] = React.useState(initialSection || "overview");
 
   const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
@@ -16461,16 +16929,19 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             onNavigateDocs={() => setActiveSection("documents")}
             onEditPage={() => setOverviewEditMode(e => !e)}
             editMode={overviewEditMode}
+            onNavigateSection={(s) => setActiveSection(s)}
           />
         )}
 
         {/* Benefits */}
         {activeSection === "benefits" && (
           <ClientBenefits
-            data={data} set={set} setData={setData}
+            data={data} set={set} setData={setData} setIsDirty={setIsDirty}
             carriersData={carriersData} currentUser={currentUser}
             applyPreRenewalRules={applyPreRenewalRules}
             plansLibrary={plansLibrary}
+            contributionMethodsLibrary={contributionMethodsLibrary}
+            initialBenefit={initialBenefit}
           />
         )}
 
@@ -16614,7 +17085,7 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
   tasksDb, dueDateRules, clientRenewal, currentStage, renewalStages, onUpdateRenewal, teams,
   salespersonsLibrary, marketsLibrary, fundingLibrary, situsLibrary,
   employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary,
-  onNavigateDocs, onEditPage, editMode, carriersData }) {
+  onNavigateDocs, onEditPage, editMode, carriersData, onNavigateSection }) {
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const mktOpts  = (marketsLibrary||[]).length ? [...marketsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
@@ -16716,13 +17187,14 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
     outline:"none", width:"100%" };
 
   // Field row — read-only by default, editable when editMode is true
-  function FR({ label, value, placeholder, field, type, options }) {
+  function FR({ label, value, placeholder, field, type, options, tabIdx }) {
     return (
       <div style={{ display:"flex", gap:8, padding:"4px 0", borderBottom:"1px solid #f8fafc", alignItems:"center" }}>
         <span style={{ ...fieldLbl, width:140 }}>{label}</span>
         {editMode && field ? (
           options ? (
             <select value={data[field]||""} onChange={e => set(field, e.target.value)}
+              tabIndex={tabIdx}
               style={{ flex:1, fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd",
                 borderRadius:5, fontFamily:"inherit", color:"#1e293b", background:"#f0f7ff" }}>
               <option value="">— Select —</option>
@@ -16732,6 +17204,7 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
             <input type={type||"text"} value={data[field]||""}
               onChange={e => set(field, e.target.value)}
               placeholder={placeholder||""}
+              tabIndex={tabIdx}
               style={{ flex:1, fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd",
                 borderRadius:5, fontFamily:"inherit", color:"#1e293b", background:"#f0f7ff",
                 outline:"none" }} />
@@ -16824,26 +17297,40 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
                 display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
                 🏢
               </div>
-              <div>
-                <div style={{ fontSize:15, fontWeight:800, color:"#1e2d3d" }}>{data.name||"—"}</div>
-                <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>{data.natureOfBusiness||<span style={{fontStyle:"italic",color:"#cbd5e1"}}>Nature of business</span>}</div>
+              <div style={{ flex:1 }}>
+                {editMode
+                  ? <input value={data.name||""} onChange={e=>set("name",e.target.value)}
+                      placeholder="Client name"
+                      style={{ fontSize:15, fontWeight:800, width:"100%", padding:"3px 7px",
+                        border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit",
+                        color:"#1e2d3d", background:"#f0f7ff", outline:"none", marginBottom:4 }} />
+                  : <div style={{ fontSize:15, fontWeight:800, color:"#1e2d3d" }}>{data.name||"—"}</div>
+                }
+                {editMode
+                  ? <input value={data.natureOfBusiness||""} onChange={e=>set("natureOfBusiness",e.target.value)}
+                      placeholder="Nature of business"
+                      style={{ fontSize:12, width:"100%", padding:"3px 7px",
+                        border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit",
+                        color:"#64748b", background:"#f0f7ff", outline:"none" }} />
+                  : <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>{data.natureOfBusiness||<span style={{fontStyle:"italic",color:"#cbd5e1"}}>Nature of business</span>}</div>
+                }
               </div>
             </div>
 
             {/* 2-column field grid */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 24px" }}>
               <div>
-                <FR label="EIN" value={data.taxId} field="taxId" />
-                <FR label="SIC Code" value={data.sic} field="sic" />
-                <FR label="# Locations" value={data.numLocations} field="numLocations" />
-                <FR label="State / Situs" value={data.groupSitus} field="groupSitus" options={situsOpts} />
+                <FR label="EIN" value={data.taxId} field="taxId" tabIdx={2} />
+                <FR label="SIC Code" value={data.sic} field="sic" tabIdx={3} />
+                <FR label="# Locations" value={data.numLocations} field="numLocations" tabIdx={4} />
+                <FR label="State / Situs" value={data.groupSitus} field="groupSitus" options={situsOpts} tabIdx={5} />
               </div>
               <div>
-                <FR label="Employer Size" value={data.employerSize} field="employerSize" options={empSizeOpts} />
-                <FR label="Structure" value={data.corporateStructure} field="corporateStructure" options={corpStructOpts} />
-                <FR label="Type" value={data.employerType} field="employerType" options={empTypeOpts} />
-                <FR label="Market Segment" value={data.marketSize} field="marketSize" options={mktOpts} />
-                <FR label="Funding Method" value={data.fundingMethod} field="fundingMethod" options={fundOpts} />
+                <FR label="Employer Size" value={data.employerSize} field="employerSize" options={empSizeOpts} tabIdx={6} />
+                <FR label="Structure" value={data.corporateStructure} field="corporateStructure" options={corpStructOpts} tabIdx={7} />
+                <FR label="Type" value={data.employerType} field="employerType" options={empTypeOpts} tabIdx={8} />
+                <FR label="Market Segment" value={data.marketSize} field="marketSize" options={mktOpts} tabIdx={9} />
+                <FR label="Funding Method" value={data.fundingMethod} field="fundingMethod" options={fundOpts} tabIdx={10} />
               </div>
             </div>
 
@@ -17032,21 +17519,30 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
           <div style={{ padding:"14px 16px" }}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
               {[
-                { label:"Pre-Renewal",    ...prCount },
-                { label:"Renewal",        ...rnCount },
-                { label:"Open Enrollment",...oeCount },
-                { label:"Post-OE",        ...postCount },
-                { label:"Compliance",     ...compCount },
-                { label:"Misc / Ongoing", ...miscCount2 },
+                { label:"Pre-Renewal",    section:"prerenewal", ...prCount },
+                { label:"Renewal",        section:"renewal",    ...rnCount },
+                { label:"Open Enrollment",section:"oe",         ...oeCount },
+                { label:"Post-OE",        section:"postoe",     ...postCount },
+                { label:"Compliance",     section:"compliance", ...compCount },
+                { label:"Misc / Ongoing", section:"tasks",      ...miscCount2 },
               ].map(cat => {
                 const allDone = cat.total > 0 && cat.done === cat.total;
                 return (
-                  <div key={cat.label} style={{
-                    padding:"10px 12px", borderRadius:10, border:"1px solid #e2e8f0",
-                    background: allDone ? "#f0fdf4" : "#f8fafc",
-                    borderColor: allDone ? "#86efac" : "#e2e8f0",
-                  }}>
-                    <div style={{ fontSize:11, color: allDone?"#166534":"#64748b", marginBottom:4 }}>{cat.label}</div>
+                  <div key={cat.label}
+                    onClick={() => onNavigateSection && onNavigateSection(cat.section)}
+                    style={{
+                      padding:"10px 12px", borderRadius:10, border:"1px solid #e2e8f0",
+                      background: allDone ? "#f0fdf4" : "#f8fafc",
+                      borderColor: allDone ? "#86efac" : "#e2e8f0",
+                      cursor:"pointer", transition:"box-shadow .15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,.1)"}
+                    onMouseLeave={e => e.currentTarget.style.boxShadow="none"}>
+                    <div style={{ fontSize:11, color: allDone?"#166534":"#64748b", marginBottom:4,
+                      display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      {cat.label}
+                      <span style={{ fontSize:9, opacity:.5 }}>→</span>
+                    </div>
                     <div style={{ fontSize:16, fontWeight:800, color: allDone?"#166534":"#1e2d3d", marginBottom:6 }}>
                       {cat.done} / {cat.total||"—"}
                     </div>
@@ -17069,7 +17565,8 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
         <div style={card}>
           <div style={cardHdr("#78873c")}>
             <div style={hdrTitle}><div style={accentBar("#78873c")} />Compliance Snapshot</div>
-            <button onClick={()=>{}} style={{ background:"none", border:"none", fontSize:12,
+            <button onClick={()=> onNavigateSection && onNavigateSection("compliance")}
+              style={{ background:"none", border:"none", fontSize:12,
               color:"#4b7896", cursor:"pointer", fontFamily:"inherit", fontWeight:600,
               textDecoration:"underline", padding:0 }}>View all —</button>
           </div>
@@ -17286,10 +17783,10 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
                 : data.medicareEligibility==="plan_primary" ? "Plan Primary"
                 : data.medicareEligibility
             } field="medicareEligibility" options={["medicare_primary","plan_primary"]} />
-            <FR label="Payroll System"    value={data.payrollSystem}    field="payrollSystem" />
-            <FR label="Payroll Frequency" value={data.payrollFrequency} field="payrollFrequency"
+            <FR label="Payroll System"    value={data.payrollSystem}    field="payrollSystem" tabIdx={54} />
+            <FR label="Payroll Frequency" value={data.payrollFrequency} field="payrollFrequency" tabIdx={55}
               options={["Weekly (52)","Weekly (48)","Bi-weekly (26)","Bi-weekly (24)","Semi-monthly","Monthly"]} />
-            <FR label="Benefit Admin"     value={data.benefitAdminSystem} field="benefitAdminSystem" />
+            <FR label="Benefit Admin"     value={data.benefitAdminSystem} field="benefitAdminSystem" tabIdx={56} />
             {/* EDI Feeds — badge in read, select in edit */}
             <div style={{ display:"flex", gap:8, padding:"4px 0", alignItems:"center" }}>
               <span style={{ ...fieldLbl, width:140 }}>EDI Feeds</span>
@@ -17340,12 +17837,8 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
 // ── Client Benefits Tab ───────────────────────────────────────────────────────
 // Full editor with BENEFIT_GROUPS sub-navigation in the left sidebar
 
-function ClientBenefits({ data, set, setData, carriersData, currentUser,
-  setBenefitCarrier, otherCarrierText, setOtherCarrierText, applyPreRenewalRules, plansLibrary }) {
-
-  const [activeGroup, setActiveGroup] = React.useState("core");
-  const [activeBenefit, setActiveBenefit] = React.useState(null);
-  const [showPicker, setShowPicker] = React.useState(false);
+function ClientBenefits({ data, set, setData, setIsDirty, carriersData, currentUser,
+  setBenefitCarrier, otherCarrierText, setOtherCarrierText, applyPreRenewalRules, plansLibrary, contributionMethodsLibrary, initialBenefit }) {
 
   const ba = data.benefitActive || {};
 
@@ -17359,14 +17852,32 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
     return BENEFITS_SCHEMA.filter(b => b.group === groupId && !!ba[b.id]);
   }
 
+  // Compute initial group from initialBenefit
+  const initGroup = initialBenefit
+    ? (BENEFIT_GROUPS.find(g => BENEFITS_SCHEMA.find(b => b.id === initialBenefit && b.group === g.id))?.id || "core")
+    : "core";
+
+  const [activeGroup, setActiveGroup] = React.useState(initGroup);
+  const [activeBenefit, setActiveBenefit] = React.useState(() => {
+    // If a specific benefit was deep-linked, use it
+    if (initialBenefit) return initialBenefit;
+    // Otherwise pick the first active benefit in the initial group
+    return BENEFITS_SCHEMA.find(b => b.group === initGroup && !!ba[b.id])?.id || null;
+  });
+  const [showPicker, setShowPicker] = React.useState(false);
+
   const currentGroup = BENEFIT_GROUPS.find(g => g.id === activeGroup) || BENEFIT_GROUPS[0];
   const activeBenefitsInGroup = groupActiveBenefits(activeGroup);
 
-  // Auto-select first benefit in group when group changes
+  // When the user switches groups manually, auto-select first benefit in that group
+  const prevGroupRef = React.useRef(activeGroup);
   React.useEffect(() => {
-    const first = activeBenefitsInGroup[0];
-    setActiveBenefit(first?.id || null);
-  }, [activeGroup, JSON.stringify(Object.keys(ba))]);
+    if (prevGroupRef.current !== activeGroup) {
+      prevGroupRef.current = activeGroup;
+      const first = groupActiveBenefits(activeGroup)[0];
+      setActiveBenefit(first?.id || null);
+    }
+  }, [activeGroup]);
 
   const selectedBenefit = BENEFITS_SCHEMA.find(b => b.id === activeBenefit);
 
@@ -17394,8 +17905,9 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
     if (active) setActiveBenefit(id);
   }
 
-  // Update a plan field
+  // Update a plan field — mark dirty so autosave fires
   function updatePlan(benefitId, idx, field, val) {
+    if (setIsDirty) setIsDirty(true);
     setData(p => {
       const plans = [...((p.benefitPlans || {})[benefitId] || [])];
       plans[idx] = { ...plans[idx], [field]: val };
@@ -17404,6 +17916,7 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
   }
 
   function setPlans(benefitId, plans) {
+    if (setIsDirty) setIsDirty(true);
     setData(p => ({ ...p, benefitPlans: { ...(p.benefitPlans || {}), [benefitId]: plans } }));
   }
 
@@ -17573,7 +18086,7 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
             {selectedBenefit && activeBenefit && (
               <BenefitLineEditor
                 benefit={selectedBenefit}
-                data={data} set={set} setData={setData}
+                data={data} set={set} setData={setData} setIsDirty={setIsDirty}
                 carriersData={carriersData}
                 carriersFor={carriersFor}
                 updatePlan={updatePlan}
@@ -17585,6 +18098,7 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
                   setActiveBenefit(activeBenefitsInGroup.find(b => b.id !== selectedBenefit.id)?.id || null);
                 }}
                 applyPreRenewalRules={applyPreRenewalRules}
+                contributionMethodsLibrary={contributionMethodsLibrary}
               />
             )}
           </div>
@@ -17596,9 +18110,9 @@ function ClientBenefits({ data, set, setData, carriersData, currentUser,
 
 // ── Individual Benefit Line Editor ────────────────────────────────────────────
 
-function BenefitLineEditor({ benefit, data, set, setData, carriersData,
+function BenefitLineEditor({ benefit, data, set, setData, setIsDirty, carriersData,
   carriersFor, updatePlan, setPlans, groupColor, onRemove, applyPreRenewalRules,
-  plansLibrary }) {
+  plansLibrary, contributionMethodsLibrary }) {
 
   const catId = benefit.id;
   const currentCarrier = (data.benefitCarriers || {})[catId] || "";
@@ -17618,7 +18132,9 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
   const isGrandfathered     = !!(data.benefitGrandfathered || {})[catId];
 
   function setField(field, val) {
-    setData(p => ({ ...p, [field]: { ...(p[field]||{}), [catId]: val } }));
+    // Mark dirty and merge properly using functional setData to avoid stale closure
+    if (setIsDirty) setIsDirty(true);
+    setData(p => ({ ...p, [field]: { ...(p[field] || {}), [catId]: val } }));
   }
 
   // ── Billing method constraints ──────────────────────────────────────────
@@ -17912,11 +18428,14 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
                 )}
               </label>
               <label style={{ ...labelStyle }}>
-                Contribution Method
+                EE-ER Cost Sharing
                 <select value={benefitContribution} onChange={e => setField("benefitContribution", e.target.value)}
                   style={{ ...inputStyle, marginTop: 3 }}>
                   <option value="">— Select —</option>
-                  {["Employer-Paid","Contributory","Voluntary","Split","N/A"].map(c => <option key={c}>{c}</option>)}
+                  {((contributionMethodsLibrary||[]).length
+                    ? [...contributionMethodsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)
+                    : ["Employer-Paid","Contributory","Voluntary","Split","N/A"]
+                  ).map(c => <option key={c}>{c}</option>)}
                 </select>
               </label>
               {isACA && (
@@ -18016,8 +18535,8 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
               Commission
               <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
                 <select value={commission.type || ""}
-                  onChange={e => setData(p => ({ ...p, benefitCommissions: { ...(p.benefitCommissions||{}),
-                    [catId]: { ...(p.benefitCommissions?.[catId]||{}), type: e.target.value, amount: "" } } }))}
+                  onChange={e => { if (setIsDirty) setIsDirty(true); setData(p => ({ ...p, benefitCommissions: { ...(p.benefitCommissions||{}),
+                    [catId]: { ...(p.benefitCommissions?.[catId]||{}), type: e.target.value, amount: "" } } })); }}
                   style={{ padding: "8px 8px", border: "1.5px solid #e2e8f0", borderRadius: 8,
                     fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#334155",
                     flex: "0 0 90px" }}>
@@ -18031,9 +18550,9 @@ function BenefitLineEditor({ benefit, data, set, setData, carriersData,
                         border: "1.5px solid #e2e8f0", borderRight: "none",
                         borderRadius: "8px 0 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>$</span>
                     )}
-                    <input type="text" inputMode="decimal" value={commission.amount || ""}
-                      onChange={e => setData(p => ({ ...p, benefitCommissions: { ...(p.benefitCommissions||{}),
-                        [catId]: { ...(p.benefitCommissions?.[catId]||{}), amount: e.target.value.replace(/[^0-9.]/g,"") } } }))}
+                    <DebouncedInput type="text" inputMode="decimal" value={commission.amount || ""}
+                      onChange={v => { if (setIsDirty) setIsDirty(true); setData(p => ({ ...p, benefitCommissions: { ...(p.benefitCommissions||{}),
+                        [catId]: { ...(p.benefitCommissions?.[catId]||{}), amount: v.replace(/[^0-9.]/g,"") } } })); }}
                       placeholder="0"
                       style={{ padding: "8px 10px", border: "1.5px solid #e2e8f0", fontSize: 13,
                         fontFamily: "inherit", textAlign: "right", flex: 1, color: "#0f172a",

@@ -36,7 +36,8 @@ export async function fetchClients() {
       name:             row.legal_name    || base.name             || '',
       clientStatus:     row.status        ? (row.status.charAt(0).toUpperCase() + row.status.slice(1)) : (base.clientStatus || 'Active'),
       marketSize:       row.market_segment || base.marketSize      || '',
-      employerType:     row.employer_size  || base.employerType    || '',
+      employerSize:     row.employer_size  || base.employerSize    || '',
+      employerType:     row.employer_type  || base.employerType    || '',
       fundingMethod:    row.funding_method || base.fundingMethod   || '',
       groupSitus:       row.situs_state    || base.groupSitus      || '',
       totalEligible:    row.eligible_employee_count != null ? String(row.eligible_employee_count) : (base.totalEligible || ''),
@@ -74,7 +75,8 @@ export async function upsertClient(clientData) {
     status:               (clientData.clientStatus    || 'Active').toLowerCase(),
     market_size:          clientData.marketSize        || '',
     market_segment:       clientData.marketSize        || '',
-    employer_size:        clientData.employerType      || '',
+    employer_size:        clientData.employerSize      || '',
+    employer_type:        clientData.employerType      || '',
     funding_method:       clientData.fundingMethod     || '',
     renewal_date:         clientData.renewalDate       || null,
     renewal_month:        clientData.renewalDate
@@ -184,6 +186,9 @@ export async function fetchTasks() {
     carriers: row.carriers || [],
     funding: row.funding || [],
     states: row.states || [],
+    employerSizes: row.employer_sizes || [],
+    employerTypes: row.employer_types || [],
+    corpStructures: row.corp_structures || [],
     defaultAssignee: row.default_assignee || '',
     dueDateRule: row.due_date_rule || '',
     recurrence: row.recurrence || null,
@@ -202,6 +207,9 @@ export async function upsertTask(task) {
     carriers: task.carriers || [],
     funding: task.funding || [],
     states: task.states || [],
+    employer_sizes: task.employerSizes || [],
+    employer_types: task.employerTypes || [],
+    corp_structures: task.corpStructures || [],
     default_assignee: task.defaultAssignee || '',
     due_date_rule: task.dueDateRule || '',
     recurrence: task.recurrence || null,
@@ -254,23 +262,38 @@ export async function deleteDDR(id) {
 export async function fetchMeetings() {
   const { data, error } = await supabase.from('meetings').select('*').order('created_at', { ascending: false })
   if (error) { console.error('fetchMeetings error:', error); return null }
-  return data.map(row => row.data ? { ...row.data, id: row.id } : row)
+  // Use meeting_id as the app-facing id so saves and loads use the same key
+  return data.map(row => {
+    const base = row.data ? { ...row.data } : {}
+    const appId = row.meeting_id || base.id
+    return { ...base, id: appId, _dbId: row.id }
+  })
 }
 
 export async function upsertMeeting(meeting) {
-  const { error } = await supabase.from('meetings').upsert({
-    id: meeting.id,
+  const payload = {
     meeting_id: meeting.id,
     team: meeting.team || '',
     date: meeting.date || null,
     data: meeting,
     updated_at: new Date().toISOString(),
-  })
-  if (error) console.error('upsertMeeting error:', error)
+  }
+  // id column is uuid (auto-generated) — never pass it from the app
+  // Use meeting_id (text) to find existing rows
+  const { data: existing } = await supabase
+    .from('meetings').select('id').eq('meeting_id', meeting.id).maybeSingle()
+  if (existing) {
+    const { error } = await supabase.from('meetings').update(payload).eq('meeting_id', meeting.id)
+    if (error) console.error('upsertMeeting update error:', error)
+  } else {
+    const { error } = await supabase.from('meetings').insert(payload)
+    if (error) console.error('upsertMeeting insert error:', error)
+  }
 }
 
 export async function deleteMeeting(id) {
-  const { error } = await supabase.from('meetings').delete().eq('id', id)
+  // id is the app-facing meeting_id (text), not the uuid db id
+  const { error } = await supabase.from('meetings').delete().eq('meeting_id', id)
   if (error) console.error('deleteMeeting error:', error)
 }
 // ── TEAMS ─────────────────────────────────────────────────────────────────────
