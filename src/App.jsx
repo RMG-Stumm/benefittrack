@@ -7644,6 +7644,10 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
   const [filterTeam, setFilterTeam] = useState(isRestricted && !isMultiTeam ? (userTeamId || "All") : "All");
   const [expandedId, setExpandedId] = useState(null);
   const [notifyState, setNotifyState] = useState({}); // { memberId: "sent"|"composing" }
+  // Meeting task review filters
+  const [taskFilterClient, setTaskFilterClient] = useState("");
+  const [taskFilterCat,    setTaskFilterCat]    = useState("All");
+  const [taskFilterAssign, setTaskFilterAssign] = useState("All");
 
   const emptyForm = () => ({
     id: "mtg_" + Date.now(),
@@ -7974,13 +7978,52 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
             <div>
               <div style={{ fontSize: 12, fontWeight: 800, color: "#475569", letterSpacing: "1px",
                 textTransform: "uppercase", marginBottom: 10 }}>Tasks Reviewed / Updated</div>
+
+              {/* Filter bar */}
+              {allOpenTasks.length > 0 && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <input value={taskFilterClient} onChange={e => setTaskFilterClient(e.target.value)}
+                    placeholder="Search client..."
+                    style={{ padding: "5px 10px", border: "1px solid #e2e8f0", borderRadius: 7,
+                      fontSize: 12, fontFamily: "inherit", width: 160 }} />
+                  <select value={taskFilterCat} onChange={e => setTaskFilterCat(e.target.value)}
+                    style={{ padding: "5px 10px", border: "1px solid #e2e8f0", borderRadius: 7,
+                      fontSize: 12, fontFamily: "inherit" }}>
+                    <option value="All">All Categories</option>
+                    {["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Transactions"].map(c =>
+                      <option key={c} value={c}>{c}</option>
+                    )}
+                  </select>
+                  <select value={taskFilterAssign} onChange={e => setTaskFilterAssign(e.target.value)}
+                    style={{ padding: "5px 10px", border: "1px solid #e2e8f0", borderRadius: 7,
+                      fontSize: 12, fontFamily: "inherit" }}>
+                    <option value="All">All Assignees</option>
+                    {[...new Set(allOpenTasks.map(t => t.assignee).filter(Boolean))].sort().map(a =>
+                      <option key={a} value={a}>{a}</option>
+                    )}
+                  </select>
+                  {(taskFilterClient || taskFilterCat !== "All" || taskFilterAssign !== "All") && (
+                    <button type="button"
+                      onClick={() => { setTaskFilterClient(""); setTaskFilterCat("All"); setTaskFilterAssign("All"); }}
+                      style={{ fontSize: 11, color: "#ef4444", background: "none", border: "none",
+                        cursor: "pointer", fontWeight: 700, textDecoration: "underline" }}>
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              )}
+
               {allOpenTasks.length === 0 ? (
                 <div style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>No open tasks for this team.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {/* Group by client, sorted by days to renewal */}
                   {Object.entries(
-                    allOpenTasks.reduce((acc, t) => {
+                    allOpenTasks
+                      .filter(t => !taskFilterClient || t.clientName.toLowerCase().includes(taskFilterClient.toLowerCase()))
+                      .filter(t => taskFilterCat === "All" || t.category === taskFilterCat)
+                      .filter(t => taskFilterAssign === "All" || (t.assignee||"") === taskFilterAssign)
+                      .reduce((acc, t) => {
                       if (!acc[t.clientId]) acc[t.clientId] = { name: t.clientName, tasks: [], days: t._daysToRenewal };
                       acc[t.clientId].tasks.push(t);
                       return acc;
@@ -10399,10 +10442,21 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
               return {name:a, total:tasks.length, overdue:overdue.length, next};
             }).sort((a,b) => b.overdue - a.overdue);
 
-          const perf = Object.entries(perfByMember)
-            .filter(([a]) => a !== "Unassigned")
-            .map(([name, {total,onTime}]) => ({name, rate:total>0?Math.round((onTime/total)*100):null, total}))
-            .filter(p => p.total > 0).sort((a,b) => (a.rate||0)-(b.rate||0));
+          // All unique members across all teams the user can see
+          const allTeamMembers = [...new Set(
+            (isLead ? teams : teams.filter(t => (userTeams||[]).includes(t.id)))
+              .flatMap(t => (t.members||[]).map(m => m.name))
+          )];
+          const perf = allTeamMembers.map(name => {
+            const p = perfByMember[name];
+            return { name, rate: p && p.total > 0 ? Math.round((p.onTime/p.total)*100) : null, total: p?.total || 0 };
+          }).sort((a,b) => {
+            // Members with data first (sorted by rate), then no-data members alphabetically
+            if (a.rate !== null && b.rate !== null) return (a.rate||0) - (b.rate||0);
+            if (a.rate !== null) return -1;
+            if (b.rate !== null) return 1;
+            return (a.name||"").localeCompare(b.name||"");
+          });
 
           // ── Styled sub-components ─────────────────────────────────────────
           function Panel({title, sub, children, accent}) {
