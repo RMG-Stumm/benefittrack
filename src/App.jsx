@@ -10111,7 +10111,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
       <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
 
         {/* Top bar */}
-        <div style={{ background: BOB.topbarBg, borderBottom: `1px solid ${BOB.topbarBorder}`, padding: "0 28px", height: 54, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 4px rgba(43,58,74,0.06)" }}>
+        <div style={{ background: BOB.topbarBg, borderBottom: `1px solid ${BOB.topbarBorder}`, padding: "0 28px", height: view === "client" ? 0 : 54, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50, boxShadow: view === "client" ? "none" : "0 1px 4px rgba(43,58,74,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: BOB.textPrimary, letterSpacing: "-0.3px" }}>
               {view === "client" ? (selectedClient?.name || "Client") : (NAV_ITEMS.find(n => n.id === view)?.label || "BOB")}
@@ -10202,7 +10202,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
         </div>
 
         {/* Page content */}
-        <div style={{ flex: 1, padding: view === "client" ? "0" : "22px 28px 32px" }}>
+        <div style={{ flex: 1, padding: view === "client" ? "0" : "22px 28px 32px", margin: 0 }}>
 
 
 
@@ -16207,6 +16207,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
     return applyDueDateRulesToClient(base, tasksDb, dueDateRules);
   });
   const [isDirty, setIsDirty] = React.useState(false);
+  const [overviewEditMode, setOverviewEditMode] = React.useState(false);
 
   // Sync when client prop changes externally
   React.useEffect(() => {
@@ -16367,34 +16368,39 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
   const ss = statusStyles[client.clientStatus] || statusStyles.Active;
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 54px)", overflow: "hidden", background: "#f4f7f9" }}>
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: `linear-gradient(to right, #2b3a4a 220px, #f4f7f9 220px)`, margin: 0, padding: 0 }}>
 
       {/* Client sidebar */}
-      <div style={{ width: 200, flexShrink: 0, background: BOB.sidebar,
-        borderRight: `1px solid ${BOB.sidebarBorder}`,
+      <div style={{ width: 220, flexShrink: 0, background: BOB.sidebar,
         display: "flex", flexDirection: "column", overflowY: "auto" }}>
 
         {/* Client identity */}
-        <div style={{ padding: "14px 14px 10px", borderBottom: `1px solid ${BOB.sidebarBorder}` }}>
+        <div style={{ padding: "14px 14px 12px", borderBottom: `1px solid ${BOB.sidebarBorder}` }}>
           <button onClick={onClose} style={{ background: "none", border: "none", color: BOB.navText,
-            fontSize: 11, cursor: "pointer", padding: 0, marginBottom: 8, fontFamily: "inherit",
-            display: "flex", alignItems: "center", gap: 4 }}>
+            fontSize: 11, cursor: "pointer", padding: 0, marginBottom: 10, fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 4, opacity: 0.7 }}>
             ← Back
           </button>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1.3, marginBottom: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", lineHeight: 1.3, marginBottom: 8 }}>
             {client.name}
           </div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 99,
-              background: ss.bg, color: ss.color }}>{client.clientStatus || "Active"}</span>
-            {team && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 99,
-              background: team.color, color: team.text }}>{team.label}</span>}
-          </div>
-          {clientRenewal && (
-            <div style={{ marginTop: 6, fontSize: 10, color: BOB.navText }}>
-              Stage: <span style={{ color: "#e8f2f8", fontWeight: 600 }}>{currentStage?.name || "—"}</span>
+          {team && (
+            <div style={{ marginBottom: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+                background: client.team==="Juliet" ? "#CDF3DD" : client.team==="India" ? "#D6EFFE" : team.color,
+                color: client.team==="Juliet" ? "#1a6e3c" : client.team==="India" ? "#1565c0" : team.text,
+                border: `1px solid ${team.border}` }}>
+                Team: {team.label}
+              </span>
             </div>
           )}
+          <div style={{ fontSize: 11, color: "#7a9ab5" }}>
+            {client.renewalDate && (() => {
+              const d = new Date(client.renewalDate+"T12:00:00");
+              const days = Math.ceil((d - new Date()) / 86400000);
+              return `${d.toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"})} · ${Math.abs(days)}d`;
+            })()}
+          </div>
         </div>
 
         {/* Nav items */}
@@ -16435,7 +16441,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
       </div>
 
       {/* Main content */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+      <div style={{ flex: 1, overflowY: "auto" }}>
 
         {/* Overview */}
         {activeSection === "overview" && (
@@ -16451,6 +16457,10 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             employerTypesLibrary={employerTypesLibrary}
             employerSizeLibrary={employerSizeLibrary}
             corporateStructureLibrary={corporateStructureLibrary}
+            carriersData={carriersData}
+            onNavigateDocs={() => setActiveSection("documents")}
+            onEditPage={() => setOverviewEditMode(e => !e)}
+            editMode={overviewEditMode}
           />
         )}
 
@@ -16600,398 +16610,727 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
 
 
 // ── Client Overview Tab ───────────────────────────────────────────────────────
-
 function ClientOverview({ data, set, setData, client, team, currentUser,
   tasksDb, dueDateRules, clientRenewal, currentStage, renewalStages, onUpdateRenewal, teams,
   salespersonsLibrary, marketsLibrary, fundingLibrary, situsLibrary,
-  employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary }) {
+  employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary,
+  onNavigateDocs, onEditPage, editMode, carriersData }) {
 
-  // Label maps for stored codes
-  const CONTINUATION_LABELS = {
-    cobra: "COBRA", state_cont: "State Continuation",
-  };
-  const MEDICARE_LABELS = {
-    medicare_primary: "Medicare Primary", plan_primary: "Plan Primary",
-  };
-  const MARKET_SIZES = ["ACA","Mid-Market","Large","National"];
-  const FUNDING_METHODS = ["Fully Insured","Level-Funded","Self-Funded","COBRA Only"];
-  const PAYROLL_FREQS = ["Weekly","Bi-Weekly","Semi-Monthly","Monthly"];
+  // ── Derived values ──────────────────────────────────────────────────────────
+  const mktOpts  = (marketsLibrary||[]).length ? [...marketsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
+  const fundOpts = (fundingLibrary||[]).length  ? [...fundingLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)  : FUNDING_METHODS;
+  const situsOpts = (situsLibrary||[]).length   ? [...situsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)   : [];
+  const empSizeOpts   = (employerSizeLibrary||[]).length       ? [...employerSizeLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)       : ["Small Employer","Applicable Large Employer (ALE)"];
+  const corpStructOpts = (corporateStructureLibrary||[]).length ? [...corporateStructureLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : [];
+  const empTypeOpts   = (employerTypesLibrary||[]).length      ? [...employerTypesLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)      : [];
+  const salesOpts     = (salespersonsLibrary||[]).length       ? [...salespersonsLibrary].sort((a,b)=>(a.order??0)-(b.order??0))                        : [{label:"SI"},{label:"Lock"},{label:"Amanda"},{label:"Anthony"},{label:"Holly"},{label:"Jaclyn"},{label:"Jonathon"},{label:"Rob"},{label:"Steve"},{label:"BDT"}];
 
-  // Collect due-soon / overdue tasks
-  const today = new Date();
-  const in30 = new Date(); in30.setDate(today.getDate() + 30);
-  const dueSoon = [];
-  function checkTask(t, label) {
-    if (!t || typeof t !== 'object') return;
-    const due = t.dueDate;
-    if (!due || t.status === 'Complete' || t.status === 'N/A') return;
-    const d = new Date(due + 'T12:00:00');
-    if (d < today && t.status !== 'Complete') dueSoon.push({ label, due, assignee: t.assignee, overdue: true });
-    else if (d >= today && d <= in30) dueSoon.push({ label, due, assignee: t.assignee });
+  const selectedEmpType = (employerTypesLibrary||[]).find(x => x.label === data.employerType);
+  const isErisa = selectedEmpType ? selectedEmpType.subjectToERISA !== false : null;
+
+  // Medical enrolled auto-sum
+  const medPlans = (data.benefitPlans||{}).medical || [];
+  const medEnrolled = medPlans.length
+    ? medPlans.reduce((s,pl) => {
+        if (pl.ageBands?.length) return s + pl.ageBands.reduce((ss,b)=>ss+(parseInt(b.enrolled)||0),0);
+        return s + ["ee","es","ec","ff"].reduce((ss,k)=>ss+(parseInt((pl.enrolled||{})[k])||0),0);
+      }, 0)
+    : null;
+
+  // Task counts per category
+  function countCat(tasks) {
+    const entries = Object.values(tasks||{});
+    const done  = entries.filter(t => { const s = typeof t==="object" ? t.status : t; return s==="Complete"||s==="N/A"; }).length;
+    const total = entries.length;
+    return { done, total, pct: total ? Math.round((done/total)*100) : 0 };
   }
-  Object.entries(data.preRenewal || {}).forEach(([k,v]) => checkTask(v, k.replace(/_/g,' ')));
-  Object.entries(data.compliance || {}).forEach(([k,v]) => checkTask(v, k.replace(/_/g,' ')));
+  const prCount = countCat(data.preRenewal||{});
+  const rnCount = (() => {
+    const all = [
+      data.renewalMeeting ? (typeof data.renewalMeeting==="object" ? data.renewalMeeting.status : data.renewalMeeting) : null,
+      ...Object.values(data.renewalTasksAuto||{}).map(t=>t.status||"Not Started"),
+      ...(data.renewalTasks||[]).map(t=>t.status||"Not Started"),
+    ].filter(Boolean);
+    const done = all.filter(s=>s==="Complete"||s==="N/A").length;
+    return { done, total: all.length, pct: all.length ? Math.round((done/all.length)*100) : 0 };
+  })();
+  const oeCount = (() => {
+    const oe = data.openEnrollment||{};
+    const active = OE_MATERIAL_TASKS.filter(t =>
+      (t.material==="eguide"&&(oe.materials||{}).eguide)||(t.material==="paper"&&(oe.materials||{}).paper)||
+      (t.material==="memo"&&(oe.materials||{}).memo)||(t.material==="si_en"&&oe.enrollMethod==="si_en")||
+      (t.material==="si_ub"&&oe.enrollMethod==="si_ub")||(t.material==="form"&&oe.enrollMethod==="form")||
+      (t.material==="translation"&&oe.translationNeeded)
+    );
+    if (!active.length) return { done:0, total:0, pct:0 };
+    const done = active.filter(t=>{const s=getTaskStatus((oe.tasks||{})[t.id]);return s==="Complete"||s==="N/A";}).length;
+    return { done, total: active.length, pct: active.length ? Math.round((done/active.length)*100) : 0 };
+  })();
+  const postCount = (() => {
+    const pof = data.postOEFixed||{};
+    const fixed = ["elections_received","oe_changes_processed","carrier_bill_audited","lineup_updated","oe_wrapup_email"].map(id=>(pof[id]||{}).status||"Not Started");
+    const manual = (data.postOETasks||[]).map(t=>t.status||"Not Started");
+    const all = [...fixed, ...manual];
+    const done = all.filter(s=>s==="Complete"||s==="N/A").length;
+    return { done, total: all.length, pct: all.length ? Math.round((done/all.length)*100) : 0 };
+  })();
+  const compCount = (() => {
+    const tasks = COMPLIANCE_TASKS.filter(t => !(t.id==="aca_filing" && isACAFilingExempt(data)));
+    const done = tasks.filter(t=>{const s=getTaskStatus((data.compliance||{})[t.id]);return s==="Complete"||s==="N/A";}).length;
+    return { done, total: tasks.length, pct: tasks.length ? Math.round((done/tasks.length)*100) : 0 };
+  })();
+  const miscCount2 = (() => {
+    const all = data.miscTasks||[];
+    const done = all.filter(t=>t.status==="Complete"||t.status==="N/A").length;
+    return { done, total: all.length, pct: all.length ? Math.round((done/all.length)*100) : 0 };
+  })();
 
-  // Editable field components
-  const Field = ({ label, field, placeholder, type = "text" }) => (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-      <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>{label}</div>
-      <DebouncedInput type={type} value={data[field] || ""} placeholder={placeholder || "—"}
-        onChange={v => set(field, v)}
-        style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
-          fontSize: 12, fontFamily: "inherit", color: "#1a2733", background: "#fff",
-          outline: "none" }} />
-    </div>
-  );
+  // Compliance snapshot — first 6 tasks with a status
+  const complianceSnapshot = COMPLIANCE_TASKS.filter(t => !(t.id==="aca_filing" && isACAFilingExempt(data))).slice(0,6).map(t => {
+    const raw = (data.compliance||{})[t.id];
+    const status = typeof raw==="object" ? raw.status||"Not Started" : raw||"Not Started";
+    return { label: t.label, status };
+  });
 
-  const SelectField = ({ label, field, options, placeholder }) => (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-      <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>{label}</div>
-      <select value={data[field] || ""} onChange={e => set(field, e.target.value)}
-        style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
-          fontSize: 12, fontFamily: "inherit", color: data[field] ? "#1a2733" : "#94a3b8",
-          background: "#fff", cursor: "pointer" }}>
-        <option value="">{placeholder || "— Select —"}</option>
-        {options.map(o => typeof o === 'string'
-          ? <option key={o} value={o}>{o}</option>
-          : <option key={o.val} value={o.val}>{o.label}</option>
-        )}
-      </select>
-    </div>
-  );
+  // Renewal stage timeline
+  const STAGE_LABELS = ["Census Received","Quotes Requested","Analysis Prepared","Client Presented","Implementation"];
+  const currentStageIdx = renewalStages.findIndex(s => s.id === clientRenewal?.stage_id);
 
-  const CheckboxField = ({ label, field }) => (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-      <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>{label}</div>
-      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-        <input type="checkbox" checked={!!data[field]}
-          onChange={e => set(field, e.target.checked)}
-          style={{ accentColor: "#4b7896", width: 14, height: 14 }} />
-        <span style={{ fontSize: 12, color: "#1a2733" }}>{data[field] ? "Yes" : "No"}</span>
-      </label>
-    </div>
-  );
+  // Shared styles
+  const card = { background:"#fff", border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden", marginBottom:16 };
+  const cardHdr = (accent) => ({
+    display:"flex", alignItems:"center", justifyContent:"space-between",
+    padding:"10px 16px", borderBottom:"1px solid #f1f5f9",
+    background:"#f8fafc",
+  });
+  const accentBar = (color) => ({ width:3, height:14, borderRadius:99, background:color, flexShrink:0, marginRight:8 });
+  const hdrTitle = { display:"flex", alignItems:"center", fontSize:13, fontWeight:700, color:"#1e2d3d" };
+  const editBtn = {
+    fontSize:11, padding:"3px 12px", borderRadius:6, border:"1px solid #e2e8f0",
+    background:"#fff", color:"#64748b", cursor:"pointer", fontFamily:"inherit", fontWeight:600,
+  };
+  const fieldLbl = { fontSize:11, color:"#64748b", flexShrink:0, lineHeight:"22px" };
+  const fieldVal = { fontSize:12, color:"#1e293b", fontWeight:500 };
+  const editInlineStyle = { fontSize:12, padding:"3px 7px", border:"1px solid #93c5fd",
+    borderRadius:5, fontFamily:"inherit", color:"#1e293b", background:"#f0f7ff",
+    outline:"none", width:"100%" };
 
-  const MultiCheckField = ({ label, field, options }) => {
-    const vals = data[field] || [];
+  // Field row — read-only by default, editable when editMode is true
+  function FR({ label, value, placeholder, field, type, options }) {
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", marginBottom: 8, gap: 8 }}>
-        <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0, paddingTop: 2 }}>{label}</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {options.map(o => {
-            const isChecked = vals.includes(o.val);
-            return (
-              <label key={o.val} style={{ display: "flex", alignItems: "center", gap: 4,
-                cursor: "pointer", padding: "3px 8px", borderRadius: 6, fontSize: 11,
-                border: `1px solid ${isChecked ? "#4b7896" : "#e2e8f0"}`,
-                background: isChecked ? "#dce8f0" : "#f8fafc",
-                color: isChecked ? "#2d4a6b" : "#64748b", fontWeight: isChecked ? 700 : 400 }}>
-                <input type="checkbox" checked={isChecked}
-                  onChange={() => set(field, isChecked
-                    ? vals.filter(v => v !== o.val)
-                    : [...vals, o.val])}
-                  style={{ accentColor: "#4b7896", width: 12, height: 12 }} />
-                {o.label}
-              </label>
-            );
-          })}
-        </div>
+      <div style={{ display:"flex", gap:8, padding:"4px 0", borderBottom:"1px solid #f8fafc", alignItems:"center" }}>
+        <span style={{ ...fieldLbl, width:140 }}>{label}</span>
+        {editMode && field ? (
+          options ? (
+            <select value={data[field]||""} onChange={e => set(field, e.target.value)}
+              style={{ flex:1, fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd",
+                borderRadius:5, fontFamily:"inherit", color:"#1e293b", background:"#f0f7ff" }}>
+              <option value="">— Select —</option>
+              {options.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <input type={type||"text"} value={data[field]||""}
+              onChange={e => set(field, e.target.value)}
+              placeholder={placeholder||""}
+              style={{ flex:1, fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd",
+                borderRadius:5, fontFamily:"inherit", color:"#1e293b", background:"#f0f7ff",
+                outline:"none" }} />
+          )
+        ) : (
+          <span style={{ ...fieldVal }}>{value || <span style={{color:"#cbd5e1",fontStyle:"italic",fontWeight:400}}>{placeholder||"—"}</span>}</span>
+        )}
       </div>
+    );
+  }
+
+  // Progress bar
+  function ProgBar({ pct, done, total }) {
+    const color = pct===100 ? "#22c55e" : "#3b82f6";
+    return (
+      <div style={{ display:"flex", alignItems:"center", gap:8, width:"100%" }}>
+        <div style={{ flex:1, height:5, borderRadius:99, background:"#e2e8f0", overflow:"hidden" }}>
+          <div style={{ width:`${pct}%`, height:"100%", borderRadius:99, background:color, transition:"width .3s" }} />
+        </div>
+        <span style={{ fontSize:11, fontWeight:700, color: pct===100?"#166534":"#64748b", width:32, textAlign:"right", flexShrink:0 }}>{done}/{total}</span>
+      </div>
+    );
+  }
+
+  const statusBadge = (status) => {
+    const map = {
+      "Complete":    { bg:"#dcfce7", color:"#166534" },
+      "In Progress": { bg:"#dbeafe", color:"#1e40af" },
+      "Not Started": { bg:"#f1f5f9", color:"#64748b" },
+      "N/A":         { bg:"#f1f5f9", color:"#64748b" },
+      "Required":    { bg:"#fef3c7", color:"#92400e" },
+      "Applicable":  { bg:"#fef3c7", color:"#92400e" },
+      "On File":     { bg:"#dcfce7", color:"#166534" },
+    };
+    const st = map[status] || map["Not Started"];
+    return (
+      <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99,
+        background:st.bg, color:st.color }}>{status}</span>
     );
   };
 
-  const Card = ({ title, children, accent }) => (
-    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0",
-      borderTop: `3px solid ${accent || "#4b7896"}`, padding: "16px 18px", marginBottom: 16 }}>
-      {title && <div style={{ fontSize: 13, fontWeight: 700, color: "#1a2733", marginBottom: 12,
-        paddingBottom: 8, borderBottom: "1px solid #f1f5f9" }}>{title}</div>}
-      {children}
-    </div>
-  );
-
-  // Medical enrolled auto-sum
-  const medPlans = (data.benefitPlans || {}).medical || [];
-  const medEnrolled = medPlans.length > 0
-    ? medPlans.reduce((s,pl) => {
-        if (pl.ageBands?.length > 0) return s + pl.ageBands.reduce((ss,b) => ss+(parseInt(b.enrolled)||0),0);
-        return s + ["ee","es","ec","ff"].reduce((ss,k) => ss+(parseInt((pl.enrolled||{})[k])||0),0);
-      }, 0)
-    : (data.medicalEnrolled || null);
-
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+    <div style={{ maxWidth:1200, margin:"0 auto", padding:"24px 28px" }}>
 
-      {/* ── Left column ── */}
-      <div>
-        {/* ── Client Information card ── */}
-        {(() => {
-          // Derive library-driven dropdown options
-          const situsOpts = (situsLibrary||[]).length
-            ? [...situsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x => x.label)
-            : ["Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut",
-               "Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas",
-               "Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota",
-               "Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey",
-               "New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon",
-               "Pennsylvania","Rhode Island","South Carolina","South Dakota","Tennessee","Texas",
-               "Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"];
-          const empSizeOpts = (employerSizeLibrary||[]).length
-            ? [...employerSizeLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x => x.label)
-            : ["Small Employer","Applicable Large Employer (ALE)"];
-          const corpStructOpts = (corporateStructureLibrary||[]).length
-            ? [...corporateStructureLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x => x.label)
-            : [];
-          const empTypeOpts = (employerTypesLibrary||[]).length
-            ? [...employerTypesLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x => x.label)
-            : [];
-          const selectedEmpType = (employerTypesLibrary||[]).find(x => x.label === data.employerType);
-          const isErisa = selectedEmpType ? selectedEmpType.subjectToERISA !== false : (data.employerType ? true : null);
-          const salesOpts = (salespersonsLibrary||[]).length
-            ? [...salespersonsLibrary].sort((a,b)=>(a.order??0)-(b.order??0))
-            : [{label:"SI"},{label:"Lock"},{label:"Amanda"},{label:"Anthony"},
-               {label:"Holly"},{label:"Jaclyn"},{label:"Jonathon"},{label:"Rob"},{label:"Steve"},{label:"BDT"}];
+      {/* ── STICKY HEADER ── */}
+      <div style={{ position:"sticky", top:0, zIndex:10, background:"#f4f7f9",
+        paddingBottom:12, marginBottom:8, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ fontSize:22, fontWeight:800, color:"#1e2d3d", fontFamily:"'Playfair Display',Georgia,serif" }}>
+          Client Overview
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={() => {
+            const email = data.contactEmail || data.addlContactEmail || "";
+            const subject = encodeURIComponent(`RE: ${data.name || "Client"}`);
+            window.open(`mailto:${email}?subject=${subject}`, "_blank");
+          }} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 16px",
+            border:"1.5px solid #e2e8f0", borderRadius:8, background:"#fff", fontSize:12,
+            color:"#334155", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>
+            ✉ Send Email
+          </button>
+          <button onClick={() => onNavigateDocs && onNavigateDocs()}
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 16px",
+            border:"1.5px solid #e2e8f0", borderRadius:8, background:"#fff", fontSize:12,
+            color:"#334155", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>
+            ☰ View Documents
+          </button>
+          <button onClick={() => onEditPage && onEditPage()}
+            style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 16px",
+            border:`1.5px solid ${editMode?"#166534":"#4b7896"}`,
+            borderRadius:8, background:editMode?"#dcfce7":"#4b7896", fontSize:12,
+            color:editMode?"#166534":"#fff", cursor:"pointer", fontFamily:"inherit", fontWeight:700 }}>
+            {editMode ? "✓ Done Editing" : "✎ Edit"}
+          </button>
+        </div>
+      </div>
 
-          return (
-          <Card title="Client Information" accent="#4b7896">
-            <Field label="Legal Name"         field="name" />
-            <Field label="Nature of Business" field="natureOfBusiness" />
-            <Field label="Tax ID (EIN)"       field="taxId" placeholder="XX-XXXXXXX" />
-            <Field label="SIC Code"           field="sic" />
-            <Field label="# Locations"        field="numLocations" type="number" />
-            <Field label="Annual Revenue"     field="annualRevenue" placeholder="e.g. 120,000" />
-            <SelectField label="Group Situs"  field="groupSitus" options={situsOpts} placeholder="— Select state —" />
+      {/* ══════════════════════════════════════════════════════════
+          ROW 1: Company info panel (left) + Stats + renewal/team (right)
+      ══════════════════════════════════════════════════════════ */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
 
-            {/* Classification fields — from admin libraries */}
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f1f5f9",
-              fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase",
-              letterSpacing: "0.5px", marginBottom: 8 }}>Classification</div>
+        {/* Left: Company identity + fields */}
+        <div style={card}>
+          <div style={{ height:4, background:"#4b7896", borderRadius:"12px 12px 0 0" }} />
+          <div style={{ padding:"14px 16px" }}>
+            {/* Logo + name + subtitle */}
+            <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:16,
+              paddingBottom:14, borderBottom:"1px solid #f1f5f9" }}>
+              <div style={{ width:48, height:48, borderRadius:10, background:"#dce8f2",
+                display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
+                🏢
+              </div>
+              <div>
+                <div style={{ fontSize:15, fontWeight:800, color:"#1e2d3d" }}>{data.name||"—"}</div>
+                <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>{data.natureOfBusiness||<span style={{fontStyle:"italic",color:"#cbd5e1"}}>Nature of business</span>}</div>
+              </div>
+            </div>
 
-            <SelectField label="Employer Size"       field="employerSize"       options={empSizeOpts} />
-            <SelectField label="Corporate Structure" field="corporateStructure" options={corpStructOpts} />
-            <SelectField label="Employer Type"       field="employerType"       options={empTypeOpts} />
+            {/* 2-column field grid */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 24px" }}>
+              <div>
+                <FR label="EIN" value={data.taxId} field="taxId" />
+                <FR label="SIC Code" value={data.sic} field="sic" />
+                <FR label="# Locations" value={data.numLocations} field="numLocations" />
+                <FR label="State / Situs" value={data.groupSitus} field="groupSitus" options={situsOpts} />
+              </div>
+              <div>
+                <FR label="Employer Size" value={data.employerSize} field="employerSize" options={empSizeOpts} />
+                <FR label="Structure" value={data.corporateStructure} field="corporateStructure" options={corpStructOpts} />
+                <FR label="Type" value={data.employerType} field="employerType" options={empTypeOpts} />
+                <FR label="Market Segment" value={data.marketSize} field="marketSize" options={mktOpts} />
+                <FR label="Funding Method" value={data.fundingMethod} field="fundingMethod" options={fundOpts} />
+              </div>
+            </div>
 
-            {/* ERISA badge — auto-derives from selected employer type */}
+            {/* ERISA badge */}
             {data.employerType && isErisa !== null && (
-              <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-                <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>ERISA Status</div>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px",
-                  borderRadius: 8, fontSize: 11, fontWeight: 700,
-                  background: isErisa ? "#dbeafe" : "#f1f5f9",
-                  border: `1px solid ${isErisa ? "#93c5fd" : "#e2e8f0"}`,
-                  color: isErisa ? "#1e40af" : "#64748b" }}>
-                  {isErisa ? "⚖️ Subject to ERISA" : "— ERISA Exempt"}
-                </div>
+              <div style={{ marginTop:12, display:"inline-flex", alignItems:"center", gap:6,
+                padding:"3px 10px", borderRadius:99, fontSize:11, fontWeight:700,
+                background: isErisa?"#dbeafe":"#f1f5f9",
+                border:`1px solid ${isErisa?"#93c5fd":"#e2e8f0"}`,
+                color: isErisa?"#1e40af":"#64748b" }}>
+                {isErisa ? "⚖ Subject to ERISA" : "— ERISA Exempt"}
               </div>
             )}
-          </Card>
-          );
-        })()}
+          </div>
+        </div>
 
-        <Card title="Contact Information" accent="#78873c">
-          <Field label="Primary Contact"  field="contactName" />
-          <Field label="Title"            field="contactTitle" />
-          <Field label="Email"            field="contactEmail" type="email" />
-          <Field label="Phone"            field="contactPhone" type="tel" />
-          <Field label="Main Phone"       field="mainPhone" type="tel" />
-          <Field label="Street Address"   field="streetAddress" />
-          <Field label="City"             field="city" />
-          <Field label="State"            field="state" />
-          <Field label="ZIP"              field="zipCode" />
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f1f5f9",
-            fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase",
-            letterSpacing: "0.5px", marginBottom: 8 }}>Additional Contact</div>
-          <Field label="Name"   field="addlContactName" />
-          <Field label="Title"  field="addlContactTitle" />
-          <Field label="Email"  field="addlContactEmail" type="email" />
-          <Field label="Phone"  field="addlContactPhone" type="tel" />
-        </Card>
+        {/* Right: Stats + renewal details + SI team */}
+        <div style={card}>
+          {/* Stat boxes + renewal/team all in one card, no gap */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr",
+            borderBottom:"1px solid #f1f5f9" }}>
+            <div style={{ padding:"20px 16px", textAlign:"center",
+              borderRight:"1px solid #f1f5f9" }}>
+              <div style={{ fontSize:40, fontWeight:800, color:"#1e2d3d", lineHeight:1 }}>
+                {data.totalEligible||"0"}
+              </div>
+              <div style={{ fontSize:11, color:"#64748b", marginTop:6, textTransform:"uppercase", letterSpacing:".5px" }}>Total eligible</div>
+            </div>
+            <div style={{ padding:"20px 16px", textAlign:"center" }}>
+              <div style={{ fontSize:40, fontWeight:800, color:"#3e5878", lineHeight:1 }}>
+                {medEnrolled ?? data.medicalEnrolled ?? (data.benefitEnrolled||{}).medical ?? "0"}
+              </div>
+              <div style={{ fontSize:11, color:"#64748b", marginTop:6, textTransform:"uppercase", letterSpacing:".5px" }}>Medical enrolled</div>
+            </div>
+          </div>
+          <div style={{ padding:"12px 16px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 24px" }}>
+              {/* Left: renewal info */}
+              <div>
+                {/* Renewal Date */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={{ fontSize:16 }}>📅</span>
+                  <span style={fieldLbl}>Renewal Date</span>
+                  {editMode
+                    ? <input type="date" value={data.renewalDate||""} onChange={e=>set("renewalDate",e.target.value)}
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }} />
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.renewalDate ? new Date(data.renewalDate+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"}) : "—"}</span>
+                  }
+                </div>
+                {/* Market Segment */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={{ fontSize:16 }}>📊</span>
+                  <span style={fieldLbl}>Market Segment</span>
+                  {editMode
+                    ? <select value={data.marketSize||""} onChange={e=>set("marketSize",e.target.value)}
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                        <option value="">— Select —</option>
+                        {mktOpts.map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.marketSize||"—"}</span>
+                  }
+                </div>
+                {/* Funding Method */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={{ fontSize:16 }}>💳</span>
+                  <span style={fieldLbl}>Funding Method</span>
+                  {editMode
+                    ? <select value={data.fundingMethod||""} onChange={e=>set("fundingMethod",e.target.value)}
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                        <option value="">— Select —</option>
+                        {fundOpts.map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.fundingMethod||"—"}</span>
+                  }
+                </div>
+                {/* Rating Region */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0" }}>
+                  <span style={{ fontSize:16 }}>📍</span>
+                  <span style={fieldLbl}>Rating Region</span>
+                  {editMode
+                    ? <input value={data.ratingRegion||""} onChange={e=>set("ratingRegion",e.target.value)}
+                        placeholder="e.g. Chicago"
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }} />
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.ratingRegion||"—"}</span>
+                  }
+                </div>
+              </div>
+              {/* Right: SI Team */}
+              <div>
+                {/* Team */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={{ fontSize:16 }}>👥</span>
+                  <span style={fieldLbl}>Team</span>
+                  {editMode
+                    ? <select value={data.team||""} onChange={e=>set("team",e.target.value)}
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                        <option value="">— Select —</option>
+                        {teams.map(t=><option key={t.id} value={t.id}>Team {t.label}</option>)}
+                      </select>
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.team ? `Team ${data.team}` : "—"}</span>
+                  }
+                </div>
+                {/* Lead */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={fieldLbl}>Lead</span>
+                  {editMode
+                    ? <input value={data.lead||""} onChange={e=>set("lead",e.target.value)}
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }} />
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.lead||"—"}</span>
+                  }
+                </div>
+                {/* Salesperson */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={fieldLbl}>Salesperson</span>
+                  {editMode
+                    ? <select value={data.salesPerson||""} onChange={e=>set("salesPerson",e.target.value)}
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                        <option value="">— Select —</option>
+                        {salesOpts.map((s,i)=><option key={s.id||i} value={s.label}>{s.label}</option>)}
+                      </select>
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.salesPerson||"—"}</span>
+                  }
+                </div>
+                {/* Annual Revenue — moved here */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0" }}>
+                  <span style={fieldLbl}>Annual Revenue</span>
+                  {editMode
+                    ? <input value={data.annualRevenue||""} onChange={e=>set("annualRevenue",e.target.value)}
+                        placeholder="e.g. 120,000"
+                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }} />
+                    : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.annualRevenue ? `$${data.annualRevenue}` : "—"}</span>
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      {/* ══════════════════════════════════════════════════════════
+          ROW 2: Renewal Progress timeline (left) + Tasks at a Glance (right)
+      ══════════════════════════════════════════════════════════ */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+
+        {/* Renewal Progress — horizontal stage timeline */}
+        <div style={card}>
+          <div style={cardHdr("#4b7896")}>
+            <div style={hdrTitle}><div style={accentBar("#4b7896")} />Renewal Progress</div>
+          </div>
+          <div style={{ padding:"20px 24px" }}>
+            {/* Timeline */}
+            <div style={{ position:"relative", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              {/* Connecting line */}
+              <div style={{ position:"absolute", top:14, left:"7%", right:"7%", height:2, background:"#e2e8f0", zIndex:0 }} />
+              {STAGE_LABELS.map((label, i) => {
+                const done   = i < currentStageIdx;
+                const active = i === currentStageIdx;
+                return (
+                  <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center",
+                    gap:8, zIndex:1, flex:1 }}>
+                    <div style={{ width:28, height:28, borderRadius:"50%", border:`2px solid ${done||active?"#4b7896":"#e2e8f0"}`,
+                      background: done?"#4b7896" : active?"#dce8f0" : "#fff",
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:12, color: done?"#fff":"#4b7896", fontWeight:700 }}>
+                      {done ? "✓" : i+1}
+                    </div>
+                    <div style={{ fontSize:10, color: done||active?"#4b7896":"#94a3b8", textAlign:"center",
+                      fontWeight: active?700:400, lineHeight:1.3, maxWidth:72 }}>{label}</div>
+                    {active && clientRenewal?.received_date && (
+                      <div style={{ fontSize:9, color:"#94a3b8" }}>
+                        {new Date(clientRenewal.received_date+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"})}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+
+          </div>
+        </div>
+
+        {/* Tasks at a Glance */}
+        <div style={card}>
+          <div style={cardHdr("#7c3aed")}>
+            <div style={hdrTitle}><div style={accentBar("#7c3aed")} />Tasks at a Glance</div>
+          </div>
+          <div style={{ padding:"14px 16px" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              {[
+                { label:"Pre-Renewal",    ...prCount },
+                { label:"Renewal",        ...rnCount },
+                { label:"Open Enrollment",...oeCount },
+                { label:"Post-OE",        ...postCount },
+                { label:"Compliance",     ...compCount },
+                { label:"Misc / Ongoing", ...miscCount2 },
+              ].map(cat => {
+                const allDone = cat.total > 0 && cat.done === cat.total;
+                return (
+                  <div key={cat.label} style={{
+                    padding:"10px 12px", borderRadius:10, border:"1px solid #e2e8f0",
+                    background: allDone ? "#f0fdf4" : "#f8fafc",
+                    borderColor: allDone ? "#86efac" : "#e2e8f0",
+                  }}>
+                    <div style={{ fontSize:11, color: allDone?"#166534":"#64748b", marginBottom:4 }}>{cat.label}</div>
+                    <div style={{ fontSize:16, fontWeight:800, color: allDone?"#166534":"#1e2d3d", marginBottom:6 }}>
+                      {cat.done} / {cat.total||"—"}
+                    </div>
+                    <ProgBar pct={cat.pct} done={cat.done} total={cat.total} />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
 
       </div>
 
-      {/* ── Right column ── */}
-      <div>
-        {(() => {
-          const mktOpts = (marketsLibrary||[]).length
-            ? [...marketsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)
-            : MARKET_SIZES;
-          const fundOpts = (fundingLibrary||[]).length
-            ? [...fundingLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)
-            : FUNDING_METHODS;
-          const salesOpts = (salespersonsLibrary||[]).length
-            ? [...salespersonsLibrary].sort((a,b)=>(a.order??0)-(b.order??0))
-            : [{label:"SI"},{label:"Lock"},{label:"Amanda"},{label:"Anthony"},
-               {label:"Holly"},{label:"Jaclyn"},{label:"Jonathon"},{label:"Rob"},{label:"Steve"},{label:"BDT"}];
-          return (
-        <Card title="Renewal Summary" accent={team?.border || "#4b7896"}>
-          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-            <div style={{ flex: 1, textAlign: "center", padding: "10px 8px",
-              background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-              <DebouncedInput value={data.totalEligible || ""} inputMode="numeric"
-                onChange={v => set("totalEligible", v.replace(/\D/g,""))}
-                placeholder="0"
-                style={{ width: "100%", fontSize: 20, fontWeight: 800, color: "#1a2733",
-                  border: "none", textAlign: "center", background: "transparent",
-                  fontFamily: "inherit", outline: "none" }} />
-              <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: "0.5px" }}>Total Eligible</div>
+      {/* ══════════════════════════════════════════════════════════
+          ROW 3: Compliance Snapshot (left) + Open Employee Issues placeholder (right)
+      ══════════════════════════════════════════════════════════ */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+
+        {/* Compliance Snapshot */}
+        <div style={card}>
+          <div style={cardHdr("#78873c")}>
+            <div style={hdrTitle}><div style={accentBar("#78873c")} />Compliance Snapshot</div>
+            <button onClick={()=>{}} style={{ background:"none", border:"none", fontSize:12,
+              color:"#4b7896", cursor:"pointer", fontFamily:"inherit", fontWeight:600,
+              textDecoration:"underline", padding:0 }}>View all —</button>
+          </div>
+          <div style={{ padding:"12px 16px" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 24px" }}>
+              {complianceSnapshot.map((item,i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"5px 0", borderBottom:"1px solid #f8fafc" }}>
+                  <span style={{ fontSize:12, color:"#475569" }}>{item.label}</span>
+                  {statusBadge(item.status)}
+                </div>
+              ))}
             </div>
-            <div style={{ flex: 1, textAlign: "center", padding: "10px 8px",
-              background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-              <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2733" }}>
-                {medEnrolled ?? "—"}
+          </div>
+        </div>
+
+        {/* Open Employee Issues */}
+        <div style={card}>
+          <div style={cardHdr("#e05252")}>
+            <div style={hdrTitle}><div style={accentBar("#e05252")} />Open Employee Issues</div>
+            <button style={{ background:"none", border:"none", fontSize:12,
+              color:"#4b7896", cursor:"pointer", fontFamily:"inherit", fontWeight:600,
+              textDecoration:"underline", padding:0 }}>View all —</button>
+          </div>
+          <div style={{ padding:"12px 16px" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", gap:"0 16px",
+              borderBottom:"1px solid #f1f5f9", paddingBottom:6, marginBottom:4 }}>
+              {["Issue Type","Count","Priority","Oldest Open"].map(h => (
+                <span key={h} style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".5px" }}>{h}</span>
+              ))}
+            </div>
+            {(data.openIssues||[]).length > 0 ? (data.openIssues||[]).map((issue,i) => {
+              const priColor = {High:{bg:"#fee2e2",color:"#991b1b"},Medium:{bg:"#fef3c7",color:"#92400e"},Low:{bg:"#dcfce7",color:"#166534"}}[issue.priority]||{bg:"#f1f5f9",color:"#64748b"};
+              return (
+                <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", gap:"0 16px",
+                  padding:"6px 0", borderBottom:"1px solid #f8fafc", alignItems:"center" }}>
+                  <span style={{ fontSize:12, color:"#334155" }}>{issue.type}</span>
+                  <span style={{ fontSize:12, fontWeight:600, color:"#1e293b", textAlign:"center" }}>{issue.count}</span>
+                  <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99, background:priColor.bg, color:priColor.color }}>{issue.priority}</span>
+                  <span style={{ fontSize:11, color:"#64748b" }}>{issue.date}</span>
+                </div>
+              );
+            }) : (
+              <div style={{ padding:"16px 0", textAlign:"center", color:"#94a3b8", fontSize:12, fontStyle:"italic" }}>No open issues</div>
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════
+          ROW 4: Account Info + Plan Administration + Notes
+      ══════════════════════════════════════════════════════════ */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
+
+        {/* Account Information */}
+        <div style={card}>
+          <div style={cardHdr("#78873c")}>
+            <div style={hdrTitle}><div style={accentBar("#78873c")} />Account Information</div>
+          </div>
+          <div style={{ padding:"12px 16px" }}>
+            {/* Primary Contact */}
+            <div style={{ display:"flex", gap:16, padding:"6px 0",
+              borderBottom:"1px solid #f1f5f9" }}>
+              <span style={{ fontSize:12, color:"#64748b", width:130, flexShrink:0, paddingTop:1 }}>Primary Contact</span>
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:4 }}>
+                {editMode ? (<>
+                  <input value={data.contactName||""} onChange={e=>set("contactName",e.target.value)} placeholder="Name"
+                    style={editInlineStyle} />
+                  <input value={data.contactTitle||""} onChange={e=>set("contactTitle",e.target.value)} placeholder="Title"
+                    style={editInlineStyle} />
+                  <input value={data.contactEmail||""} onChange={e=>set("contactEmail",e.target.value)} placeholder="Email" type="email"
+                    style={editInlineStyle} />
+                  <input value={data.contactPhone||""} onChange={e=>set("contactPhone",e.target.value)} placeholder="Phone" type="tel"
+                    style={editInlineStyle} />
+                  <input value={data.mainPhone||""} onChange={e=>set("mainPhone",e.target.value)} placeholder="Main phone" type="tel"
+                    style={editInlineStyle} />
+                  <input value={data.streetAddress||""} onChange={e=>set("streetAddress",e.target.value)} placeholder="Street address"
+                    style={editInlineStyle} />
+                  <div style={{ display:"flex", gap:4 }}>
+                    <input value={data.city||""} onChange={e=>set("city",e.target.value)} placeholder="City"
+                      style={{ ...editInlineStyle, flex:2 }} />
+                    <input value={data.state||""} onChange={e=>set("state",e.target.value)} placeholder="ST"
+                      style={{ ...editInlineStyle, flex:1 }} />
+                    <input value={data.zipCode||""} onChange={e=>set("zipCode",e.target.value)} placeholder="ZIP"
+                      style={{ ...editInlineStyle, flex:1 }} />
+                  </div>
+                </>) : (<>
+                  {data.contactName  && <div style={{ fontSize:12, fontWeight:700, color:"#1e293b" }}>{data.contactName}</div>}
+                  {data.contactTitle && <div style={{ fontSize:12, color:"#64748b" }}>{data.contactTitle}</div>}
+                  {data.contactEmail && <div style={{ fontSize:12, color:"#3b82f6" }}>{data.contactEmail}</div>}
+                  {data.contactPhone && <div style={{ fontSize:12, color:"#475569" }}>{data.contactPhone}</div>}
+                  {data.mainPhone    && <div style={{ fontSize:12, color:"#475569" }}>{data.mainPhone}</div>}
+                  {(data.streetAddress||data.city) && (
+                    <div style={{ fontSize:12, color:"#475569" }}>
+                      {[data.streetAddress, data.city, data.state, data.zipCode].filter(Boolean).join(", ")}
+                    </div>
+                  )}
+                  {!data.contactName && !data.contactEmail && (
+                    <span style={{ fontSize:12, color:"#cbd5e1", fontStyle:"italic" }}>—</span>
+                  )}
+                </>)}
               </div>
-              <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: "0.5px" }}>Medical Enrolled</div>
-              <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>
-                {medPlans.length > 0 ? "auto-sum from plans" : "set in Benefits tab"}
+            </div>
+            {/* Additional Contact */}
+            <div style={{ display:"flex", gap:16, padding:"6px 0" }}>
+              <span style={{ fontSize:12, color:"#64748b", width:130, flexShrink:0, paddingTop:1 }}>Additional Contact</span>
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:4 }}>
+                {editMode ? (<>
+                  <input value={data.addlContactName||""} onChange={e=>set("addlContactName",e.target.value)} placeholder="Name"
+                    style={editInlineStyle} />
+                  <input value={data.addlContactTitle||""} onChange={e=>set("addlContactTitle",e.target.value)} placeholder="Title"
+                    style={editInlineStyle} />
+                  <input value={data.addlContactEmail||""} onChange={e=>set("addlContactEmail",e.target.value)} placeholder="Email" type="email"
+                    style={editInlineStyle} />
+                  <input value={data.addlContactPhone||""} onChange={e=>set("addlContactPhone",e.target.value)} placeholder="Phone" type="tel"
+                    style={editInlineStyle} />
+                </>) : (<>
+                  {data.addlContactName  ? <>
+                    <div style={{ fontSize:12, fontWeight:700, color:"#1e293b" }}>{data.addlContactName}</div>
+                    {data.addlContactTitle && <div style={{ fontSize:12, color:"#64748b" }}>{data.addlContactTitle}</div>}
+                    {data.addlContactEmail && <div style={{ fontSize:12, color:"#3b82f6" }}>{data.addlContactEmail}</div>}
+                    {data.addlContactPhone && <div style={{ fontSize:12, color:"#475569" }}>{data.addlContactPhone}</div>}
+                  </> : <span style={{ fontSize:12, color:"#cbd5e1" }}>—</span>}
+                </>)}
               </div>
             </div>
           </div>
-          <Field label="Renewal Date"     field="renewalDate" type="date" />
-          <SelectField label="Market Segment"  field="marketSize"    options={mktOpts} />
-          <SelectField label="Funding Method"  field="fundingMethod" options={fundOpts} />
-          <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8,
-            opacity: data.marketSize === "ACA" ? 1 : 0.4,
-            pointerEvents: data.marketSize === "ACA" ? "auto" : "none" }}>
-            <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>
-              Rating Region
-              {data.marketSize !== "ACA" && (
-                <span style={{ marginLeft: 4, fontSize: 10, color: "#94a3b8" }}>(ACA only)</span>
+        </div>
+
+        {/* Plan Administration */}
+        <div style={card}>
+          <div style={cardHdr("#4b7896")}>
+            <div style={hdrTitle}>
+              <div style={accentBar("#4b7896")} />Plan Administration
+              {isErisa && (
+                <span style={{ marginLeft:8, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:99,
+                  background:"#dbeafe", color:"#1e40af", border:"1px solid #93c5fd" }}>Subject to ERISA</span>
               )}
             </div>
-            <DebouncedInput value={data.ratingRegion || ""} placeholder="e.g. Chicago"
-              onChange={v => set("ratingRegion", v)}
-              style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
-                fontSize: 12, fontFamily: "inherit", color: "#1a2733", background: "#fff",
-                outline: "none" }} />
           </div>
-          {/* Renewal stage */}
-          {clientRenewal && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Renewal Stage</div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {renewalStages.map(s => (
-                  <button key={s.id} onClick={() => onUpdateRenewal({ ...clientRenewal, stage_id: s.id })}
-                    style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99,
-                      border: `1.5px solid ${s.id === clientRenewal.stage_id ? "#4b7896" : "#e2e8f0"}`,
-                      background: s.id === clientRenewal.stage_id ? "#dce8f0" : "#fff",
-                      color: s.id === clientRenewal.stage_id ? "#2d4a6b" : "#64748b",
-                      cursor: "pointer", fontFamily: "inherit",
-                      fontWeight: s.id === clientRenewal.stage_id ? 700 : 400 }}>
-                    {s.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </Card>
-          );
-        })()}
-
-        {/* ── SI Team card — below Renewal Summary ── */}
-        {(() => {
-          const salesOpts = (salespersonsLibrary||[]).length
-            ? [...salespersonsLibrary].sort((a,b)=>(a.order??0)-(b.order??0))
-            : [{label:"SI"},{label:"Lock"},{label:"Amanda"},{label:"Anthony"},
-               {label:"Holly"},{label:"Jaclyn"},{label:"Jonathon"},{label:"Rob"},{label:"Steve"},{label:"BDT"}];
-          return (
-          <Card title="SI Team" accent="#55652B">
-            {/* Team */}
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-              <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>Team</div>
-              <select value={data.team || ""} onChange={e => set("team", e.target.value)}
-                style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
-                  fontSize: 12, fontFamily: "inherit", color: "#1a2733", background: "#fff" }}>
-                <option value="">— Select team —</option>
-                {teams.map(t => <option key={t.id} value={t.id}>Team {t.label}</option>)}
-              </select>
-            </div>
-            {/* Lead */}
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-              <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>Lead</div>
-              <select value={data.lead || ""} onChange={e => set("lead", e.target.value)}
-                style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
-                  fontSize: 12, fontFamily: "inherit", color: data.lead ? "#1a2733" : "#94a3b8", background: "#fff" }}>
-                <option value="">— Select —</option>
-                {(() => {
-                  const seen = new Set();
-                  return teams.flatMap(t => (t.members||[]).filter(m =>
-                    m.role === "Team Lead" || m.role === "VP" || m.role === "Lead"
-                  )).filter(m => {
-                    const abbr = m.name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase() || m.name;
-                    if (seen.has(abbr)) return false;
-                    seen.add(abbr);
-                    return true;
-                  }).map(m => {
-                    const abbr = m.name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase() || m.name;
-                    return <option key={abbr} value={abbr}>{abbr} — {m.name}</option>;
-                  });
-                })()}
-              </select>
-            </div>
-            {/* Salesperson — moved here from Client Information */}
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-              <div style={{ width: 150, fontSize: 12, color: "#64748b", flexShrink: 0 }}>Salesperson</div>
-              <select value={data.salesPerson || ""} onChange={e => set("salesPerson", e.target.value)}
-                style={{ flex: 1, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 6,
-                  fontSize: 12, fontFamily: "inherit", color: data.salesPerson ? "#1a2733" : "#94a3b8", background: "#fff" }}>
-                <option value="">— Select —</option>
-                {salesOpts.map((s,i) => <option key={s.id||i} value={s.label}>{s.label}</option>)}
-              </select>
-            </div>
-          </Card>
-          );
-        })()}
-
-        <Card title="COBRA & Continuation" accent="#78873c">
-          <MultiCheckField label="Continuation Type" field="continuation"
-            options={[
-              { val: "cobra",      label: "COBRA" },
-              { val: "state_cont", label: "State Continuation" },
-            ]} />
-          <Field label="COBRA Vendor" field="cobraVendor" />
-          <CheckboxField label="COBRA/SI Paid" field="cobraSIPaid" />
-          <MultiCheckField label="Medicare Eligibility" field="medicareEligibility"
-            options={[
-              { val: "medicare_primary", label: "Medicare Primary" },
-              { val: "plan_primary",     label: "Plan Primary" },
-            ]} />
-        </Card>
-
-        <Card title="Payroll & Admin" accent="#4b7896">
-          <Field label="Payroll System"   field="payrollSystem" />
-          <SelectField label="Pay Frequency" field="payrollFrequency" options={PAYROLL_FREQS} />
-          <Field label="Benefit Admin"    field="benefitAdminSystem" />
-          <CheckboxField label="EDI Established" field="ediEstablished" />
-        </Card>
-
-        {dueSoon.length > 0 && (
-          <Card title="Due Soon / Overdue" accent="#ef4444">
-            {dueSoon.slice(0,8).map((t,i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center",
-                justifyContent: "space-between", padding: "5px 0",
-                borderBottom: i < Math.min(dueSoon.length,8)-1 ? "1px solid #f1f5f9" : "none" }}>
-                <div style={{ fontSize: 12, color: "#1a2733", textTransform: "capitalize" }}>{t.label}</div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {t.assignee && <span style={{ fontSize: 10, color: "#64748b" }}>{t.assignee}</span>}
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
-                    background: t.overdue ? "#fee2e2" : "#fef3c7",
-                    color: t.overdue ? "#991b1b" : "#92400e" }}>
-                    {t.overdue ? "Overdue" : formatDate(t.due)}
-                  </span>
+          <div style={{ padding:"12px 16px" }}>
+            {/* COBRA / State Continuation — multi-select in edit mode */}
+            <div style={{ display:"flex", gap:8, padding:"4px 0", borderBottom:"1px solid #f8fafc", alignItems:"center" }}>
+              <span style={{ ...fieldLbl, width:140 }}>COBRA / State Cont.</span>
+              {editMode ? (
+                <div style={{ display:"flex", gap:8 }}>
+                  {[{val:"cobra",label:"COBRA"},{val:"state_cont",label:"State Continuation"}].map(opt => {
+                    const checked = (data.continuation||[]).includes(opt.val);
+                    return (
+                      <label key={opt.val} style={{ display:"flex", alignItems:"center", gap:4, fontSize:12,
+                        cursor:"pointer", padding:"2px 8px", borderRadius:5,
+                        background: checked ? "#dbeafe" : "#f8fafc",
+                        border: `1px solid ${checked ? "#93c5fd" : "#e2e8f0"}`,
+                        color: checked ? "#1e40af" : "#64748b" }}>
+                        <input type="checkbox" checked={checked} onChange={() => {
+                          const cur = data.continuation || [];
+                          set("continuation", checked ? cur.filter(v=>v!==opt.val) : [...cur, opt.val]);
+                        }} style={{ accentColor:"#3b82f6" }} />
+                        {opt.label}
+                      </label>
+                    );
+                  })}
                 </div>
-              </div>
-            ))}
-          </Card>
-        )}
+              ) : (
+                <span style={{ ...fieldVal }}>
+                  {(data.continuation||[]).length
+                    ? (data.continuation||[]).map(c=>c==="cobra"?"COBRA":"State Continuation").join(", ")
+                    : <span style={{color:"#cbd5e1",fontStyle:"italic",fontWeight:400}}>—</span>}
+                </span>
+              )}
+            </div>
+            {/* COBRA Vendor — dropdown from carriers module */}
+            <div style={{ display:"flex", gap:8, padding:"4px 0", borderBottom:"1px solid #f8fafc", alignItems:"center" }}>
+              <span style={{ ...fieldLbl, width:140 }}>COBRA Vendor</span>
+              {editMode ? (
+                <select value={data.cobraVendor||""} onChange={e=>set("cobraVendor",e.target.value)}
+                  style={{ flex:1, fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd",
+                    borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                  <option value="">— Select administrator —</option>
+                  {[...(carriersData||[])].filter(c=>c.category==="FSA/HSA/HRA Administrator")
+                    .sort((a,b)=>a.name.localeCompare(b.name))
+                    .map(c => <option key={c.id||c.name} value={c.name}>{c.name}</option>)}
+                </select>
+              ) : (
+                <span style={{ ...fieldVal }}>{data.cobraVendor || <span style={{color:"#cbd5e1",fontStyle:"italic",fontWeight:400}}>—</span>}</span>
+              )}
+            </div>
+            {/* SI Paid — Yes/No pill in read mode, toggle in edit mode */}
+            <div style={{ display:"flex", gap:8, padding:"4px 0", borderBottom:"1px solid #f8fafc", alignItems:"center" }}>
+              <span style={{ ...fieldLbl, width:140 }}>SI Paid</span>
+              {editMode
+                ? <select value={data.cobraSIPaid===true||data.cobraSIPaid==="true"?"yes":data.cobraSIPaid===false||data.cobraSIPaid==="false"?"no":""}
+                    onChange={e=>set("cobraSIPaid", e.target.value==="yes")}
+                    style={{ fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                    <option value="">— Select —</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                : data.cobraSIPaid !== undefined && data.cobraSIPaid !== ""
+                  ? <span style={{ fontSize:11, fontWeight:700, padding:"1px 8px", borderRadius:99,
+                      background: data.cobraSIPaid?"#dcfce7":"#f1f5f9",
+                      color: data.cobraSIPaid?"#166534":"#64748b" }}>
+                      {data.cobraSIPaid ? "Yes" : "No"}
+                    </span>
+                  : <span style={{color:"#cbd5e1",fontStyle:"italic",fontSize:12}}>—</span>
+              }
+            </div>
+            {/* Medicare */}
+            <FR label="Medicare Eligibility" value={
+              Array.isArray(data.medicareEligibility)
+                ? data.medicareEligibility.map(v => v==="medicare_primary"?"Medicare Primary":v==="plan_primary"?"Plan Primary":v).join(", ")
+                : data.medicareEligibility==="medicare_primary" ? "Medicare Primary"
+                : data.medicareEligibility==="plan_primary" ? "Plan Primary"
+                : data.medicareEligibility
+            } field="medicareEligibility" options={["medicare_primary","plan_primary"]} />
+            <FR label="Payroll System"    value={data.payrollSystem}    field="payrollSystem" />
+            <FR label="Payroll Frequency" value={data.payrollFrequency} field="payrollFrequency"
+              options={["Weekly (52)","Weekly (48)","Bi-weekly (26)","Bi-weekly (24)","Semi-monthly","Monthly"]} />
+            <FR label="Benefit Admin"     value={data.benefitAdminSystem} field="benefitAdminSystem" />
+            {/* EDI Feeds — badge in read, select in edit */}
+            <div style={{ display:"flex", gap:8, padding:"4px 0", alignItems:"center" }}>
+              <span style={{ ...fieldLbl, width:140 }}>EDI Feeds</span>
+              {editMode
+                ? <select value={data.ediEstablished||""} onChange={e=>set("ediEstablished",e.target.value)}
+                    style={{ fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }}>
+                    <option value="">— Select —</option>
+                    {["Yes","No","In Progress","N/A"].map(o=><option key={o}>{o}</option>)}
+                  </select>
+                : data.ediEstablished
+                  ? <span style={{ fontSize:11, fontWeight:700, padding:"1px 8px", borderRadius:99,
+                      background: data.ediEstablished==="Yes"?"#dcfce7":"#f1f5f9",
+                      color: data.ediEstablished==="Yes"?"#166534":"#64748b" }}>
+                      {data.ediEstablished}
+                    </span>
+                  : <span style={{color:"#cbd5e1",fontStyle:"italic",fontSize:12}}>—</span>
+              }
+            </div>
+          </div>
+        </div>
 
-        <Card title="Notes" accent="#94a3b8">
-          <DebouncedTextarea value={data.notes || ""} rows={4} placeholder="Client notes..."
-            onChange={v => set("notes", v)}
-            style={{ width: "100%", padding: "8px", border: "1px solid #e2e8f0",
-              borderRadius: 8, fontSize: 12, fontFamily: "inherit", color: "#1a2733",
-              resize: "vertical", outline: "none", boxSizing: "border-box" }} />
-        </Card>
+        {/* Notes */}
+        <div style={card}>
+          <div style={cardHdr("#94a3b8")}>
+            <div style={hdrTitle}><div style={accentBar("#94a3b8")} />Notes</div>
+          </div>
+          <div style={{ padding:"12px 16px" }}>
+            {editMode
+              ? <textarea value={data.notes||""} onChange={e=>set("notes",e.target.value)}
+                  placeholder="Add notes..."
+                  rows={6}
+                  style={{ width:"100%", fontSize:12, padding:"8px", border:"1px solid #93c5fd",
+                    borderRadius:6, fontFamily:"inherit", resize:"vertical", background:"#f0f7ff",
+                    color:"#1e293b", lineHeight:1.6, outline:"none", boxSizing:"border-box" }} />
+              : data.notes
+                ? <div style={{ fontSize:12, color:"#475569", lineHeight:1.7, whiteSpace:"pre-wrap" }}>{data.notes}</div>
+                : <div style={{ fontSize:12, color:"#cbd5e1", fontStyle:"italic" }}>No notes yet.</div>
+            }
+          </div>
+        </div>
+
       </div>
     </div>
   );
