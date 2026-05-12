@@ -51,7 +51,7 @@ function DebouncedTextarea({ value, onChange, placeholder, rows = 3, style }) {
 // Bug 2 fix: commits value ONLY on blur (not on every change event).
 // Calling onChange on every change re-renders the parent which causes the
 // native browser date picker to close when arrow buttons are clicked.
-function DateInput({ value, onChange, style, placeholder }) {
+function DateInput({ value, onChange, style, placeholder, tabIndex, disabled, id, className }) {
   const [local, setLocal] = React.useState(value ?? "");
   const focusedRef = React.useRef(false);
   React.useEffect(() => {
@@ -63,6 +63,10 @@ function DateInput({ value, onChange, style, placeholder }) {
       value={local}
       placeholder={placeholder}
       style={style}
+      tabIndex={tabIndex}
+      disabled={disabled}
+      id={id}
+      className={className}
       onFocus={() => { focusedRef.current = true; }}
       onChange={e => setLocal(e.target.value)}
       onBlur={e => {
@@ -209,7 +213,7 @@ function syncStandardTasks(client, tasksDb) {
         allGroups.flatMap(g => client[g] || []).find(t => !t._standardTemplateId && (t.title === tmpl.label || t.label === tmpl.label));
       return found
         ? { ...found, _standardTemplateId: tmpl.id, title: tmpl.label,
-            assignee: found.assignee || resolveAssignee(tmpl.defaultAssignee || '', client.team) || '',
+            assignee: found.assignee || resolveAssignee(tmpl.defaultAssignee || "", client.team) || "",
           }
         : {
             id: "std_" + tmpl.id + "_" + client.id,
@@ -413,6 +417,21 @@ function resolveAssignee(role, teamId) {
   if (!team) return "";
   const member = team.members.find(m => m.role === role);
   return member ? member.name : "";
+}
+
+// Resolve the default assignee name for a task from the task DB.
+// Tries "t_<id>" then "<id>" lookup; falls back to empty string.
+function resolveDefaultAssignee(taskId, teamId, tasksDb) {
+  if (!tasksDb || !taskId) return "";
+  const dbTask = tasksDb.find(t => t.id === "t_" + taskId) || tasksDb.find(t => t.id === taskId);
+  const role = dbTask?.defaultAssignee || "";
+  return role ? resolveAssignee(role, teamId) : "";
+}
+
+// Build a fresh task object, seeding assignee from the task DB when possible.
+function emptyTaskObj(taskId, teamId, tasksDb, overrides) {
+  const assignee = resolveDefaultAssignee(taskId, teamId, tasksDb);
+  return { status: "Not Started", assignee, dueDate: "", completedDate: "", ...overrides };
 }
 
 const MARKET_SIZES = ["ACA", "Mid-Market", "Large"];
@@ -737,7 +756,7 @@ function applyDueDateRulesToClient(clientData, tasksDb, dueDateRules) {
       if (!newDue) return;
       const existing = groupData[def.id];
       const existingObj = (typeof existing === "object" && existing)
-        ? existing : { status: existing || "Not Started", assignee: "", dueDate: "", completedDate: "" };
+        ? existing : { status: existing || "Not Started", assignee: resolveDefaultAssignee(def.dbId || def.id, clientData.team, tasksDb) || resolveDefaultAssignee(def.id, clientData.team, tasksDb), dueDate: "", completedDate: "" };
       const currentDue = existingObj.dueDate || "";
       const prevAuto  = existingObj._ddrDue  || "";
       if (currentDue === "" || currentDue === prevAuto) {
@@ -764,7 +783,7 @@ function applyDueDateRulesToClient(clientData, tasksDb, dueDateRules) {
     if (!newDue) return;
     const existing = oeTasks[def.id];
     const existingObj = (typeof existing === "object" && existing)
-      ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
+      ? existing : { status: "Not Started", assignee: resolveDefaultAssignee(def.id, clientData.team, tasksDb), dueDate: "", completedDate: "" };
     const currentDue = existingObj.dueDate || "";
     const prevAuto  = existingObj._ddrDue  || "";
     if (currentDue === "" || currentDue === prevAuto) {
@@ -780,6 +799,7 @@ function applyDueDateRulesToClient(clientData, tasksDb, dueDateRules) {
     if (!newDue) return existing;
     const existingObj = (typeof existing === "object" && existing)
       ? existing : { status: existing || "Not Started", assignee: "", dueDate: "", completedDate: "" };
+    // Note: applyRuleToTask doesn't change assignee; assignee seeding happens in setTask/getTask.
     const currentDue = existingObj.dueDate || "";
     const prevAuto   = existingObj._ddrDue  || "";
     if (currentDue === "" || currentDue === prevAuto) {
@@ -1305,6 +1325,47 @@ function SaveButton({ onSave }) {
 
 
 // Reusable follow-up block — renders inside any task card
+// Single follow-up row with local note state — commits to parent only on blur
+// so parent re-renders don't close the input mid-typing.
+function FollowUpRow({ fu, fi, onChangeDate, onChangeNote, onRemove }) {
+  const [note, setNote] = React.useState(fu.note || "");
+  const committedRef = React.useRef(fu.note || "");
+
+  // Sync if parent pushes a genuinely different value (e.g. after save/load)
+  React.useEffect(() => {
+    if (fu.note !== committedRef.current) {
+      setNote(fu.note || "");
+      committedRef.current = fu.note || "";
+    }
+  }, [fu.note]);
+
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+      <DateInput value={fu.date || ""}
+        onChange={v => onChangeDate(fi, v)}
+        style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "3px 6px",
+          fontSize: 11, color: "#0f172a", background: "#fff", fontFamily: "inherit",
+          width: 140, flexShrink: 0 }} />
+      <input
+        type="text"
+        value={note}
+        onChange={e => setNote(e.target.value)}
+        onBlur={e => {
+          if (e.target.value !== committedRef.current) {
+            committedRef.current = e.target.value;
+            onChangeNote(fi, e.target.value);
+          }
+        }}
+        placeholder="Follow-up note..."
+        style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "3px 6px",
+          fontSize: 11, color: "#0f172a", background: "#fff", fontFamily: "inherit", flex: 1 }} />
+      <button type="button" onClick={() => onRemove(fi)}
+        style={{ padding: "3px 6px", borderRadius: 5, fontSize: 10, border: "1.5px solid #fca5a5",
+          background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>✕</button>
+    </div>
+  );
+}
+
 function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove }) {
   return (
     <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #e2e8f0" }}>
@@ -1319,21 +1380,13 @@ function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove 
         </button>
       </div>
       {followUps.map((fu, fi) => (
-        <div key={fu.id || fi} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
-          <input type="date" value={fu.date || ""}
-            onChange={e => onChangeDate(fi, e.target.value)}
-            style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "3px 6px",
-              fontSize: 11, color: "#0f172a", background: "#fff", fontFamily: "inherit",
-              width: 140, flexShrink: 0 }} />
-          <input type="text" value={fu.note || ""}
-            onChange={e => onChangeNote(fi, e.target.value)}
-            placeholder="Follow-up note..."
-            style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "3px 6px",
-              fontSize: 11, color: "#0f172a", background: "#fff", fontFamily: "inherit", flex: 1 }} />
-          <button type="button" onClick={() => onRemove(fi)}
-            style={{ padding: "3px 6px", borderRadius: 5, fontSize: 10, border: "1.5px solid #fca5a5",
-              background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>✕</button>
-        </div>
+        <FollowUpRow
+          key={fu.id ?? fi}
+          fu={fu} fi={fi}
+          onChangeDate={onChangeDate}
+          onChangeNote={onChangeNote}
+          onRemove={onRemove}
+        />
       ))}
     </div>
   );
@@ -1659,7 +1712,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
     setData(p => {
       const existing = p[group]?.[id];
       const base = (!existing || typeof existing === "string")
-        ? { status: existing || "Not Started", assignee: "", dueDate: "" }
+        ? { status: existing || "Not Started", assignee: resolveDefaultAssignee(id, p.team, tasksDb), dueDate: "" }
         : { ...existing };
       // Capture plannedDueDate on first set
       const plannedDueDate = field === "dueDate" && !base.plannedDueDate && val
@@ -1757,7 +1810,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
       const prev = p.openEnrollment || {};
       const existing = prev.tasks?.[taskId];
       const base = (!existing || typeof existing === "string")
-        ? { status: existing || "Not Started", assignee: "", dueDate: "", completedDate: "" }
+        ? { status: existing || "Not Started", assignee: resolveDefaultAssignee(taskId, p.team, tasksDb), dueDate: "", completedDate: "" }
         : { ...existing };
       const plannedDueDate = field === "dueDate" && !base.plannedDueDate && val
         ? val : base.plannedDueDate;
@@ -1938,13 +1991,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10, marginBottom: 10 }}>
               <label style={{ ...labelStyle }}>
                 Effective From
-                <input type="date" value={archiveForm.effectiveFrom}
+                <DateInput  value={archiveForm.effectiveFrom}
                   onChange={e => setArchiveForm(p => ({ ...p, effectiveFrom: e.target.value }))}
                   style={{ ...inputStyle, marginTop: 3 }} />
               </label>
               <label style={{ ...labelStyle }}>
                 Effective To
-                <input type="date" value={archiveForm.effectiveTo}
+                <DateInput  value={archiveForm.effectiveTo}
                   onChange={e => setArchiveForm(p => ({ ...p, effectiveTo: e.target.value }))}
                   style={{ ...inputStyle, marginTop: 3 }} />
               </label>
@@ -2101,13 +2154,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Effective From
-                                <input type="date" value={effFrom}
+                                <DateInput  value={effFrom}
                                   onChange={e => setCE("effectiveFrom", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Effective To
-                                <input type="date" value={effTo}
+                                <DateInput  value={effTo}
                                   onChange={e => setCE("effectiveTo", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
                               </label>
@@ -2529,7 +2582,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </label>
               <label style={labelStyle}>
                 Renewal Date
-                <input type="date" value={data.renewalDate} tabIndex={24} onChange={e => {
+                <DateInput  value={data.renewalDate} tabIndex={24} onChange={e => {
                   const newDate = e.target.value;
                   setData(p => applyDDR({ ...p, renewalDate: newDate }));
                   if (newDate) {
@@ -2668,7 +2721,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     }}>{opt.val}</button>
                 ))}
                 {(data.clientStatus === "Terminated" || data.clientStatus === "Transferred") && (
-                  <input type="date" value={data.clientStatusDate || ""}
+                  <DateInput  value={data.clientStatusDate || ""}
                     onChange={e => set("clientStatusDate", e.target.value)}
                     style={{ ...inputStyle, marginTop: 4, padding: "4px 8px" }} />
                 )}
@@ -4781,7 +4834,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
                     </label>
                     {/* Date Received */}
-                    <input type="date" value={rv.date || ""}
+                    <DateInput  value={rv.date || ""}
                       onChange={e => {
                         const newRec = { ...rv, date: e.target.value };
                         setData(p => applyDDR({ ...p, renewalReceived: newRec }));
@@ -4832,7 +4885,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     <div style={{ display: "flex", alignItems: "center", gap: 10,
                       padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>📋 Decisions Received</span>
-                      <input type="date" value={data.decisionsReceivedDate || ""}
+                      <DateInput  value={data.decisionsReceivedDate || ""}
                         onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
                     </div>
@@ -4846,7 +4899,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Renewal Tracker Updated</span>
                         </label>
                         {data.renewalTrackerUpdated && (
-                          <input type="date" value={data.renewalTrackerUpdatedDate || ""}
+                          <DateInput  value={data.renewalTrackerUpdatedDate || ""}
                             onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
                             style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
                         )}
@@ -4861,7 +4914,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Carrier Change Tracker Updated</span>
                       </label>
                       {data.carrierChangeTrackerUpdated && (
-                        <input type="date" value={data.carrierChangeTrackerUpdatedDate || ""}
+                        <DateInput  value={data.carrierChangeTrackerUpdatedDate || ""}
                           onChange={e => set("carrierChangeTrackerUpdatedDate", e.target.value)}
                           style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
                       )}
@@ -4955,7 +5008,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
                           </label>
                           {/* Date received */}
-                          <input type="date" value={stored.date || ""}
+                          <DateInput  value={stored.date || ""}
                             onChange={e => setAnc("date", e.target.value)}
                             disabled={!stored.received}
                             style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
@@ -5033,13 +5086,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Due Date
-                            <input type="date" value={task.dueDate}
+                            <DateInput  value={task.dueDate}
                               onChange={e => setTask("preRenewal", t.id, "dueDate", e.target.value)}
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Date Completed
-                            <input type="date" value={task.completedDate || ""}
+                            <DateInput  value={task.completedDate || ""}
                               onChange={e => {
                                 setTask("preRenewal", t.id, "completedDate", e.target.value);
                                 if (e.target.value) setTask("preRenewal", t.id, "status", "Complete");
@@ -5050,8 +5103,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Notes
-                            <input type="text" value={task.notes || ""}
-                              onChange={e => setTask("preRenewal", t.id, "notes", e.target.value)}
+                            <DebouncedInput value={task.notes || ""}
+                              onChange={v => setTask("preRenewal", t.id, "notes", v)}
                               placeholder="Notes..."
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
@@ -5152,7 +5205,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                       {isChecked && (
                                         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#64748b", fontWeight: 600 }}>
                                           Due:
-                                          <input type="date" value={rfp.dueDate || ""}
+                                          <DateInput  value={rfp.dueDate || ""}
                                             onChange={e => setTask("preRenewal", t.id, "rfpCarriers", {
                                               ...(task.rfpCarriers || {}),
                                               [carrier]: { ...rfp, dueDate: e.target.value },
@@ -5324,7 +5377,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                         <>
                                           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#64748b", fontWeight: 600 }}>
                                             Due:
-                                            <input type="date" value={rfp.dueDate || ""}
+                                            <DateInput  value={rfp.dueDate || ""}
                                               onChange={e => setTask("preRenewal", t.id, "rfpCarriers", {
                                                 ...(task.rfpCarriers || {}),
                                                 [carrier]: { ...rfp, dueDate: e.target.value },
@@ -5444,20 +5497,20 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
-                          <input type="date" value={t.dueDate||""} onChange={e => setData(p => {
+                          <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
                             const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
                             return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
                           })} style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
-                          <input type="date" value={t.completedDate||""} onChange={e => {
+                          <DateInput  value={t.completedDate||""} onChange={e => {
                             const val=e.target.value;
                             setData(p => { const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,preRenewal:{...p.preRenewal,__extra:ex}}; });
                           }} style={{ ...inputStyle, marginTop: 3, background: t.completedDate?"#f0fdf4":"#fff", borderColor: t.completedDate?"#86efac":undefined }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Notes
-                          <input type="text" value={t.notes||""} onChange={e => setData(p => {
-                            const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],notes:e.target.value};
+                          <DebouncedInput value={t.notes||""} onChange={v => setData(p => {
+                            const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],notes:v};
                             return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
                           })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
@@ -5556,12 +5609,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Due Date
-                            <input type="date" value={rm.dueDate || ""} onChange={e => setRM("dueDate", e.target.value)}
+                            <DateInput  value={rm.dueDate || ""} onChange={e => setRM("dueDate", e.target.value)}
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Date Completed
-                            <input type="date" value={rm.completedDate || ""}
+                            <DateInput  value={rm.completedDate || ""}
                               onChange={e => { const v = e.target.value; setRM("completedDate", v); if (v) setRM("status", "Complete"); }}
                               style={{ ...inputStyle, marginTop: 3,
                                 background: rm.completedDate ? "#f0fdf4" : "#fff",
@@ -5569,7 +5622,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Notes
-                            <input type="text" value={rm.notes || ""} onChange={e => setRM("notes", e.target.value)}
+                            <DebouncedInput value={rm.notes || ""} onChange={v => setRM("notes", v)}
                               placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                         </div>
@@ -5607,7 +5660,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Meeting Date
-                                <input type="date" value={rm.meetingDate || ""}
+                                <DateInput  value={rm.meetingDate || ""}
                                   onChange={e => setRM("meetingDate", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
@@ -5728,13 +5781,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Due Date
-                                <input type="date" value={dueDate}
+                                <DateInput  value={dueDate}
                                   onChange={e => setAutoTask(at.key, "dueDate", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Date Completed
-                                <input type="date" value={stored.completedDate || ""}
+                                <DateInput  value={stored.completedDate || ""}
                                   onChange={e => {
                                     const v = e.target.value;
                                     setAutoTask(at.key, "completedDate", v);
@@ -5746,8 +5799,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Notes
-                                <input type="text" value={stored.notes || ""}
-                                  onChange={e => setAutoTask(at.key, "notes", e.target.value)}
+                                <DebouncedInput value={stored.notes || ""}
+                                  onChange={v => setAutoTask(at.key, "notes", v)}
                                   placeholder="Notes..."
                                   style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
@@ -5814,13 +5867,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Due Date
-                          <input type="date" value={t.dueDate || ""}
+                          <DateInput  value={t.dueDate || ""}
                             onChange={e => setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], dueDate: e.target.value }; return { ...p, renewalTasks: rt }; })}
                             style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Date Completed
-                          <input type="date" value={t.completedDate || ""}
+                          <DateInput  value={t.completedDate || ""}
                             onChange={e => {
                               const v = e.target.value;
                               setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], completedDate: v, ...(v ? { status: "Complete" } : {}) }; return { ...p, renewalTasks: rt }; });
@@ -5895,11 +5948,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <label style={{ ...labelStyle, marginTop: 0 }}>
                     Start Date
-                    <input type="date" value={oe.oeStartDate || ""} onChange={e => setOE("oeStartDate", e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
+                    <DateInput  value={oe.oeStartDate || ""} onChange={e => setOE("oeStartDate", e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
                   </label>
                   <label style={{ ...labelStyle, marginTop: 0 }}>
                     End Date
-                    <input type="date" value={oe.oeEndDate || ""} onChange={e => setOE("oeEndDate", e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
+                    <DateInput  value={oe.oeEndDate || ""} onChange={e => setOE("oeEndDate", e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
                   </label>
                 </div>
               </div>
@@ -6044,13 +6097,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Due Date
-                              <input type="date" value={task.dueDate}
+                              <DateInput  value={task.dueDate}
                                 onChange={e => setOETask(t.id, "dueDate", e.target.value)}
                                 style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Date Completed
-                              <input type="date" value={task.completedDate}
+                              <DateInput  value={task.completedDate}
                                 onChange={e => {
                                   setOETask(t.id, "completedDate", e.target.value);
                                   if (e.target.value) setOETask(t.id, "status", "Complete");
@@ -6061,8 +6114,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Notes
-                              <input type="text" value={task.notes || ""}
-                                onChange={e => setOETask(t.id, "notes", e.target.value)}
+                              <DebouncedInput value={task.notes || ""}
+                                onChange={v => setOETask(t.id, "notes", v)}
                                 placeholder="Notes..."
                                 style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
@@ -6114,20 +6167,20 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 </select>
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
-                                <input type="date" value={t.dueDate||""} onChange={e => setData(p => {
+                                <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
                                   const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
                                   return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
-                                <input type="date" value={t.completedDate||""} onChange={e => {
+                                <DateInput  value={t.completedDate||""} onChange={e => {
                                   const val=e.target.value;
                                   setData(p => { const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}}; });
                                 }} style={{ ...inputStyle, marginTop: 3, background:t.completedDate?"#f0fdf4":"#fff", borderColor:t.completedDate?"#86efac":undefined }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Notes
-                                <input type="text" value={t.notes||""} onChange={e => setData(p => {
-                                  const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],notes:e.target.value};
+                                <DebouncedInput value={t.notes||""} onChange={v => setData(p => {
+                                  const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],notes:v};
                                   return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
@@ -6276,12 +6329,12 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Due Date
-                              <input type="date" value={stored.dueDate || ""} onChange={e => setPOF(task.id, "dueDate", e.target.value)}
+                              <DateInput  value={stored.dueDate || ""} onChange={e => setPOF(task.id, "dueDate", e.target.value)}
                                 style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Date Completed
-                              <input type="date" value={stored.completedDate || ""}
+                              <DateInput  value={stored.completedDate || ""}
                                 onChange={e => { const v = e.target.value; setPOF(task.id, "completedDate", v); if (v) setPOF(task.id, "status", "Complete"); }}
                                 style={{ ...inputStyle, marginTop: 3,
                                   background: stored.completedDate ? "#f0fdf4" : "#fff",
@@ -6289,7 +6342,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Notes
-                              <input type="text" value={stored.notes || ""} onChange={e => setPOF(task.id, "notes", e.target.value)}
+                              <DebouncedInput value={stored.notes || ""} onChange={v => setPOF(task.id, "notes", v)}
                                 placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
                           </div>
@@ -6370,13 +6423,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Due Date
-                          <input type="date" value={t.dueDate || ""}
+                          <DateInput  value={t.dueDate || ""}
                             onChange={e => setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], dueDate: e.target.value }; return { ...p, postOETasks: pt }; })}
                             style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Date Completed
-                          <input type="date" value={t.completedDate || ""}
+                          <DateInput  value={t.completedDate || ""}
                             onChange={e => { const v = e.target.value; setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], completedDate: v, ...(v ? { status: "Complete" } : {}) }; return { ...p, postOETasks: pt }; }); }}
                             style={{ ...inputStyle, marginTop: 3,
                               background: t.completedDate ? "#f0fdf4" : "#fff",
@@ -6541,14 +6594,14 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                       {task.dueDate ? formatDate(task.dueDate) : "—"}
                                     </div>
                                   ) : (
-                                    <input type="date" value={task.dueDate}
+                                    <DateInput  value={task.dueDate}
                                       onChange={e => setTask("compliance", t.id, "dueDate", e.target.value)}
                                       style={{ ...inputStyle, marginTop: 3 }} />
                                   )}
                                 </label>
                                 <label style={{ ...labelStyle, marginTop: 0 }}>
                                   Date Completed
-                                  <input type="date" value={task.completedDate || ""}
+                                  <DateInput  value={task.completedDate || ""}
                                     onChange={e => {
                                       setTask("compliance", t.id, "completedDate", e.target.value);
                                       if (e.target.value) setTask("compliance", t.id, "status", "Complete");
@@ -6559,8 +6612,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                 </label>
                                 <label style={{ ...labelStyle, marginTop: 0 }}>
                                   Notes
-                                  <input type="text" value={task.notes || ""}
-                                    onChange={e => setTask("compliance", t.id, "notes", e.target.value)}
+                                  <DebouncedInput value={task.notes || ""}
+                                    onChange={v => setTask("compliance", t.id, "notes", v)}
                                     placeholder="Notes..."
                                     style={{ ...inputStyle, marginTop: 3 }} />
                                 </label>
@@ -6618,20 +6671,20 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
-                          <input type="date" value={t.dueDate||""} onChange={e => setData(p => {
+                          <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
                             const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
                             return {...p,compliance:{...p.compliance,__extra:ex}};
                           })} style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
-                          <input type="date" value={t.completedDate||""} onChange={e => {
+                          <DateInput  value={t.completedDate||""} onChange={e => {
                             const val=e.target.value;
                             setData(p => { const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,compliance:{...p.compliance,__extra:ex}}; });
                           }} style={{ ...inputStyle, marginTop: 3, background:t.completedDate?"#f0fdf4":"#fff", borderColor:t.completedDate?"#86efac":undefined }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Notes
-                          <input type="text" value={t.notes||""} onChange={e => setData(p => {
-                            const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],notes:e.target.value};
+                          <DebouncedInput value={t.notes||""} onChange={v => setData(p => {
+                            const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],notes:v};
                             return {...p,compliance:{...p.compliance,__extra:ex}};
                           })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
@@ -6749,7 +6802,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Due Date
-                          <input type="date" value={t.dueDate||""} onChange={e => setData(p => {
+                          <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
                             const tasks = [...(p.miscTasks||[])];
                             tasks[idx] = { ...tasks[idx], dueDate: e.target.value };
                             return { ...p, miscTasks: tasks };
@@ -6757,7 +6810,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Date Completed
-                          <input type="date" value={t.completedDate||""} onChange={e => {
+                          <DateInput  value={t.completedDate||""} onChange={e => {
                             const val = e.target.value;
                             setData(p => {
                               const tasks = [...(p.miscTasks||[])];
@@ -6770,9 +6823,9 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Notes
-                          <input type="text" value={t.notes||""} onChange={e => setData(p => {
+                          <DebouncedInput value={t.notes||""} onChange={v => setData(p => {
                             const tasks = [...(p.miscTasks||[])];
-                            tasks[idx] = { ...tasks[idx], notes: e.target.value };
+                            tasks[idx] = { ...tasks[idx], notes: v };
                             return { ...p, miscTasks: tasks };
                           })} placeholder="Notes..." style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
@@ -6795,7 +6848,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         </div>
                         {(t.followUps||[]).map((fu, fi) => (
                           <div key={fu.id || fi} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
-                            <input type="date" value={fu.date||""}
+                            <DateInput  value={fu.date||""}
                               onChange={e => setData(p => {
                                 const tasks = [...(p.miscTasks||[])];
                                 const fus = [...(tasks[idx].followUps||[])];
@@ -6915,7 +6968,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     </label>
                     <label style={{ ...labelStyle, marginTop: 0 }}>
                       Date Received
-                      <input type="date" value={txn.receivedDate||""}
+                      <DateInput  value={txn.receivedDate||""}
                         onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,receivedDate:e.target.value}:t) }))}
                         style={{ ...inputStyle, marginTop: 3 }} />
                     </label>
@@ -6938,7 +6991,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                     </label>
                     <label style={{ ...labelStyle, marginTop: 0 }}>
                       Due Date
-                      <input type="date" value={txn.dueDate||""}
+                      <DateInput  value={txn.dueDate||""}
                         onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,dueDate:e.target.value}:t) }))}
                         style={{ ...inputStyle, marginTop: 3 }} />
                     </label>
@@ -7743,7 +7796,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
       updated[r.group] = { ...updated[r.group], [r.taskId]: { ...base, ...fields } };
     } else if (r.group === "openEnrollment") {
       const ex = updated.openEnrollment?.tasks?.[r.taskId];
-      const base = (typeof ex === "object" && ex) ? ex : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
+      const base = (typeof ex === "object" && ex) ? ex : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" }; // assignee seeded on open
       updated.openEnrollment = { ...updated.openEnrollment, tasks: { ...(updated.openEnrollment?.tasks || {}), [r.taskId]: { ...base, ...fields } } };
     } else if (r.group === "miscTasks" || r.group === "postOETasks" || r.group === "renewalTasks") {
       const arr = [...(updated[r.group] || [])];
@@ -7841,7 +7894,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12, marginBottom: 12 }}>
             <label style={{ ...labelStyle, marginTop: 0 }}>
               Meeting Date
-              <input type="date" value={form.date}
+              <DateInput  value={form.date}
                 onChange={e => setForm(p => ({ ...p, date: e.target.value }))}
                 style={{ ...inputStyle, marginTop: 3 }} />
             </label>
@@ -7943,7 +7996,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                         <option value="">— Assign to —</option>
                         {(form.attendees || []).map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
-                      <input type="date" value={item.dueDate || ""}
+                      <DateInput  value={item.dueDate || ""}
                         onChange={e => setForm(p => { const a = [...p.actionItems]; a[ai] = { ...a[ai], dueDate: e.target.value }; return { ...p, actionItems: a }; })}
                         style={{ ...inputStyle, fontSize: 11, flex: 1, minWidth: 120 }} />
                       <select value={item.clientId || ""}
@@ -7990,9 +8043,10 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                     style={{ padding: "5px 10px", border: "1px solid #e2e8f0", borderRadius: 7,
                       fontSize: 12, fontFamily: "inherit" }}>
                     <option value="All">All Categories</option>
-                    {["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Transactions"].map(c =>
-                      <option key={c} value={c}>{c}</option>
-                    )}
+                    {((taskTypesLibrary && taskTypesLibrary.length)
+                      ? [...taskTypesLibrary].sort((a,b) => (a.order??0)-(b.order??0)).map(t => t.label)
+                      : ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing","Transactions"]
+                    ).map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <select value={taskFilterAssign} onChange={e => setTaskFilterAssign(e.target.value)}
                     style={{ padding: "5px 10px", border: "1px solid #e2e8f0", borderRadius: 7,
@@ -8165,7 +8219,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                                       ⚠ Extended from {formatDate(rev.oldDue)}
                                     </span>
                                   )}
-                                  <input type="date" value={rev.newDue}
+                                  <DateInput  value={rev.newDue}
                                     onChange={e => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r =>
                                       r.key === key ? { ...r, newDue: e.target.value } : r
                                     )}))}
@@ -10830,7 +10884,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
 
         {/* ── TASKS VIEW (global) ── */}
         {(view === "overdue" || view === "tasks") && (
-          <OpenTasksView clients={clients} onOpenClient={openClient} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} onClearDashNav={() => setDashNav({})} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} onBack={() => changeView("dashboard")} />
+          <OpenTasksView clients={clients} onOpenClient={openClient} tasksDb={tasksData} onUpdateTask={saveClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} dashNav={dashNav} onClearDashNav={() => setDashNav({})} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} taskTypesLibrary={taskTypesLibrary} transactionTypesLibrary={transactionTypesLibrary} onBack={() => changeView("dashboard")} />
         )}
 
         {/* ── COMPLIANCE VIEW (global) ── */}
@@ -11155,6 +11209,25 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
             onSaveDueDateRules={setDueDateRules}
             clients={clients}
             onSyncClients={syncAllClientsToTasks}
+            teams={teams}
+            onSaveTeam={t => {
+              const isNew = !t.id || !teams.some(x => x.id === t.id);
+              const finalTeam = isNew
+                ? { ...t, id: t.label.replace(/\s+/g,"_").toLowerCase() || ("team_" + Date.now()), color: t.color || "#f1f5f9", border: t.border || "#94a3b8", text: t.text || "#475569", createdBy: currentUser?.name || "" }
+                : t;
+              const updated = isNew ? [...teams, finalTeam] : teams.map(x => x.id === finalTeam.id ? finalTeam : x);
+              setTeams(updated);
+              persistTeams(updated);
+            }}
+            onDeleteTeam={id => {
+              const updated = teams.filter(t => t.id !== id);
+              setTeams(updated);
+              persistTeams(updated);
+            }}
+            onBackfillSave={updatedClients => {
+              setClients(updatedClients);
+              updatedClients.forEach(c => upsertClient(c));
+            }}
             onNavigateCarriers={() => changeView("carriers")}
             currentUser={currentUser}
           />
@@ -11205,6 +11278,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
           employerSizeLibrary={employerSizeLibrary}
           corporateStructureLibrary={corporateStructureLibrary}
           contributionMethodsLibrary={contributionMethodsLibrary}
+          transactionTypesLibrary={transactionTypesLibrary}
           salespersonsLibrary={salespersonsLibrary}
           onUpdateRenewal={r => {
             setRenewals(prev => prev.map(x => x.id === r.id ? r : x));
@@ -11705,12 +11779,12 @@ function ReportsView({ clients, currentUser, teams, carriersData, onBack }) {
             </label>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
               From
-              <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
+              <DateInput  value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
                 style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
             </label>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
               To
-              <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
+              <DateInput  value={filterTo} onChange={e => setFilterTo(e.target.value)}
                 style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
             </label>
             <button onClick={() => { setFilterUser(""); setFilterField(""); setFilterFrom(""); setFilterTo(""); }}
@@ -12031,7 +12105,7 @@ const LIB_FOOTER = {
 };
 
 // ── AdminView ─────────────────────────────────────────────────────────────────
-function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, salespersonsLibrary, onSaveSalespersons, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, billingMethodsLibrary, onSaveBillingMethods, contributionMethodsLibrary, onSaveContributionMethods, employerTypesLibrary, onSaveEmployerTypes, employerSizeLibrary, onSaveEmployerSize, corporateStructureLibrary, onSaveCorporateStructure, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, onNavigateCarriers, currentUser }) {
+function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSaveAnchorEvents, taskTypesLibrary, onSaveTaskTypes, salespersonsLibrary, onSaveSalespersons, marketsLibrary, onSaveMarkets, fundingLibrary, onSaveFunding, billingMethodsLibrary, onSaveBillingMethods, contributionMethodsLibrary, onSaveContributionMethods, employerTypesLibrary, onSaveEmployerTypes, employerSizeLibrary, onSaveEmployerSize, corporateStructureLibrary, onSaveCorporateStructure, situsLibrary, onSaveSitus, transactionTypesLibrary, onSaveTransactionTypes, benefitsDb, onSaveBenefitsDb, tasks, onSaveTasks, dueDateRules, onSaveDueDateRules, clients, onSyncClients, teams, onSaveTeam, onDeleteTeam, onBackfillSave, onNavigateCarriers, currentUser }) {
   const [adminTab, setAdminTab] = useState("plans");
 
   const allAnchors = [
@@ -12073,6 +12147,7 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
         { id: "taskTypes", icon: "🏷️",  label: "Task Types" },
         { id: "ddr",       icon: "📅", label: "Due Date Rules" },
         { id: "anchors",   icon: "⚓", label: "Anchor Events" },
+        { id: "backfill",  icon: "🔁", label: "Backfill Assignees" },
       ],
     },
     {
@@ -12085,6 +12160,7 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
       label: "GENERAL",
       items: [
         { id: "salespersons", icon: "👤", label: "Salespersons" },
+        { id: "teams",        icon: "🏢", label: "Teams" },
       ],
     },
   ];
@@ -12191,7 +12267,627 @@ function AdminView({ plansLibrary, onSavePlansLibrary, anchorEventsLibrary, onSa
           <SimpleLibraryView title="Transaction Types" items={transactionTypesLibrary} onSave={onSaveTransactionTypes} currentUser={currentUser}
             description="Types of member transactions tracked on client records." />
         )}
+        {adminTab === "backfill" && (
+          <BackfillAssigneesView clients={clients} tasks={tasks} teams={teams} onBackfillSave={onBackfillSave} currentUser={currentUser} />
+        )}
+        {adminTab === "teams" && (
+          <TeamsAdminView teams={teams} onSaveTeam={onSaveTeam} onDeleteTeam={onDeleteTeam} currentUser={currentUser} />
+        )}
       </div>
+    </div>
+  );
+}
+
+// ── TeamsAdminView ────────────────────────────────────────────────────────────
+function TeamsAdminView({ teams, onSaveTeam, onDeleteTeam, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+  const [editingId, setEditingId] = React.useState(null); // null=none, "new"=new team, or team.id
+  const [draft, setDraft] = React.useState(null);
+
+  const ROLE_OPTIONS = ["Team Lead","Account Executive","Account Manager","Account Coordinator","Support"];
+
+  function startEdit(team) {
+    setDraft(JSON.parse(JSON.stringify(team)));
+    setEditingId(team.id || "new");
+  }
+  function startNew() {
+    setDraft({ id: "", label: "", color: "#f1f5f9", border: "#94a3b8", text: "#475569", members: [] });
+    setEditingId("new");
+  }
+  function cancel() { setDraft(null); setEditingId(null); }
+
+  function addMember() {
+    setDraft(p => ({ ...p, members: [...(p.members || []), { name: "", role: "", email: "" }] }));
+  }
+  function updateMember(i, k, v) {
+    setDraft(p => { const m = [...(p.members || [])]; m[i] = { ...m[i], [k]: v }; return { ...p, members: m }; });
+  }
+  function removeMember(i) {
+    setDraft(p => ({ ...p, members: (p.members || []).filter((_, idx) => idx !== i) }));
+  }
+  function save() {
+    if (!draft.label?.trim()) { alert("Team name is required."); return; }
+    onSaveTeam(draft);
+    cancel();
+  }
+  function handleDelete(id) {
+    if (!window.confirm("Delete this team? This cannot be undone.")) return;
+    onDeleteTeam(id);
+    cancel();
+  }
+
+  const inputS = { display:"block", width:"100%", padding:"7px 10px", border:"1.5px solid #e2e8f0",
+    borderRadius:7, fontSize:13, color:"#0f172a", background:"#fff", fontFamily:"inherit", marginTop:3 };
+  const labelS = { display:"block", fontSize:11, fontWeight:700, color:"#64748b", letterSpacing:".3px" };
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:24 }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:800, color:"#0f172a",
+            fontFamily:"'Playfair Display',Georgia,serif", marginBottom:4 }}>Teams</div>
+          <div style={{ fontSize:13, color:"#64748b" }}>
+            Manage teams and their members. Team assignments drive default task ownership across the app.
+          </div>
+        </div>
+        {canEdit && editingId === null && (
+          <button onClick={startNew}
+            style={{ padding:"8px 18px", borderRadius:8, fontSize:13, fontWeight:700,
+              background:"linear-gradient(135deg,#1d4ed8,#3b82f6)", color:"#fff",
+              border:"none", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+            + Add Team
+          </button>
+        )}
+      </div>
+
+      {/* New team form */}
+      {editingId === "new" && draft && (
+        <TeamDraftForm
+          draft={draft} setDraft={setDraft} isNew={true}
+          ROLE_OPTIONS={ROLE_OPTIONS} inputS={inputS} labelS={labelS}
+          addMember={addMember} updateMember={updateMember} removeMember={removeMember}
+          onSave={save} onCancel={cancel}
+          canDelete={false} onDelete={null}
+        />
+      )}
+
+      {/* Existing teams */}
+      {(teams || []).length === 0 && editingId !== "new" ? (
+        <div style={{ textAlign:"center", padding:"48px 0", color:"#94a3b8", fontSize:14 }}>
+          No teams yet. Click "+ Add Team" to create one.
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          {(teams || []).map(team => {
+            const isEditing = editingId === team.id;
+            return (
+              <div key={team.id} style={{ background:"#fff", borderRadius:12,
+                border:`2px solid ${team.border || "#e2e8f0"}`,
+                borderTop:`4px solid ${team.border || "#e2e8f0"}`,
+                overflow:"hidden" }}>
+                {/* Team header bar */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"14px 20px", background: team.color ? team.color + "55" : "#f8fafc" }}>
+                  <div style={{ fontFamily:"'Playfair Display',Georgia,serif",
+                    fontWeight:800, fontSize:16, color: team.text || "#0f172a" }}>
+                    Team {team.label}
+                    <span style={{ fontSize:11, fontWeight:400, color:"#94a3b8", marginLeft:8 }}>
+                      {(team.members || []).length} member{(team.members||[]).length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  {canEdit && !isEditing && (
+                    <button onClick={() => startEdit(team)}
+                      style={{ padding:"5px 14px", borderRadius:7, fontSize:12, fontWeight:700,
+                        border:"1.5px solid #e2e8f0", background:"#fff", color:"#475569",
+                        cursor:"pointer", fontFamily:"inherit" }}>
+                      ✎ Edit
+                    </button>
+                  )}
+                </div>
+
+                {/* Edit form */}
+                {isEditing && draft ? (
+                  <div style={{ padding:"20px 20px" }}>
+                    <TeamDraftForm
+                      draft={draft} setDraft={setDraft} isNew={false}
+                      ROLE_OPTIONS={ROLE_OPTIONS} inputS={inputS} labelS={labelS}
+                      addMember={addMember} updateMember={updateMember} removeMember={removeMember}
+                      onSave={save} onCancel={cancel}
+                      canDelete={canEdit} onDelete={() => handleDelete(team.id)}
+                    />
+                  </div>
+                ) : (
+                  /* Read-only member list */
+                  <div style={{ padding:"12px 20px 16px" }}>
+                    {team.email && (
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:12,
+                        fontSize:12, color:"#475569" }}>
+                        <span style={{ fontSize:13 }}>✉</span>
+                        <a href={`mailto:${team.email}`} style={{ color:"#2563eb", textDecoration:"none", fontWeight:500 }}>
+                          {team.email}
+                        </a>
+                      </div>
+                    )}
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:8 }}>
+                      {(team.members || []).length === 0 ? (
+                        <div style={{ fontSize:12, color:"#94a3b8", fontStyle:"italic" }}>No members yet.</div>
+                      ) : [...(team.members||[])].sort((a,b) => {
+                          const order = ["Team Lead","Account Executive","Account Manager","Account Coordinator"];
+                          return (order.indexOf(a.role)||99) - (order.indexOf(b.role)||99);
+                        }).map((m, i) => (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:10,
+                          padding:"8px 12px", borderRadius:8,
+                          background: team.color || "#f8fafc",
+                          border:`1px solid ${team.border || "#e2e8f0"}30` }}>
+                          <div style={{ width:32, height:32, borderRadius:"50%",
+                            background: team.border || "#94a3b8",
+                            display:"flex", alignItems:"center", justifyContent:"center",
+                            fontSize:12, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                            {(m.name || "?")[0]}
+                          </div>
+                          <div>
+                            <div style={{ fontSize:13, fontWeight:700, color: team.text || "#0f172a" }}>{m.name || "—"}</div>
+                            <div style={{ fontSize:11, color:"#64748b" }}>{m.role || "—"}</div>
+                            {m.email && <div style={{ fontSize:10, color:"#94a3b8" }}>{m.email}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamDraftForm({ draft, setDraft, isNew, ROLE_OPTIONS, inputS, labelS,
+  addMember, updateMember, removeMember, onSave, onCancel, canDelete, onDelete }) {
+  return (
+    <div>
+      {/* Team name + color */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 120px 120px 120px", gap:12, marginBottom:18 }}>
+        <label style={labelS}>
+          Team Name
+          <input value={draft.label || ""} onChange={e => setDraft(p => ({ ...p, label: e.target.value }))}
+            placeholder="e.g. Alpha" style={inputS} />
+        </label>
+        <label style={labelS}>
+          Background
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3 }}>
+            <input type="color" value={draft.color || "#f1f5f9"}
+              onChange={e => setDraft(p => ({ ...p, color: e.target.value }))}
+              style={{ width:36, height:32, border:"1.5px solid #e2e8f0", borderRadius:6, cursor:"pointer", padding:2 }} />
+            <span style={{ fontSize:11, color:"#64748b" }}>{draft.color || "#f1f5f9"}</span>
+          </div>
+        </label>
+        <label style={labelS}>
+          Accent Border
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3 }}>
+            <input type="color" value={draft.border || "#94a3b8"}
+              onChange={e => setDraft(p => ({ ...p, border: e.target.value }))}
+              style={{ width:36, height:32, border:"1.5px solid #e2e8f0", borderRadius:6, cursor:"pointer", padding:2 }} />
+            <span style={{ fontSize:11, color:"#64748b" }}>{draft.border || "#94a3b8"}</span>
+          </div>
+        </label>
+        <label style={labelS}>
+          Text Color
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3 }}>
+            <input type="color" value={draft.text || "#475569"}
+              onChange={e => setDraft(p => ({ ...p, text: e.target.value }))}
+              style={{ width:36, height:32, border:"1.5px solid #e2e8f0", borderRadius:6, cursor:"pointer", padding:2 }} />
+            <span style={{ fontSize:11, color:"#64748b" }}>{draft.text || "#475569"}</span>
+          </div>
+        </label>
+      </div>
+
+      {/* Team Email */}
+      <div style={{ marginBottom:18 }}>
+        <label style={labelS}>
+          Team E-mail
+          <input value={draft.email || ""} onChange={e => setDraft(p => ({ ...p, email: e.target.value }))}
+            placeholder="e.g. team-alpha@company.com" style={inputS} type="email" />
+        </label>
+      </div>
+
+      {/* Members */}
+      <div style={{ marginBottom:16 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+          letterSpacing:".5px", marginBottom:10 }}>Members</div>
+        {(draft.members || []).length === 0 && (
+          <div style={{ fontSize:12, color:"#94a3b8", fontStyle:"italic", marginBottom:10 }}>
+            No members yet — add one below.
+          </div>
+        )}
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {(draft.members || []).map((m, i) => (
+            <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 32px", gap:8, alignItems:"end" }}>
+              <label style={labelS}>
+                {i === 0 ? "Name" : ""}
+                <input value={m.name || ""} onChange={e => updateMember(i, "name", e.target.value)}
+                  placeholder="Full name" style={{ ...inputS, marginTop: i === 0 ? 3 : 0 }} />
+              </label>
+              <label style={labelS}>
+                {i === 0 ? "Role" : ""}
+                <select value={m.role || ""} onChange={e => updateMember(i, "role", e.target.value)}
+                  style={{ ...inputS, marginTop: i === 0 ? 3 : 0 }}>
+                  <option value="">— Select role —</option>
+                  {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </label>
+              <label style={labelS}>
+                {i === 0 ? "Email (optional)" : ""}
+                <input value={m.email || ""} onChange={e => updateMember(i, "email", e.target.value)}
+                  placeholder="name@company.com" style={{ ...inputS, marginTop: i === 0 ? 3 : 0 }} />
+              </label>
+              <button onClick={() => removeMember(i)}
+                style={{ height:34, width:32, borderRadius:7, border:"1.5px solid #fca5a5",
+                  background:"#fee2e2", color:"#991b1b", cursor:"pointer",
+                  fontSize:14, fontFamily:"inherit", marginBottom:0 }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <button onClick={addMember}
+          style={{ marginTop:10, padding:"6px 14px", borderRadius:7, fontSize:12, fontWeight:700,
+            border:"1.5px dashed #94a3b8", background:"#f8fafc", color:"#475569",
+            cursor:"pointer", fontFamily:"inherit" }}>
+          + Add Member
+        </button>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display:"flex", gap:10, alignItems:"center", paddingTop:12,
+        borderTop:"1px solid #f1f5f9" }}>
+        <button onClick={onSave}
+          style={{ padding:"8px 20px", borderRadius:8, fontSize:13, fontWeight:700,
+            background:"linear-gradient(135deg,#1d4ed8,#3b82f6)", color:"#fff",
+            border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+          {isNew ? "Create Team" : "Save Changes"}
+        </button>
+        <button onClick={onCancel}
+          style={{ padding:"8px 18px", borderRadius:8, fontSize:13, fontWeight:700,
+            background:"#fff", color:"#475569", border:"1.5px solid #e2e8f0",
+            cursor:"pointer", fontFamily:"inherit" }}>
+          Cancel
+        </button>
+        {canDelete && onDelete && (
+          <button onClick={onDelete}
+            style={{ marginLeft:"auto", padding:"8px 18px", borderRadius:8, fontSize:13,
+              fontWeight:700, background:"#fff", color:"#dc2626",
+              border:"1.5px solid #fca5a5", cursor:"pointer", fontFamily:"inherit" }}>
+            Delete Team
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── BackfillAssigneesView ─────────────────────────────────────────────────────
+function BackfillAssigneesView({ clients, tasks, teams, onBackfillSave, currentUser }) {
+  const canEdit = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
+
+  const [preview, setPreview]   = React.useState(null);  // null = not run yet
+  const [running, setRunning]   = React.useState(false);
+  const [done, setDone]         = React.useState(false);
+  const [committed, setCommitted] = React.useState(false);
+
+  // Groups of tasks that use the object-map pattern (keyed by task id)
+  const MAP_GROUPS = ["preRenewal", "compliance", "renewalTasksAuto"];
+
+  function buildPreview() {
+    const changes = [];
+
+    // Helper: resolve a role string to a person name using LIVE teams data (not hardcoded TEAMS)
+    function resolveRoleOnTeam(role, teamId) {
+      if (!role) return "";
+      // Check live teams first
+      const liveTeam = (teams || []).find(t => t.id === teamId || t.label === teamId);
+      if (liveTeam?.members) {
+        const m = liveTeam.members.find(m => m.role === role);
+        if (m?.name) return m.name;
+        // If role doesn't exist on this team, return empty — don't silently substitute
+        if (TASK_ROLES.includes(role)) return "";
+        // If it's already a name (not a role), return as-is
+        return role;
+      }
+      // Fallback to hardcoded TEAMS
+      return resolveAssignee(role, teamId);
+    }
+
+    // Helper: resolve assignee for a task using task DB role config
+    function resolveForGroup(taskId, group, teamId) {
+      const dbTask = (tasks || []).find(t => t.id === "t_" + taskId) || (tasks || []).find(t => t.id === taskId);
+      if (dbTask?.defaultAssignee) {
+        const r = resolveRoleOnTeam(dbTask.defaultAssignee, teamId);
+        if (r) return r;
+        // Role configured but no match on this team — skip, don't substitute
+        if (TASK_ROLES.includes(dbTask.defaultAssignee)) return "";
+      }
+      // For compliance with no DB config: use coordinator as safe default
+      if (group === "compliance") {
+        const liveTeam = (teams || []).find(t => t.id === teamId || t.label === teamId);
+        const coord = liveTeam?.members?.find(m => m.role === "Account Coordinator");
+        return coord?.name || getCoordinator(teamId) || "";
+      }
+      return "";
+    }
+
+    (clients || []).forEach(client => {
+      // ── Map-based groups (preRenewal, compliance, renewalTasksAuto) ──────────
+      MAP_GROUPS.forEach(group => {
+        const groupData = client[group] || {};
+
+        // For compliance: also scan COMPLIANCE_TASKS to catch tasks not yet in client data
+        const taskIds = group === "compliance"
+          ? [...new Set([...Object.keys(groupData), ...COMPLIANCE_TASKS.map(t => t.id)])]
+          : Object.keys(groupData);
+
+        taskIds.forEach(taskId => {
+          const existing = groupData[taskId];
+          // If task doesn't exist in client data yet, treat as blank assignee
+          if (existing === undefined || existing === null) {
+            // Only add if we can resolve an assignee
+            const resolved = resolveForGroup(taskId, group, client.team);
+            if (!resolved) return;
+            const taskDef = COMPLIANCE_TASKS.find(t => t.id === taskId);
+            changes.push({
+              clientId: client.id, clientName: client.name, team: client.team,
+              group, taskId,
+              label: taskDef?.label || getLabelForTask(taskId, tasks, taskId),
+              newAssignee: resolved,
+            });
+            return;
+          }
+          if (typeof existing !== "object") return;
+          if (existing.assignee && existing.assignee.trim() !== "") return; // already assigned
+          const resolved = resolveForGroup(taskId, group, client.team);
+          if (!resolved) return;
+          const taskDef = COMPLIANCE_TASKS.find(t => t.id === taskId);
+          changes.push({
+            clientId: client.id, clientName: client.name, team: client.team,
+            group, taskId,
+            label: taskDef?.label || getLabelForTask(taskId, tasks, taskId),
+            newAssignee: resolved,
+          });
+        });
+      });
+
+      // ── OE tasks ─────────────────────────────────────────────────────────────
+      const oeTasks = client.openEnrollment?.tasks || {};
+      Object.entries(oeTasks).forEach(([taskId, existing]) => {
+        if (typeof existing !== "object" || existing === null) return;
+        if (existing.assignee && existing.assignee.trim() !== "") return;
+        const resolved = resolveForGroup(taskId, "openEnrollment", client.team);
+        if (!resolved) return;
+        changes.push({
+          clientId: client.id, clientName: client.name, team: client.team,
+          group: "openEnrollment", taskId,
+          label: getLabelForTask(taskId, tasks, taskId),
+          newAssignee: resolved,
+        });
+      });
+
+      // ── Array-based groups (miscTasks, renewalTasks, postOETasks) ────────────
+      ["miscTasks","renewalTasks","postOETasks"].forEach(group => {
+        (client[group] || []).forEach((t, idx) => {
+          if (t.assignee && t.assignee.trim() !== "") return;
+          const dbTask = (tasks || []).find(dt =>
+            dt.label?.toLowerCase().trim() === (t.title || t.label || "").toLowerCase().trim()
+          );
+          if (!dbTask?.defaultAssignee) return;
+          const resolved = resolveAssignee(dbTask.defaultAssignee, client.team);
+          if (!resolved) return;
+          changes.push({
+            clientId: client.id, clientName: client.name, team: client.team,
+            group, taskId: t.id || String(idx), arrayIndex: idx,
+            label: t.title || t.label || "(untitled)",
+            newAssignee: resolved,
+          });
+        });
+      });
+    });
+
+    return changes;
+  }
+
+  function handlePreview() {
+    setRunning(true);
+    setDone(false);
+    setCommitted(false);
+    setTimeout(() => {
+      const changes = buildPreview();
+      setPreview(changes);
+      setRunning(false);
+      setDone(true);
+    }, 0);
+  }
+
+  function handleCommit() {
+    if (!preview || preview.length === 0) return;
+    setRunning(true);
+
+    // Group changes by clientId
+    const byClient = {};
+    preview.forEach(ch => {
+      if (!byClient[ch.clientId]) byClient[ch.clientId] = [];
+      byClient[ch.clientId].push(ch);
+    });
+
+    // Apply changes and save
+    const updatedClients = (clients || []).map(client => {
+      const clientChanges = byClient[client.id];
+      if (!clientChanges) return client;
+      let updated = JSON.parse(JSON.stringify(client));
+      clientChanges.forEach(ch => {
+        if (ch.group === "openEnrollment") {
+          if (!updated.openEnrollment) updated.openEnrollment = {};
+          if (!updated.openEnrollment.tasks) updated.openEnrollment.tasks = {};
+          const existing = updated.openEnrollment.tasks[ch.taskId];
+          updated.openEnrollment.tasks[ch.taskId] = (typeof existing === "object" && existing)
+            ? { ...existing, assignee: ch.newAssignee }
+            : { status: "Not Started", assignee: ch.newAssignee, dueDate: "", completedDate: "" };
+        } else if (["miscTasks","renewalTasks","postOETasks"].includes(ch.group)) {
+          const arr = [...(updated[ch.group] || [])];
+          const idx = ch.arrayIndex;
+          if (arr[idx]) arr[idx] = { ...arr[idx], assignee: ch.newAssignee };
+          updated[ch.group] = arr;
+        } else {
+          // Map-based group (preRenewal, compliance, etc.) — create stub if task doesn't exist yet
+          if (!updated[ch.group]) updated[ch.group] = {};
+          const existing = updated[ch.group][ch.taskId];
+          updated[ch.group] = {
+            ...updated[ch.group],
+            [ch.taskId]: (typeof existing === "object" && existing)
+              ? { ...existing, assignee: ch.newAssignee }
+              : { status: "Not Started", assignee: ch.newAssignee, dueDate: "", completedDate: "" }
+          };
+        }
+      });
+      return updated;
+    });
+
+    // Persist all changed clients — update local state + Supabase in one shot
+    const changedClients = updatedClients.filter(c => byClient[String(c.id)]);
+    if (onBackfillSave) onBackfillSave(updatedClients);
+    setRunning(false);
+    setCommitted(true);
+    void changedClients;
+  }
+
+  // Group preview by client for display
+  const grouped = React.useMemo(() => {
+    if (!preview) return [];
+    const map = {};
+    preview.forEach(ch => {
+      if (!map[ch.clientId]) map[ch.clientId] = { clientName: ch.clientName, team: ch.team, changes: [] };
+      map[ch.clientId].changes.push(ch);
+    });
+    return Object.values(map).sort((a,b) => a.clientName.localeCompare(b.clientName));
+  }, [preview]);
+
+  const GROUP_LABELS = {
+    preRenewal: "Pre-Renewal", compliance: "Compliance", renewalTasksAuto: "Renewal (Auto)",
+    openEnrollment: "Open Enrollment", miscTasks: "Misc Tasks",
+    renewalTasks: "Renewal Tasks", postOETasks: "Post-OE Tasks",
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", fontFamily: "'Playfair Display',Georgia,serif", marginBottom: 6 }}>
+          Backfill Default Assignees
+        </div>
+        <div style={{ fontSize: 13, color: "#64748b", maxWidth: 600, lineHeight: 1.6 }}>
+          Scans every client for tasks with a blank assignee and fills them in using the
+          default roles configured in the Task Library. Only blank assignees are touched —
+          any task that already has a person assigned is left exactly as-is.
+        </div>
+      </div>
+
+      {/* Action bar */}
+      {!committed && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 24 }}>
+          <button onClick={handlePreview} disabled={running || !canEdit}
+            style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+              background: "linear-gradient(135deg,#2d4a6b,#4b7896)", color: "#fff",
+              border: "none", cursor: canEdit ? "pointer" : "not-allowed",
+              opacity: running ? 0.6 : 1, fontFamily: "inherit" }}>
+            {running ? "Scanning…" : done ? "Re-Scan" : "🔍 Scan for Blanks"}
+          </button>
+          {done && preview?.length > 0 && (
+            <button onClick={handleCommit} disabled={running}
+              style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                background: "linear-gradient(135deg,#166534,#22c55e)", color: "#fff",
+                border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+              ✓ Apply {preview.length} Update{preview.length !== 1 ? "s" : ""}
+            </button>
+          )}
+          {done && preview?.length === 0 && (
+            <span style={{ fontSize: 13, color: "#166534", fontWeight: 600 }}>
+              ✓ All tasks already have assignees — nothing to update.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Success state */}
+      {committed && (
+        <div style={{ background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 10,
+          padding: "16px 20px", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 22 }}>✅</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#166534" }}>
+              {preview?.length} assignment{preview?.length !== 1 ? "s" : ""} updated successfully
+            </div>
+            <div style={{ fontSize: 12, color: "#4ade80", marginTop: 2 }}>
+              Changes saved to the database. Refresh the app to see updates reflected everywhere.
+            </div>
+          </div>
+          <button onClick={() => { setPreview(null); setDone(false); setCommitted(false); }}
+            style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: 7, fontSize: 12,
+              fontWeight: 700, border: "1.5px solid #86efac", background: "#fff",
+              color: "#166534", cursor: "pointer", fontFamily: "inherit" }}>
+            Run Again
+          </button>
+        </div>
+      )}
+
+      {/* Preview table */}
+      {done && preview?.length > 0 && !committed && (
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase",
+            letterSpacing: ".5px", marginBottom: 10 }}>
+            Preview — {preview.length} blank assignee{preview.length !== 1 ? "s" : ""} found across {grouped.length} client{grouped.length !== 1 ? "s" : ""}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {grouped.map(g => (
+              <div key={g.clientName} style={{ background: "#fff", border: "1px solid #e2e8f0",
+                borderRadius: 10, overflow: "hidden" }}>
+                {/* Client header */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
+                  background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#1e293b" }}>{g.clientName}</span>
+                  {g.team && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
+                      background: "#e0f2fe", color: "#0369a1" }}>Team {g.team}</span>
+                  )}
+                  <span style={{ marginLeft: "auto", fontSize: 11, color: "#64748b" }}>
+                    {g.changes.length} task{g.changes.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                {/* Task rows */}
+                <div>
+                  {g.changes.map((ch, i) => (
+                    <div key={`${ch.group}-${ch.taskId}`}
+                      style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr",
+                        padding: "8px 16px", alignItems: "center",
+                        borderBottom: i < g.changes.length - 1 ? "1px solid #f1f5f9" : "none",
+                        fontSize: 12 }}>
+                      <div style={{ color: "#334155", fontWeight: 500 }}>{ch.label}</div>
+                      <div style={{ color: "#94a3b8", fontSize: 11 }}>
+                        {GROUP_LABELS[ch.group] || ch.group}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 10, color: "#94a3b8" }}>Unassigned</span>
+                        <span style={{ fontSize: 11, color: "#94a3b8" }}>→</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#0369a1",
+                          background: "#e0f2fe", padding: "2px 8px", borderRadius: 99 }}>
+                          {ch.newAssignee}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -12228,11 +12924,12 @@ function EmployerSizeLibraryView({ items, onSave, currentUser }) {
 
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d3d", marginBottom: 4 }}>Employer Size</div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>
-        Employer size designations available on client records. The ALE flag drives compliance task eligibility (e.g. ACA Filing).
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+        <div style={{ fontSize: 12, color: "#64748b" }}>
+          Employer size designations available on client records. The ALE flag drives compliance task eligibility (e.g. ACA Filing).
+        </div>
+        {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginLeft: "auto", whiteSpace: "nowrap" }}>+ Add Size</button>}
       </div>
-      {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginBottom: 16 }}>+ Add Size</button>}
       {editingId && editData && (
         <div style={LIB_FORM_CARD}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
@@ -12318,12 +13015,13 @@ function EmployerTypeLibraryView({ items, onSave, currentUser }) {
 
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d3d", marginBottom: 4 }}>Employer Types</div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>
-        Employer type classifications. The ERISA flag drives whether ERISA compliance items appear on the client record.
-        Church plans and government entities are typically exempt from ERISA.
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 18 }}>
+        <div style={{ fontSize: 12, color: "#64748b" }}>
+          Employer type classifications. The ERISA flag drives whether ERISA compliance items appear on the client record.
+          Church plans and government entities are typically exempt from ERISA.
+        </div>
+        {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginLeft: "auto", whiteSpace: "nowrap" }}>+ Add Type</button>}
       </div>
-      {canEdit && <button onClick={startAdd} style={{ ...LIB_BTN_PRIMARY, marginBottom: 16 }}>+ Add Type</button>}
       {editingId && editData && (
         <div style={LIB_FORM_CARD}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#3e5878", marginBottom: 14 }}>
@@ -13963,35 +14661,87 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
 }
 
 // ── CarriersView ─────────────────────────────────────────────────────────────
+// Replace the existing CarriersView function (lines ~13965–14635) in App.jsx
+// with this block verbatim.
+//
+// All constants / helpers it references are already in App.jsx scope:
+//   CARRIER_CATEGORIES, CARRIER_SEGMENTS, CARRIER_TYPES, FUNDING_OPTIONS,
+//   PRODUCT_LIST, CARRIER_CONTACT_ROLES, CARRIER_EMPLOYER_TYPES,
+//   inputStyle, labelStyle, btnOutline, formatPhone
+// ─────────────────────────────────────────────────────────────────────────────
 
 function CarriersView({ carriers, onSave, currentUser, onBack }) {
-  const isAC = currentUser?.role?.trim() === "Account Coordinator";
-  const canDelete = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
-  const canEditCarrier = !isAC;
-  const [activeCategory, setActiveCategory] = useState("Medical");
-  const [editingId, setEditingId] = useState(null);
-  const [editData, setEditData] = useState(null);
+  const isAC      = currentUser?.role?.trim() === "Account Coordinator";
+  const canDelete = ["Team Lead", "VP", "Lead"].includes(currentUser?.role?.trim());
+  const canEdit   = !isAC;
 
-  const filtered = carriers
-    .filter(c => c.category === activeCategory)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [activeCategory, setActiveCategory] = React.useState("Medical");
+  const [selectedId,  setSelectedId]  = React.useState(null);
+  const [editingId,   setEditingId]   = React.useState(null);
+  const [editData,    setEditData]    = React.useState(null);
+  const [detailTab,   setDetailTab]   = React.useState("Overview");
+  const [page,        setPage]        = React.useState(1);
+  const [searchQ,     setSearchQ]     = React.useState("");
+  const PER_PAGE = 10;
 
+  React.useEffect(() => {
+    setPage(1); setSearchQ(""); setSelectedId(null); setEditingId(null); setEditData(null);
+  }, [activeCategory]);
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const allFiltered = React.useMemo(() => {
+    let list = carriers
+      .filter(c => c.category === activeCategory)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (searchQ.trim()) {
+      const q = searchQ.toLowerCase();
+      list = list.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        (c.segments || []).some(s => s.toLowerCase().includes(q)) ||
+        (c.funding  || []).some(f => f.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [carriers, activeCategory, searchQ]);
+
+  const pinnedList    = allFiltered.filter(c =>  c.pinned);
+  const unpinnedList  = allFiltered.filter(c => !c.pinned);
+  const totalPages    = Math.max(1, Math.ceil(unpinnedList.length / PER_PAGE));
+  const pagedUnpinned = unpinnedList.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+  // When editing, show editData in the panel; otherwise show the saved version
+  const selectedCarrier = selectedId
+    ? (editingId === selectedId && editData ? editData : carriers.find(c => c.id === selectedId))
+    : null;
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+  function togglePin(id) {
+    onSave(prev => prev.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c));
+  }
+  function openDetail(carrier) {
+    if (editingId && editingId !== carrier.id) cancelEdit();
+    setSelectedId(carrier.id);
+    setDetailTab("Overview");
+  }
   function startEdit(carrier) {
     setEditingId(carrier.id);
     setEditData(JSON.parse(JSON.stringify(carrier)));
+    setSelectedId(carrier.id);
+    setDetailTab("Overview");
   }
   function startNew() {
     const newId = "c_" + Date.now();
     const blank = {
       id: newId, name: "", type: "National", category: activeCategory,
-      segments: [], products: [], funding: [], states: [], notes: "", requirements: [],
-      contacts: [],
-      benefitDetails: "",
-      planLimits: [],
-      commissionRules: [],  // [{ benefit, segment, fundingMethod, type, amount, notes }]
+      segments: [], products: [], funding: [], states: [], notes: "",
+      requirements: [], contacts: [], benefitDetails: "", planLimits: [],
+      commissionRules: [],
     };
     setEditingId(newId);
     setEditData(blank);
+    setSelectedId(newId);
+    setDetailTab("Overview");
   }
   function saveEdit() {
     if (!editData.name.trim()) return;
@@ -14002,634 +14752,1000 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
     setEditingId(null);
     setEditData(null);
   }
-  function deleteCarrier(id) {
-    if (confirm("Delete this carrier?")) {
-      onSave(prev => prev.filter(c => c.id !== id));
-      if (editingId === id) { setEditingId(null); setEditData(null); }
-    }
+  function cancelEdit() {
+    const isNew = !carriers.find(c => c.id === editingId);
+    setEditingId(null);
+    setEditData(null);
+    if (isNew) setSelectedId(null);
   }
-  function togglePin(id) {
-    onSave(prev => prev.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c));
+  function deleteCarrier(id) {
+    if (!window.confirm("Delete this carrier? This cannot be undone.")) return;
+    onSave(prev => prev.filter(c => c.id !== id));
+    if (selectedId === id) setSelectedId(null);
+    if (editingId  === id) { setEditingId(null); setEditData(null); }
   }
   function toggleItem(field, val) {
     setEditData(p => ({
       ...p,
-      [field]: p[field].includes(val) ? p[field].filter(x => x !== val) : [...p[field], val],
+      [field]: (p[field] || []).includes(val)
+        ? p[field].filter(x => x !== val)
+        : [...(p[field] || []), val],
     }));
   }
 
-  const allProducts = activeCategory === "Medical"
-    ? PRODUCT_LIST.medical
-    : activeCategory === "Ancillary"
-    ? PRODUCT_LIST.ancillary
-    : PRODUCT_LIST.admin;
+  // ── Visual helpers ─────────────────────────────────────────────────────────
+  function carrierColor(name = "") {
+    const n = name.toLowerCase();
+    if (n.includes("aetna"))  return "#7B2281";
+    if (n.includes("bcbsil") || n.includes("blue cross") || n.includes("bcbs")) return "#005EB8";
+    if (n.includes("cigna"))  return "#006699";
+    if (n.includes("united")) return "#1A6DA0";
+    if (n.includes("humana")) return "#00834B";
+    if (n.includes("oscar"))  return "#FF5B5B";
+    if (n.includes("guardian")) return "#1B3A6A";
+    if (n.includes("principal")) return "#006BA6";
+    if (n.includes("sun life")) return "#F5821F";
+    if (n.includes("unum"))   return "#0066CC";
+    if (n.includes("lincoln")) return "#9B0000";
+    if (n.includes("metlife")) return "#0086D3";
+    if (n.includes("delta"))  return "#003087";
+    if (n.includes("vsp"))    return "#E14F0E";
+    return "#4a7fa5";
+  }
 
-  const CHIP = ({ label, active, onClick, color = "#4a7fa5" }) => (
-    <button type="button" onClick={onClick} style={{
-      padding: "3px 10px", borderRadius: 99, fontSize: 11, fontWeight: active ? 700 : 500,
-      border: `1.5px solid ${active ? color : "#e2e8f0"}`,
-      background: active ? (color === "#4a7fa5" ? "#dce8f0" : color === "#22c55e" ? "#dcfce7" : "#fef3c7") : "#fff",
-      color: active ? (color === "#4a7fa5" ? "#2d4a6b" : color === "#22c55e" ? "#166534" : "#92400e") : "#64748b",
-      cursor: "pointer", fontFamily: "inherit", transition: "all .12s",
-    }}>{label}</button>
-  );
+  function CarrierAvatar({ name, size = 40 }) {
+    const color = carrierColor(name);
+    const initials = (name || "")
+      .split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: 10, flexShrink: 0,
+        background: color + "18", border: `1.5px solid ${color}30`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontWeight: 800, fontSize: size * 0.32, color,
+        fontFamily: "'Playfair Display', Georgia, serif", letterSpacing: "-0.5px",
+      }}>{initials}</div>
+    );
+  }
 
-  return (
-    <div>
-      {/* Sticky header */}
-      <div style={{ position: "sticky", top: 64, zIndex: 40, background: "#f8fafc",
-        borderBottom: "1px solid #e2e8f0", paddingTop: 28, paddingBottom: 12, marginBottom: 20,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div>
-          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
-            Carrier Products
+  // Chip schemes
+  const SEG  = { "ACA": { bg: "#e0f2fe", color: "#0369a1" }, "Mid-Market": { bg: "#fef9c3", color: "#92400e" }, "Large": { bg: "#f3e8ff", color: "#6b21a8" } };
+  const FUND = { "Fully Insured": { bg: "#dcfce7", color: "#166534" }, "Level-Funded": { bg: "#dbeafe", color: "#1e40af" }, "Self-Funded": { bg: "#fce7f3", color: "#9d174d" } };
+
+  function Chip({ label, scheme }) {
+    const s = scheme || { bg: "#f1f5f9", color: "#475569" };
+    return (
+      <span style={{
+        display: "inline-flex", alignItems: "center",
+        padding: "2px 8px", borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+        background: s.bg, color: s.color, whiteSpace: "nowrap",
+      }}>{label}</span>
+    );
+  }
+
+  // Toggle chip for edit mode — matches app's own style
+  function EditChip({ label, active, onClick }) {
+    return (
+      <button type="button" onClick={onClick} style={{
+        padding: "4px 12px", borderRadius: 99, fontSize: 11, fontWeight: 700,
+        border: `1.5px solid ${active ? "#3e5878" : "#e2e8f0"}`,
+        background: active ? "#dce8f0" : "#fff",
+        color: active ? "#2d4a6b" : "#64748b",
+        cursor: "pointer", fontFamily: "inherit", transition: "all .12s",
+      }}>{label}</button>
+    );
+  }
+
+  // Stat tile inside cards
+  function StatTile({ icon, label, value }) {
+    if (!value) return null;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
+          <span style={{ opacity: 0.7 }}>{icon}</span>{label}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#1a2733", lineHeight: 1.3 }}>{value}</div>
+      </div>
+    );
+  }
+
+  // Data summary helpers
+  function commSummary(carrier) {
+    const rules = carrier.commissionRules || [];
+    if (!rules.length) return null;
+    const amounts = rules.map(r => parseFloat(r.amount)).filter(n => !isNaN(n) && n > 0);
+    if (!amounts.length) return null;
+    const lo = Math.min(...amounts), hi = Math.max(...amounts);
+    const hasPEPM = rules.some(r => r.type === "PEPM");
+    if (lo === hi) return hasPEPM ? `$${lo} PEPM` : `${lo}%`;
+    return `${lo}% – ${hi}%`;
+  }
+  function eligText(carrier) {
+    const reqs = carrier.requirements || [];
+    const il   = reqs.find(r => r.label?.includes("(IL)") || r.label?.toLowerCase() === "afa segment (il)");
+    if (il) return il.value;
+    const most = reqs.find(r => r.label?.toLowerCase().includes("most state"));
+    if (most) return most.value;
+    return "2–200 enrolled";
+  }
+  function partText(carrier) {
+    const reqs = carrier.requirements || [];
+    const c    = reqs.find(r => r.label?.toLowerCase().includes("contrib") && !r.label?.toLowerCase().includes("non"));
+    return c ? c.value : "20% contrib.";
+  }
+  function maxPlansText(carrier) {
+    const lims = (carrier.planLimits || []).filter(l => !l.benefit || l.benefit === "Medical");
+    if (!lims.length) return null;
+    const hi = lims.find(l => (l.condition || "").includes("5+"));
+    if (hi) return `${hi.maxPlans} plans (5+)`;
+    return `${lims[0].maxPlans} plans`;
+  }
+
+  // ── Detail panel tabs — identical spec to ClientModal ─────────────────────
+  //   Container:  display:flex, borderBottom:"2px solid #e2e8f0",
+  //               background:"#f8fafc", paddingLeft:20
+  //   Button:     padding:"11px 22px", fontSize:13, fontWeight:700,
+  //               border:"none", background:"none", marginBottom:-2
+  //   Active:     borderBottom:"3px solid #3e5878", color:"#3e5878"
+  //   Inactive:   borderBottom:"3px solid transparent", color:"#94a3b8"
+  // ─────────────────────────────────────────────────────────────────────────
+  const DETAIL_TABS = ["Overview", "Eligibility Rules", "Participation", "Commissions", "Contacts", "Notes / Sources"];
+
+  // ── DETAIL PANEL ─────────────────────────────────────────────────────────
+  function DetailPanel({ carrier }) {
+    const isNew     = !carriers.find(c => c.id === carrier.id);
+    const isEditing = editingId === selectedId;
+    const cur       = isEditing ? editData : carrier; // always read from cur
+
+    const allProducts = activeCategory === "Medical"    ? PRODUCT_LIST.medical
+                      : activeCategory === "Ancillary"  ? PRODUCT_LIST.ancillary
+                      : PRODUCT_LIST.admin;
+
+    // Simple label-value row for Overview
+    function TR({ label, value }) {
+      return (
+        <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", padding: "7px 0",
+          borderBottom: "1px solid #f1f5f9", fontSize: 12 }}>
+          <div style={{ color: "#64748b", fontWeight: 600 }}>{label}</div>
+          <div style={{ color: "#0f172a", fontWeight: 500, wordBreak: "break-word" }}>
+            {value || <span style={{ color: "#cbd5e1", fontStyle: "italic" }}>—</span>}
           </div>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Configure available products and eligibility rules per carrier</div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {canEditCarrier && <button type="button" onClick={startNew} style={{
-            background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
-            border: "none", borderRadius: 9, padding: "9px 20px",
-            fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-          }}>+ Add Carrier</button>}
-          <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
-        </div>
-      </div>
+      );
+    }
 
-      {/* Category tabs */}
-      <div style={{ display: "flex", gap: 8 }}>
-        {CARRIER_CATEGORIES.map(cat => (
-          <button key={cat} type="button" onClick={() => { setActiveCategory(cat); setEditingId(null); }} style={{
-            padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-            border: `1.5px solid ${activeCategory === cat ? "#4a7fa5" : "#e2e8f0"}`,
-            background: activeCategory === cat ? "#2d4a6b" : "#fff",
-            color: activeCategory === cat ? "#fff" : "#64748b",
-            cursor: "pointer", fontFamily: "inherit",
-          }}>{cat}</button>
-        ))}
-      </div>
-      </div>
+    return (
+      <div style={{
+        width: 520, flexShrink: 0,
+        background: "#fff", borderLeft: "1.5px solid #e2e8f0",
+        display: "flex", flexDirection: "column",
+        height: "100%", overflow: "hidden",
+      }}>
 
-      <div style={{ display: "grid", gridTemplateColumns: editingId ? "1fr 560px" : "1fr", gap: 16 }}>
-        {/* Carrier list */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtered.length === 0 && (
-            <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff",
-              borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-              <div style={{ fontWeight: 700 }}>No {activeCategory} carriers yet</div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add Carrier" to get started</div>
+        {/* ── Panel header ── */}
+        <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+              <CarrierAvatar name={cur.name} size={44} />
+              <div style={{ minWidth: 0 }}>
+                {isEditing ? (
+                  <input
+                    value={editData.name}
+                    onChange={e => setEditData(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Carrier name"
+                    style={{ ...inputStyle, marginTop: 0, fontWeight: 800, fontSize: 17,
+                      color: "#0f172a", padding: "4px 8px", border: "1.5px solid #cbd5e1" }}
+                  />
+                ) : (
+                  <div style={{ fontFamily: "'Playfair Display', Georgia, serif",
+                    fontWeight: 800, fontSize: 18, color: "#0f172a",
+                    display: "flex", alignItems: "center", gap: 8 }}>
+                    {cur.name}
+                    {cur.pinned && <span style={{ fontSize: 13 }}>📌</span>}
+                  </div>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                  {(cur.products || []).slice(0, 3).map(p => <Chip key={p} label={p} />)}
+                  {cur.type && <Chip label={cur.type} />}
+                  {(cur.segments || []).map(s => <Chip key={s} label={s} scheme={SEG[s]} />)}
+                  {(cur.funding  || []).map(f => <Chip key={f} label={f} scheme={FUND[f]} />)}
+                </div>
+              </div>
             </div>
-          )}
-          {(() => {
-            const pinnedCarriers   = filtered.filter(c => c.pinned);
-            const unpinnedCarriers = filtered.filter(c => !c.pinned);
-            const renderCarrier = carrier => {
-              const isEditing = editingId === carrier.id;
-              return (
-              <div key={carrier.id} style={{
-                background: isEditing ? "#f0f5fa" : "#fff",
-                borderRadius: 12, padding: "14px 18px",
-                border: `1.5px solid ${isEditing ? "#4a7fa5" : "#e2e8f0"}`,
-                transition: "all .15s",
-              }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>{carrier.name}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                        background: carrier.type === "National" ? "#dce8f0" : "#e4ebdf",
-                        color: carrier.type === "National" ? "#2d4a6b" : "#3a4a25" }}>{carrier.type}</span>
-                      {carrier.segments.map(s => (
-                        <span key={s} style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                          background: "#fef3c7", color: "#92400e" }}>{s}</span>
+            <button onClick={() => { cancelEdit(); setSelectedId(null); }} style={{
+              flexShrink: 0, width: 28, height: 28, borderRadius: 8,
+              border: "1.5px solid #e2e8f0", background: "#f8fafc",
+              cursor: "pointer", fontSize: 15, color: "#64748b",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>✕</button>
+          </div>
+        </div>
+
+        {/* ── Tab bar — exact ClientModal spec ── */}
+        <div style={{
+          display: "flex",
+          borderBottom: "2px solid #e2e8f0",
+          background: "#f8fafc",
+          paddingLeft: 20,
+          flexShrink: 0,
+          overflowX: "auto",
+        }}>
+          {DETAIL_TABS.map(tab => (
+            <button key={tab} type="button" onClick={() => setDetailTab(tab)} style={{
+              padding: "11px 16px",
+              fontSize: 12.5,
+              fontWeight: 700,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              border: "none",
+              background: "none",
+              whiteSpace: "nowrap",
+              borderBottom: detailTab === tab ? "3px solid #3e5878" : "3px solid transparent",
+              color:        detailTab === tab ? "#3e5878" : "#94a3b8",
+              marginBottom: -2,
+              transition: "color .15s",
+            }}>{tab}</button>
+          ))}
+        </div>
+
+        {/* ── Tab content (scrollable) ── */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+
+          {/* OVERVIEW */}
+          {detailTab === "Overview" && (
+            <div>
+              {isEditing ? (
+                <>
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ ...labelStyle, marginBottom: 6 }}>Category</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {CARRIER_CATEGORIES.map(cat => (
+                        <EditChip key={cat} label={cat} active={editData.category === cat}
+                          onClick={() => setEditData(p => ({ ...p, category: cat }))} />
                       ))}
                     </div>
-                    {carrier.products.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
-                        {carrier.products.map(p => (
-                          <span key={p} style={{ fontSize: 10, padding: "1px 7px", borderRadius: 99,
-                            background: "#f1f5f9", color: "#475569", fontWeight: 600 }}>{p}</span>
-                        ))}
-                      </div>
-                    )}
-                    {carrier.funding.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
-                        {carrier.funding.map(f => (
-                          <span key={f} style={{ fontSize: 10, padding: "1px 7px", borderRadius: 99,
-                            background: "#dcfce7", color: "#166534", fontWeight: 600 }}>{f}</span>
-                        ))}
-                      </div>
-                    )}
-                    {carrier.requirements?.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-                        {carrier.requirements.map((r, i) => (
-                          <span key={i} style={{ fontSize: 11, color: "#64748b" }}>
-                            <strong style={{ color: "#475569" }}>{r.label}:</strong> {r.value}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {carrier.benefitDetails && (
-                      <div style={{ fontSize: 11, color: "#3a5a2a", marginTop: 4, fontStyle: "italic" }}>
-                        📋 {carrier.benefitDetails}
-                      </div>
-                    )}
-                    {(carrier.commissionRules || []).length > 0 && (
-                      <div style={{ marginTop: 5 }}>
-                        {(carrier.commissionRules || []).map((r, i) => (
-                          <div key={i} style={{ marginBottom: 3 }}>
-                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99,
-                              background: r.type === "Graded" ? "#fef3c7" : "#dcfce7",
-                              color: r.type === "Graded" ? "#92400e" : "#166534",
-                              fontWeight: 600,
-                              border: `1px solid ${r.type === "Graded" ? "#fde68a" : "#86efac"}` }}>
-                              {r.benefit}{r.segment !== "All" ? ` (${r.segment})` : ""}{r.fundingMethod !== "All" ? ` / ${r.fundingMethod}` : ""}: {r.type === "PEPM" ? `$${r.amount} PEPM` : r.type === "Graded" ? `Graded (max ${r.amount}%)` : `${r.amount}%`}
-                            </span>
-                            {r.notes && (
-                              <span style={{ fontSize: 10, color: "#64748b", marginLeft: 6, fontStyle: "italic" }}>{r.notes}</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {(carrier.planLimits || []).length > 0 && (
-                      <div style={{ marginTop: 5, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {(carrier.planLimits || []).map((pl, i) => (
-                          <span key={i} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99,
-                            background: "#fef3c7", color: "#92400e", fontWeight: 600, border: "1px solid #fde68a" }}>
-                            {pl.benefit}: max {pl.maxPlans} plan{pl.maxPlans !== "1" ? "s" : ""}{pl.condition ? ` (${pl.condition})` : ""}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {(carrier.contacts || []).length > 0 && (
-                      <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {(carrier.contacts || []).slice(0, 4).map((ct, i) => (
-                          <div key={i} style={{ fontSize: 10, padding: "5px 10px", borderRadius: 8,
-                            background: "#e0f2fe", color: "#0369a1", border: "1px solid #bae6fd" }}>
-                            <div style={{ fontWeight: 700 }}>👤 {ct.role}: {ct.name}</div>
-                            {ct.email && <div style={{ opacity: 0.85, marginTop: 1 }}>✉️ {ct.email}</div>}
-                            {ct.phone && <div style={{ opacity: 0.85, marginTop: 1 }}>📞 {ct.phone}</div>}
-                            {ct.market && ct.market !== "Any" && <div style={{ opacity: 0.7, marginTop: 1, fontStyle: "italic" }}>{ct.market}</div>}
-                          </div>
-                        ))}
-                        {(carrier.contacts || []).length > 4 && (
-                          <span style={{ fontSize: 10, color: "#94a3b8", padding: "2px 6px" }}>+{(carrier.contacts||[]).length - 4} more</span>
-                        )}
-                      </div>
-                    )}
-                    {carrier.notes && (
-                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, fontStyle: "italic" }}>{carrier.notes}</div>
-                    )}
                   </div>
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button type="button" onClick={() => togglePin(carrier.id)}
-                      title={carrier.pinned ? "Unpin" : "Pin to top"}
-                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 13,
-                        border: `1.5px solid ${carrier.pinned ? "#fcd34d" : "#e2e8f0"}`,
-                        background: carrier.pinned ? "#fef9c3" : "#f8fafc",
-                        cursor: "pointer", fontFamily: "inherit" }}>📌</button>
-                    {canEditCarrier && <button type="button" onClick={() => isEditing ? (setEditingId(null), setEditData(null)) : startEdit(carrier)}
-                      style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        border: `1.5px solid ${isEditing ? "#4a7fa5" : "#e2e8f0"}`,
-                        background: isEditing ? "#dce8f0" : "#f8fafc",
-                        color: isEditing ? "#2d4a6b" : "#475569",
-                        cursor: "pointer", fontFamily: "inherit" }}>{isEditing ? "Close" : "Edit"}</button>}
-                    <button type="button" onClick={() => { if (!window.confirm(`Delete ${carrier.name}? This cannot be undone.`)) return; deleteCarrier(carrier.id); }}
-                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                        cursor: "pointer", fontFamily: "inherit",
-                        display: canDelete ? "inline-block" : "none" }}>✕</button>
-                  </div>
-                </div>
-              </div>
-              );
-            };
-            return (
-              <>
-                {pinnedCarriers.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b",
-                      letterSpacing: "1px", textTransform: "uppercase", padding: "2px 4px",
-                      display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
-                      Pinned
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ ...labelStyle, marginBottom: 6 }}>Type</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {CARRIER_TYPES.map(t => (
+                        <EditChip key={t} label={t} active={editData.type === t}
+                          onClick={() => setEditData(p => ({ ...p, type: t }))} />
+                      ))}
                     </div>
-                    {pinnedCarriers.map(renderCarrier)}
-                    {unpinnedCarriers.length > 0 && (
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
-                        letterSpacing: "1px", textTransform: "uppercase",
-                        padding: "2px 4px", marginTop: 6, marginBottom: 4 }}>
-                        A-Z
-                      </div>
-                    )}
-                  </>
-                )}
-                {unpinnedCarriers.map(renderCarrier)}
-              </>
-            );
-          })()}
-        </div>
-
-        {/* Edit panel */}
-        {editingId && editData && (
-          <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #4a7fa5",
-            padding: "20px", position: "sticky", top: 80, alignSelf: "flex-start",
-            maxHeight: "80vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: "#2d4a6b", marginBottom: 16 }}>
-              {carriers.find(c => c.id === editingId) ? "Edit Carrier" : "New Carrier"}
-            </div>
-
-            <label style={labelStyle}>
-              Carrier Name
-              <input value={editData.name} onChange={e => setEditData(p => ({ ...p, name: e.target.value }))}
-                placeholder="e.g. Aetna" style={{ ...inputStyle, marginTop: 3 }} />
-            </label>
-
-            <label style={{ ...labelStyle, marginTop: 12 }}>
-              Category
-              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                {CARRIER_CATEGORIES.map(cat => (
-                  <button key={cat} type="button"
-                    onClick={() => setEditData(p => ({ ...p, category: cat }))}
-                    style={{
-                      padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                      fontFamily: "inherit", cursor: "pointer", transition: "all .12s",
-                      border: `2px solid ${editData.category === cat ? "#2d4a6b" : "#e2e8f0"}`,
-                      background: editData.category === cat ? "#dce8f0" : "#fff",
-                      color: editData.category === cat ? "#2d4a6b" : "#64748b",
-                    }}>{cat}</button>
-                ))}
-              </div>
-            </label>
-
-            <label style={{ ...labelStyle, marginTop: 12 }}>
-              Type
-              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                {CARRIER_TYPES.map(t => (
-                  <CHIP key={t} label={t} active={editData.type === t}
-                    onClick={() => setEditData(p => ({ ...p, type: t }))} />
-                ))}
-              </div>
-            </label>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Market Segments</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {CARRIER_SEGMENTS.map(s => (
-                  <CHIP key={s} label={s} active={editData.segments.includes(s)}
-                    onClick={() => toggleItem("segments", s)} color="#f59e0b" />
-                ))}
-              </div>
-            </div>
-
-            {activeCategory !== "FSA/HSA/HRA Administrator" && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Funding Methods</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {FUNDING_OPTIONS.map(f => (
-                    <CHIP key={f} label={f} active={editData.funding.includes(f)}
-                      onClick={() => toggleItem("funding", f)} color="#22c55e" />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>Products Offered</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {allProducts.map(p => (
-                  <CHIP key={p} label={p} active={editData.products.includes(p)}
-                    onClick={() => toggleItem("products", p)} />
-                ))}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Minimum Requirements</div>
-                <button type="button" onClick={() => setEditData(p => ({
-                  ...p, requirements: [...(p.requirements || []), { label: "", value: "" }]
-                }))} style={{ fontSize: 11, fontWeight: 700, color: "#2d4a6b", background: "#dce8f0",
-                  border: "none", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontFamily: "inherit" }}>
-                  + Add
-                </button>
-              </div>
-              {(editData.requirements || []).map((req, ri) => (
-                <div key={ri} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 5, marginBottom: 5 }}>
-                  <input value={req.label} placeholder="Label (e.g. Min Eligible)"
-                    onChange={e => { const r = [...editData.requirements]; r[ri] = { ...r[ri], label: e.target.value }; setEditData(p => ({ ...p, requirements: r })); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                  <input value={req.value} placeholder="Value (e.g. 25)"
-                    onChange={e => { const r = [...editData.requirements]; r[ri] = { ...r[ri], value: e.target.value }; setEditData(p => ({ ...p, requirements: r })); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                  <button type="button" onClick={() => setEditData(p => ({ ...p, requirements: p.requirements.filter((_, i) => i !== ri) }))}
-                    style={{ padding: "4px 7px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
-                      background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
-                </div>
-              ))}
-            </div>
-
-            <label style={{ ...labelStyle, marginTop: 12 }}>
-              Benefit Details / Coverage Offered
-              <textarea value={editData.benefitDetails || ""} onChange={e => setEditData(p => ({ ...p, benefitDetails: e.target.value }))}
-                placeholder="Plan types, networks, tier structures, special features..."
-                rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
-            </label>
-
-            <label style={{ ...labelStyle, marginTop: 12 }}>
-              Notes / Underwriting Caveats
-              <textarea value={editData.notes} onChange={e => setEditData(p => ({ ...p, notes: e.target.value }))}
-                placeholder="Special conditions, eligibility rules, caveats..."
-                rows={3} style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }} />
-            </label>
-
-            {/* ── Commission Rules ── */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Commission Rules</div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>Default commission by benefit, segment, and funding method</div>
-                </div>
-                <button type="button" onClick={() => setEditData(p => ({
-                  ...p,
-                  commissionRules: [...(p.commissionRules || []), { benefit: "Medical", segment: "All", fundingMethod: "All", type: "Flat %", amount: "", notes: "" }],
-                }))} style={{ fontSize: 11, fontWeight: 700, color: "#166534", background: "#dcfce7",
-                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
-                  + Add Rule
-                </button>
-              </div>
-              {(editData.commissionRules || []).length === 0 && (
-                <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", textAlign: "center", padding: "6px 0" }}>
-                  No commission rules defined
-                </div>
-              )}
-              {(editData.commissionRules || []).map((rule, ri) => (
-                <React.Fragment key={ri}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 110px 70px 80px 1fr auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                  {/* Benefit */}
-                  <select value={rule.benefit || "Medical"}
-                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],benefit:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
-                    {["Medical","Dental","Vision","Basic Life/AD&D","Vol Life","STD","LTD","IDI","Worksite","EAP","Telehealth","FSA","HSA","HRA","All"].map(b=><option key={b}>{b}</option>)}
-                  </select>
-                  {/* Segment */}
-                  <select value={rule.segment || "All"}
-                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],segment:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
-                    {["All","ACA","Mid-Market","Large"].map(s=><option key={s}>{s}</option>)}
-                  </select>
-                  {/* Funding Method */}
-                  <select value={rule.fundingMethod || "All"}
-                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],fundingMethod:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
-                    {["All","Fully Insured","Level-Funded","Self-Funded"].map(f=><option key={f}>{f}</option>)}
-                  </select>
-                  {/* Type */}
-                  <select value={rule.type || "Flat %"}
-                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],type:e.target.value,amount:""}; setEditData(p=>({...p,commissionRules:r})); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 6px" }}>
-                    {["Flat %","PEPM","Graded"].map(t=><option key={t}>{t}</option>)}
-                  </select>
-                  {/* Amount — for Graded, shows the starting/max rate */}
-                  <div style={{ display: "flex", alignItems: "center" }}>
-                    {rule.type === "PEPM" && <span style={{ fontSize: 11, color: "#64748b", marginRight: 2, flexShrink: 0 }}>$</span>}
-                    <input type="text" inputMode="numeric" value={rule.amount || ""}
-                      onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],amount:e.target.value.replace(/[^0-9.]/g,"")}; setEditData(p=>({...p,commissionRules:r})); }}
-                      placeholder={rule.type === "Graded" ? "Max %" : "0"}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 6px", textAlign: "right", fontWeight: 700 }} />
-                    {rule.type !== "PEPM" && <span style={{ fontSize: 11, color: "#64748b", marginLeft: 2, flexShrink: 0 }}>%</span>}
                   </div>
-                  {/* Notes */}
-                  <input type="text" value={rule.notes || ""}
-                    onChange={e => { const r=[...(editData.commissionRules||[])]; r[ri]={...r[ri],notes:e.target.value}; setEditData(p=>({...p,commissionRules:r})); }}
-                    placeholder="Notes (e.g. eff. 1/1/26, graded scale...)"
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                  {/* Remove */}
-                  <button type="button" onClick={() => setEditData(p => ({ ...p, commissionRules: p.commissionRules.filter((_,i)=>i!==ri) }))}
-                    style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
-                      background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
-                </div>
-                {/* Graded tier editor — shown inline below the rule row */}
-                {rule.type === "Graded" && (
-                  <div style={{ marginLeft: 12, marginBottom: 8, padding: "8px 12px", background: "#fffbeb",
-                    border: "1px solid #fde68a", borderRadius: 7 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>
-                      Graded Tiers — Annual Premium Bands
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ ...labelStyle, marginBottom: 6 }}>Market Segments</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {CARRIER_SEGMENTS.map(s => (
+                        <EditChip key={s} label={s} active={(editData.segments || []).includes(s)}
+                          onClick={() => toggleItem("segments", s)} />
+                      ))}
                     </div>
-                    {(rule.tiers || []).map((tier, ti) => (
-                      <div key={ti} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 11, color: "#64748b", width: 60, flexShrink: 0 }}>
-                          {ti === 0 ? "$0 –" : `$${(rule.tiers[ti-1].upTo||0).toLocaleString()} –`}
-                        </span>
-                        <input type="text" inputMode="numeric"
-                          value={tier.upTo != null ? tier.upTo : ""}
-                          placeholder={ti === (rule.tiers||[]).length - 1 ? "∞ (top tier)" : "ceiling $"}
-                          onChange={e => {
-                            const r=[...(editData.commissionRules||[])];
-                            const t=[...(r[ri].tiers||[])];
-                            const val = e.target.value.replace(/[^0-9]/g,"");
-                            t[ti]={...t[ti], upTo: val === "" ? null : Number(val)};
-                            r[ri]={...r[ri],tiers:t};
-                            setEditData(p=>({...p,commissionRules:r}));
-                          }}
-                          style={{ ...inputStyle, marginTop:0, fontSize:11, padding:"3px 6px", width:110, textAlign:"right" }} />
-                        <span style={{ fontSize: 11, color: "#64748b" }}>→</span>
-                        <input type="text" inputMode="numeric"
-                          value={tier.rate != null ? tier.rate : ""}
-                          placeholder="%"
-                          onChange={e => {
-                            const r=[...(editData.commissionRules||[])];
-                            const t=[...(r[ri].tiers||[])];
-                            t[ti]={...t[ti], rate: e.target.value.replace(/[^0-9.]/g,"")};
-                            r[ri]={...r[ri],tiers:t};
-                            setEditData(p=>({...p,commissionRules:r}));
-                          }}
-                          style={{ ...inputStyle, marginTop:0, fontSize:11, padding:"3px 6px", width:70, textAlign:"right" }} />
-                        <span style={{ fontSize: 11, color: "#64748b" }}>%</span>
-                        <button type="button" onClick={() => {
-                          const r=[...(editData.commissionRules||[])];
-                          r[ri]={...r[ri], tiers:(r[ri].tiers||[]).filter((_,i)=>i!==ti)};
-                          setEditData(p=>({...p,commissionRules:r}));
-                        }} style={{ fontSize:11, color:"#991b1b", background:"#fee2e2", border:"none",
-                          borderRadius:4, padding:"2px 6px", cursor:"pointer" }}>✕</button>
+                  </div>
+                  {activeCategory !== "FSA/HSA/HRA Administrator" && (
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ ...labelStyle, marginBottom: 6 }}>Funding Methods</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {FUNDING_OPTIONS.map(f => (
+                          <EditChip key={f} label={f} active={(editData.funding || []).includes(f)}
+                            onClick={() => toggleItem("funding", f)} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ ...labelStyle, marginBottom: 6 }}>Products Offered</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {allProducts.map(p => (
+                        <EditChip key={p} label={p} active={(editData.products || []).includes(p)}
+                          onClick={() => toggleItem("products", p)} />
+                      ))}
+                    </div>
+                  </div>
+                  {/* Plan limits inline */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                      <div style={{ ...labelStyle }}>Plan Limits</div>
+                      <button type="button" onClick={() => setEditData(p => ({
+                        ...p, planLimits: [...(p.planLimits||[]), { benefit:"Medical", maxPlans:"", condition:"" }],
+                      }))} style={{ fontSize:11, fontWeight:700, color:"#2d4a6b", background:"#dce8f0", border:"none", borderRadius:6, padding:"2px 8px", cursor:"pointer", fontFamily:"inherit" }}>+ Add</button>
+                    </div>
+                    {(editData.planLimits || []).map((pl, pli) => (
+                      <div key={pli} style={{ display:"grid", gridTemplateColumns:"1fr 80px 1fr auto", gap:5, marginBottom:5, alignItems:"center" }}>
+                        <select value={pl.benefit||"Medical"} onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],benefit:e.target.value};setEditData(p=>({...p,planLimits:l}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                          {["Medical","Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Worksite","FSA","HSA","HRA","EAP","Telehealth"].map(b=><option key={b}>{b}</option>)}
+                        </select>
+                        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                          <span style={{ fontSize:10, color:"#94a3b8", whiteSpace:"nowrap" }}>Max</span>
+                          <input type="text" inputMode="numeric" value={pl.maxPlans||""} placeholder="0"
+                            onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],maxPlans:e.target.value.replace(/\D/g,"")};setEditData(p=>({...p,planLimits:l}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:12,padding:"4px 5px",textAlign:"center",fontWeight:700}} />
+                        </div>
+                        <input type="text" value={pl.condition||""} placeholder="Condition (e.g. 5+ enrolled)"
+                          onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],condition:e.target.value};setEditData(p=>({...p,planLimits:l}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
+                        <button type="button" onClick={()=>setEditData(p=>({...p,planLimits:p.planLimits.filter((_,i)=>i!==pli)}))}
+                          style={{padding:"4px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
                       </div>
                     ))}
-                    <button type="button" onClick={() => {
-                      const r=[...(editData.commissionRules||[])];
-                      const existing = r[ri].tiers || [];
-                      // New tier: set previous last tier's upTo if it was null, then add new open-ended tier
-                      const updated = existing.map((t,i) => i === existing.length-1 && t.upTo == null ? {...t, upTo: 0} : t);
-                      r[ri]={...r[ri], tiers:[...updated, { upTo: null, rate: "" }]};
-                      setEditData(p=>({...p,commissionRules:r}));
-                    }} style={{ fontSize:11, fontWeight:700, color:"#92400e", background:"#fef3c7",
-                      border:"1px solid #fde68a", borderRadius:5, padding:"3px 10px", cursor:"pointer",
-                      fontFamily:"inherit", marginTop:2 }}>+ Add Tier</button>
                   </div>
-                )}
-                </React.Fragment>
-              ))}
-            </div>
-
-            {/* ── Plan Limits ── */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                </>
+              ) : (
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Plan Limits</div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>Max # of plans allowed per benefit line</div>
-                </div>
-                <button type="button" onClick={() => setEditData(p => ({
-                  ...p,
-                  planLimits: [...(p.planLimits || []), { benefit: "Medical", maxPlans: "", condition: "" }],
-                }))} style={{ fontSize: 11, fontWeight: 700, color: "#2d4a6b", background: "#dce8f0",
-                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
-                  + Add Limit
-                </button>
-              </div>
-              {(editData.planLimits || []).length === 0 && (
-                <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", textAlign: "center", padding: "6px 0" }}>
-                  No plan limits defined
+                  <TR label="Carrier"              value={cur.name} />
+                  <TR label="Market Segments"      value={(cur.segments || []).join(", ")} />
+                  <TR label="Product Category"     value={cur.category} />
+                  <TR label="Funding Methods"      value={(cur.funding  || []).join(", ")} />
+                  <TR label="States / Situs Rules" value={
+                    (cur.states || []).length
+                      ? cur.states.join(", ")
+                      : "National (see Eligibility Rules for exceptions)"
+                  } />
+                  {cur.effectiveDate && <TR label="Effective Guideline Date" value={cur.effectiveDate} />}
+                  {cur.source        && <TR label="Source"                   value={cur.source} />}
                 </div>
               )}
-              {(editData.planLimits || []).map((pl, pli) => (
-                <div key={pli} style={{ display: "grid", gridTemplateColumns: "1fr 80px 1fr auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                  <select value={pl.benefit || "Medical"}
-                    onChange={e => { const lims=[...(editData.planLimits||[])]; lims[pli]={...lims[pli],benefit:e.target.value}; setEditData(p=>({...p,planLimits:lims})); }}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
-                    {["Medical","Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Worksite","FSA","HSA","HRA","EAP","Telehealth"].map(b => <option key={b}>{b}</option>)}
-                  </select>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>Max</span>
-                    <input type="text" inputMode="numeric" value={pl.maxPlans || ""}
-                      onChange={e => { const lims=[...(editData.planLimits||[])]; lims[pli]={...lims[pli],maxPlans:e.target.value.replace(/\D/g,"")}; setEditData(p=>({...p,planLimits:lims})); }}
-                      placeholder="0"
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 6px", textAlign: "center", fontWeight: 700 }} />
-                  </div>
-                  <input type="text" value={pl.condition || ""}
-                    onChange={e => { const lims=[...(editData.planLimits||[])]; lims[pli]={...lims[pli],condition:e.target.value}; setEditData(p=>({...p,planLimits:lims})); }}
-                    placeholder="Condition (e.g. 5+ enrolled, ACA only...)"
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                  <button type="button" onClick={() => setEditData(p => ({ ...p, planLimits: p.planLimits.filter((_,i)=>i!==pli) }))}
-                    style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
-                      background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
-                </div>
-              ))}
             </div>
+          )}
 
-            {/* ── Contacts ── */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Contacts</div>
-                <button type="button" onClick={() => setEditData(p => ({
-                  ...p,
-                  contacts: [...(p.contacts || []), { role: "Sales Representative", name: "", email: "", phone: "", market: "Any", employerType: "Any", fundingType: "Any" }],
-                }))} style={{ fontSize: 11, fontWeight: 700, color: "#2d4a6b", background: "#dce8f0",
-                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
-                  + Add Contact
-                </button>
-              </div>
-              {(editData.contacts || []).length === 0 && (
-                <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", textAlign: "center", padding: "8px 0" }}>
-                  No contacts yet — click "+ Add Contact" to add sales reps, service teams, etc.
+          {/* ELIGIBILITY RULES */}
+          {detailTab === "Eligibility Rules" && (
+            <div>
+              {isEditing ? (
+                <div>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                    <div style={labelStyle}>Minimum Requirements</div>
+                    <button type="button" onClick={()=>setEditData(p=>({...p,requirements:[...(p.requirements||[]),{label:"",value:""}]}))}
+                      style={{fontSize:11,fontWeight:700,color:"#2d4a6b",background:"#dce8f0",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
+                  </div>
+                  {(editData.requirements||[]).length===0 && (
+                    <div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No requirements — click "+ Add" to begin.</div>
+                  )}
+                  {(editData.requirements||[]).map((req,ri)=>(
+                    <div key={ri} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:6,marginBottom:6}}>
+                      <input value={req.label} placeholder="Label (e.g. Min Eligible)"
+                        onChange={e=>{const r=[...editData.requirements];r[ri]={...r[ri],label:e.target.value};setEditData(p=>({...p,requirements:r}));}}
+                        style={{...inputStyle,marginTop:0,fontSize:11,padding:"5px 8px"}} />
+                      <input value={req.value} placeholder="Value"
+                        onChange={e=>{const r=[...editData.requirements];r[ri]={...r[ri],value:e.target.value};setEditData(p=>({...p,requirements:r}));}}
+                        style={{...inputStyle,marginTop:0,fontSize:11,padding:"5px 8px"}} />
+                      <button type="button" onClick={()=>setEditData(p=>({...p,requirements:p.requirements.filter((_,i)=>i!==ri)}))}
+                        style={{padding:"5px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  {(cur.requirements||[]).length > 0 ? (
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                      <thead>
+                        <tr style={{background:"#f8fafc"}}>
+                          {["State / Area","Requirement","Value"].map(h=>(
+                            <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,color:"#64748b",borderBottom:"2px solid #e2e8f0"}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(cur.requirements||[]).map((r,i)=>(
+                          <tr key={i} style={{borderBottom:"1px solid #f1f5f9"}}>
+                            <td style={{padding:"7px 10px",color:"#64748b",fontStyle:"italic",fontSize:12}}>—</td>
+                            <td style={{padding:"7px 10px",color:"#374151",fontSize:12}}>{r.label}</td>
+                            <td style={{padding:"7px 10px",fontWeight:600,color:"#0f172a",fontSize:12}}>{r.value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No eligibility rules on file.</div>
+                  )}
                 </div>
               )}
-              {(editData.contacts || []).map((contact, ci) => (
-                <div key={ci} style={{ background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", padding: "10px 12px", marginBottom: 8 }}>
-                  {/* Row 1: Role + move buttons + ✕ */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                    <select value={contact.role || "Sales Representative"}
-                      onChange={e => { const c = [...(editData.contacts||[])]; c[ci] = { ...c[ci], role: e.target.value }; setEditData(p => ({ ...p, contacts: c })); }}
-                      style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
-                      {CARRIER_CONTACT_ROLES.map(r => <option key={r}>{r}</option>)}
-                    </select>
-                    <button type="button" disabled={ci === 0}
-                      onClick={() => {
-                        const c = [...(editData.contacts||[])];
-                        [c[ci-1], c[ci]] = [c[ci], c[ci-1]];
-                        setEditData(p => ({ ...p, contacts: c }));
-                      }}
-                      style={{ padding: "4px 7px", borderRadius: 6, fontSize: 11, border: "1.5px solid #e2e8f0",
-                        background: ci === 0 ? "#f8fafc" : "#fff", color: ci === 0 ? "#cbd5e1" : "#475569",
-                        cursor: ci === 0 ? "default" : "pointer", fontFamily: "inherit", lineHeight: 1 }}>↑</button>
-                    <button type="button" disabled={ci === (editData.contacts||[]).length - 1}
-                      onClick={() => {
-                        const c = [...(editData.contacts||[])];
-                        [c[ci], c[ci+1]] = [c[ci+1], c[ci]];
-                        setEditData(p => ({ ...p, contacts: c }));
-                      }}
-                      style={{ padding: "4px 7px", borderRadius: 6, fontSize: 11, border: "1.5px solid #e2e8f0",
-                        background: ci === (editData.contacts||[]).length - 1 ? "#f8fafc" : "#fff",
-                        color: ci === (editData.contacts||[]).length - 1 ? "#cbd5e1" : "#475569",
-                        cursor: ci === (editData.contacts||[]).length - 1 ? "default" : "pointer", fontFamily: "inherit", lineHeight: 1 }}>↓</button>
-                    <button type="button" onClick={() => setEditData(p => ({ ...p, contacts: p.contacts.filter((_, i) => i !== ci) }))}
-                      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 11, border: "1.5px solid #fca5a5",
-                        background: "#fee2e2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
-                  </div>
-                  {/* Row 2: Full Name (full width) */}
-                  <input value={contact.name || ""} placeholder="Full Name"
-                    onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],name:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                    style={{ ...inputStyle, marginTop: 0, marginBottom: 6, fontSize: 11, padding: "4px 8px", width: "100%", boxSizing: "border-box" }} />
-                  {/* Row 3: Email + Phone (side by side, phone below name) */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 3 }}>Email</div>
-                      <input value={contact.email || ""} placeholder="email@carrier.com" type="email"
-                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],email:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 3 }}>Phone</div>
-                      <input value={contact.phone || ""} placeholder="(312) 555-0000"
-                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],phone:formatPhone(e.target.value)}; setEditData(p=>({...p,contacts:c})); }}
-                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
-                    </div>
-                  </div>
-                  {/* Row 4: Market / Employer / Funding */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-                    <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Market Segment
-                      <select value={contact.market || "Any"}
-                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],market:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                        style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
-                        <option>Any</option>
-                        {CARRIER_SEGMENTS.map(s => <option key={s}>{s}</option>)}
-                      </select>
-                    </label>
-                    <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Employer Type
-                      <select value={contact.employerType || "Any"}
-                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],employerType:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                        style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
-                        {empTypeOptions.map(t => <option key={t}>{t}</option>)}
-                      </select>
-                    </label>
-                    <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8" }}>Funding Type
-                      <select value={contact.fundingType || "Any"}
-                        onChange={e => { const c=[...(editData.contacts||[])]; c[ci]={...c[ci],fundingType:e.target.value}; setEditData(p=>({...p,contacts:c})); }}
-                        style={{ ...inputStyle, marginTop: 2, fontSize: 11, padding: "3px 6px" }}>
-                        <option>Any</option>
-                        {FUNDING_OPTIONS.map(f => <option key={f}>{f}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-              ))}
             </div>
+          )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          {/* PARTICIPATION */}
+          {detailTab === "Participation" && (
+            <div>
+              {isEditing ? (
+                <label style={labelStyle}>
+                  Benefit Details / Participation Notes
+                  <textarea value={editData.benefitDetails||""}
+                    onChange={e=>setEditData(p=>({...p,benefitDetails:e.target.value}))}
+                    placeholder="Participation rules, waiver rules, contribution requirements..."
+                    rows={6} style={{...inputStyle,marginTop:6,resize:"vertical",fontFamily:"inherit"}} />
+                </label>
+              ) : (
+                <div>
+                  {(() => {
+                    const reqs    = cur.requirements || [];
+                    const contrib = reqs.find(r => r.label?.toLowerCase().includes("contrib") && !r.label?.toLowerCase().includes("non"));
+                    const nonCon  = reqs.find(r => r.label?.toLowerCase().includes("non-contrib") || r.label?.toLowerCase().includes("non contrib"));
+                    const waiver  = reqs.find(r => r.label?.toLowerCase().includes("waiver") || r.label?.toLowerCase().includes("imq"));
+                    const ops     = reqs.filter(r =>
+                      r.label?.toLowerCase().includes("billing") || r.label?.toLowerCase().includes("carve") ||
+                      r.label?.toLowerCase().includes("imq")     || r.label?.toLowerCase().includes("quote") ||
+                      r.label?.toLowerCase().includes("claims")
+                    );
+                    const hasContent = contrib || nonCon || waiver || ops.length;
+                    if (!hasContent && !cur.benefitDetails) {
+                      return <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No participation rules on file.</div>;
+                    }
+                    return (
+                      <div>
+                        {(contrib || nonCon || waiver) && (
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+                            {contrib && (
+                              <div style={{padding:"12px 14px",borderRadius:10,background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
+                                <div style={{fontSize:10,fontWeight:800,color:"#166534",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Contributory</div>
+                                <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{contrib.value}</div>
+                              </div>
+                            )}
+                            {nonCon && (
+                              <div style={{padding:"12px 14px",borderRadius:10,background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
+                                <div style={{fontSize:10,fontWeight:800,color:"#166534",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Non-Contributory</div>
+                                <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{nonCon.value}</div>
+                              </div>
+                            )}
+                            {waiver && (
+                              <div style={{padding:"12px 14px",borderRadius:10,background:"#eff6ff",border:"1px solid #bfdbfe",gridColumn:"1 / -1"}}>
+                                <div style={{fontSize:10,fontWeight:800,color:"#1e40af",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Waiver Rule</div>
+                                <div style={{fontSize:12,fontWeight:500,color:"#1e3a5f"}}>{waiver.value}</div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {ops.length > 0 && (
+                          <div>
+                            <div style={{fontSize:10,fontWeight:800,color:"#94a3b8",letterSpacing:"0.8px",textTransform:"uppercase",marginBottom:10}}>Operational Rules</div>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                              {ops.map((r,i)=>(
+                                <div key={i} style={{padding:"10px 12px",borderRadius:8,background:"#f8fafc",border:"1px solid #e2e8f0"}}>
+                                  <div style={{fontSize:10,fontWeight:700,color:"#64748b",marginBottom:3}}>{r.label}</div>
+                                  <div style={{fontSize:12,fontWeight:600,color:"#0f172a"}}>{r.value}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {cur.benefitDetails && (
+                          <p style={{fontSize:12,color:"#374151",lineHeight:1.7,margin:0}}>{cur.benefitDetails}</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* COMMISSIONS */}
+          {detailTab === "Commissions" && (
+            <div>
+              {isEditing ? (
+                <div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <div style={labelStyle}>Commission Schedule</div>
+                    <button type="button" onClick={()=>setEditData(p=>({...p,commissionRules:[...(p.commissionRules||[]),{benefit:"Medical",segment:"All",fundingMethod:"All",type:"Flat %",amount:"",notes:""}]}))}
+                      style={{fontSize:11,fontWeight:700,color:"#166534",background:"#dcfce7",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add Rule</button>
+                  </div>
+                  {(editData.commissionRules||[]).length===0 && (
+                    <div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No rules — click "+ Add Rule" to begin.</div>
+                  )}
+                  {(editData.commissionRules||[]).map((rule,ri)=>(
+                    <React.Fragment key={ri}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 65px 75px 1fr auto",gap:5,marginBottom:6,alignItems:"center"}}>
+                        <select value={rule.benefit||"Medical"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],benefit:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                          {["Medical","Dental","Vision","Basic Life/AD&D","Vol Life","STD","LTD","IDI","Worksite","EAP","Telehealth","FSA","HSA","HRA","All"].map(b=><option key={b}>{b}</option>)}
+                        </select>
+                        <select value={rule.segment||"All"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],segment:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                          {["All","ACA","Mid-Market","Large"].map(s=><option key={s}>{s}</option>)}
+                        </select>
+                        <select value={rule.fundingMethod||"All"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],fundingMethod:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                          {["All","Fully Insured","Level-Funded","Self-Funded"].map(f=><option key={f}>{f}</option>)}
+                        </select>
+                        <select value={rule.type||"Flat %"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],type:e.target.value,amount:""};setEditData(p=>({...p,commissionRules:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                          {["Flat %","PEPM","Graded"].map(t=><option key={t}>{t}</option>)}
+                        </select>
+                        <div style={{display:"flex",alignItems:"center"}}>
+                          {rule.type==="PEPM"&&<span style={{fontSize:11,color:"#64748b",marginRight:2}}>$</span>}
+                          <input type="text" inputMode="numeric" value={rule.amount||""} placeholder="0"
+                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],amount:e.target.value.replace(/[^0-9.]/g,"")};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:12,padding:"4px 5px",textAlign:"right",fontWeight:700}} />
+                          {rule.type!=="PEPM"&&<span style={{fontSize:11,color:"#64748b",marginLeft:2}}>%</span>}
+                        </div>
+                        <input type="text" value={rule.notes||""} placeholder="Notes"
+                          onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],notes:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 7px"}} />
+                        <button type="button" onClick={()=>setEditData(p=>({...p,commissionRules:p.commissionRules.filter((_,i)=>i!==ri)}))}
+                          style={{padding:"5px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                      </div>
+                      {rule.type==="Graded"&&(
+                        <div style={{marginLeft:12,marginBottom:8,padding:"8px 12px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7}}>
+                          <div style={{fontSize:11,fontWeight:700,color:"#92400e",marginBottom:6}}>Graded Tiers</div>
+                          {(rule.tiers||[]).map((tier,ti)=>(
+                            <div key={ti} style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
+                              <span style={{fontSize:11,color:"#64748b",width:70,flexShrink:0}}>{ti===0?"$0 –":`$${(rule.tiers[ti-1].upTo||0).toLocaleString()} –`}</span>
+                              <input type="text" inputMode="numeric" value={tier.upTo!=null?tier.upTo:""} placeholder={ti===(rule.tiers||[]).length-1?"∞":"ceiling $"}
+                                onChange={e=>{const r=[...(editData.commissionRules||[])];const t=[...(r[ri].tiers||[])];const v=e.target.value.replace(/[^0-9]/g,"");t[ti]={...t[ti],upTo:v===""?null:Number(v)};r[ri]={...r[ri],tiers:t};setEditData(p=>({...p,commissionRules:r}));}}
+                                style={{...inputStyle,marginTop:0,fontSize:11,padding:"3px 6px",width:100,textAlign:"right"}} />
+                              <span style={{fontSize:11,color:"#64748b"}}>→</span>
+                              <input type="text" inputMode="numeric" value={tier.rate!=null?tier.rate:""} placeholder="%"
+                                onChange={e=>{const r=[...(editData.commissionRules||[])];const t=[...(r[ri].tiers||[])];t[ti]={...t[ti],rate:e.target.value.replace(/[^0-9.]/g,"")};r[ri]={...r[ri],tiers:t};setEditData(p=>({...p,commissionRules:r}));}}
+                                style={{...inputStyle,marginTop:0,fontSize:11,padding:"3px 5px",width:60,textAlign:"right"}} />
+                              <span style={{fontSize:11,color:"#64748b"}}>%</span>
+                              <button type="button" onClick={()=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],tiers:(r[ri].tiers||[]).filter((_,i)=>i!==ti)};setEditData(p=>({...p,commissionRules:r}));}}
+                                style={{fontSize:11,color:"#991b1b",background:"#fee2e2",border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer"}}>✕</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={()=>{const r=[...(editData.commissionRules||[])];const ex=r[ri].tiers||[];const upd=ex.map((t,i)=>i===ex.length-1&&t.upTo==null?{...t,upTo:0}:t);r[ri]={...r[ri],tiers:[...upd,{upTo:null,rate:""}]};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{fontSize:11,fontWeight:700,color:"#92400e",background:"#fef3c7",border:"1px solid #fde68a",borderRadius:5,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit",marginTop:2}}>+ Add Tier</button>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  {(cur.commissionRules||[]).length>0 ? (
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                      <thead>
+                        <tr style={{background:"#f8fafc"}}>
+                          {["Product","Segment","Funding","Commission"].map(h=>(
+                            <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,color:"#64748b",borderBottom:"2px solid #e2e8f0"}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(cur.commissionRules||[]).map((r,i)=>(
+                          <tr key={i} style={{borderBottom:"1px solid #f1f5f9"}}>
+                            <td style={{padding:"7px 10px",fontWeight:600,color:"#0f172a"}}>{r.benefit}</td>
+                            <td style={{padding:"7px 10px",color:"#374151"}}>{r.segment}</td>
+                            <td style={{padding:"7px 10px",color:"#374151"}}>{r.fundingMethod}</td>
+                            <td style={{padding:"7px 10px",fontWeight:700,color:"#166534"}}>
+                              {r.type==="PEPM"?`$${r.amount} PEPM`:r.type==="Graded"?`Graded (up to ${r.amount}%)`:`${r.amount}%`}
+                              {r.notes&&<div style={{fontSize:10,color:"#94a3b8",fontWeight:400,marginTop:1}}>{r.notes}</div>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No commission schedule on file.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CONTACTS */}
+          {detailTab === "Contacts" && (
+            <div>
+              {isEditing ? (
+                <div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <div style={labelStyle}>Contacts</div>
+                    <button type="button" onClick={()=>setEditData(p=>({...p,contacts:[...(p.contacts||[]),{role:"Sales Representative",name:"",email:"",phone:"",market:"Any",employerType:"Any",fundingType:"Any",notes:""}]}))}
+                      style={{fontSize:11,fontWeight:700,color:"#2d4a6b",background:"#dce8f0",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add Contact</button>
+                  </div>
+                  {(editData.contacts||[]).length===0&&<div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No contacts yet.</div>}
+                  {(editData.contacts||[]).map((contact,ci)=>(
+                    <div key={ci} style={{background:"#f8fafc",borderRadius:8,border:"1px solid #e2e8f0",padding:"10px 12px",marginBottom:8}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:6,marginBottom:6,alignItems:"center"}}>
+                        <select value={contact.role||"Sales Representative"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],role:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}}>
+                          {CARRIER_CONTACT_ROLES.map(r=><option key={r}>{r}</option>)}
+                        </select>
+                        <button type="button" disabled={ci===0} onClick={()=>{const c=[...(editData.contacts||[])];[c[ci-1],c[ci]]=[c[ci],c[ci-1]];setEditData(p=>({...p,contacts:c}));}}
+                          style={{padding:"4px 7px",borderRadius:6,fontSize:11,border:"1.5px solid #e2e8f0",background:ci===0?"#f8fafc":"#fff",color:ci===0?"#cbd5e1":"#475569",cursor:ci===0?"default":"pointer"}}>↑</button>
+                        <button type="button" disabled={ci===(editData.contacts||[]).length-1} onClick={()=>{const c=[...(editData.contacts||[])];[c[ci],c[ci+1]]=[c[ci+1],c[ci]];setEditData(p=>({...p,contacts:c}));}}
+                          style={{padding:"4px 7px",borderRadius:6,fontSize:11,border:"1.5px solid #e2e8f0",background:ci===(editData.contacts||[]).length-1?"#f8fafc":"#fff",color:ci===(editData.contacts||[]).length-1?"#cbd5e1":"#475569",cursor:ci===(editData.contacts||[]).length-1?"default":"pointer"}}>↓</button>
+                        <button type="button" onClick={()=>setEditData(p=>({...p,contacts:p.contacts.filter((_,i)=>i!==ci)}))}
+                          style={{padding:"4px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                      </div>
+                      <input value={contact.name||""} placeholder="Full Name"
+                        onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],name:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                        style={{...inputStyle,marginTop:0,marginBottom:6,fontSize:11,padding:"4px 8px",width:"100%",boxSizing:"border-box"}} />
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+                        <input value={contact.email||""} placeholder="email@carrier.com" type="email"
+                          onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],email:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
+                        <input value={contact.phone||""} placeholder="(312) 555-0000"
+                          onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],phone:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:6}}>
+                        <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Market
+                          <select value={contact.market||"Any"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],market:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                            style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
+                            <option>Any</option>{CARRIER_SEGMENTS.map(s=><option key={s}>{s}</option>)}
+                          </select>
+                        </label>
+                        <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Employer
+                          <select value={contact.employerType||"Any"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],employerType:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                            style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
+                            {CARRIER_EMPLOYER_TYPES.map(t=><option key={t}>{t}</option>)}
+                          </select>
+                        </label>
+                        <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Funding
+                          <select value={contact.fundingType||"Any"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],fundingType:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                            style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
+                            <option>Any</option>{FUNDING_OPTIONS.map(f=><option key={f}>{f}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                      <input value={contact.notes||""} placeholder="Notes..."
+                        onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],notes:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                        style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px",width:"100%",boxSizing:"border-box"}} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  {(cur.contacts||[]).length===0&&<div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No contacts on file.</div>}
+                  {(cur.contacts||[]).map((ct,i)=>(
+                    <div key={i} style={{padding:"12px 14px",borderRadius:10,background:"#f8fafc",border:"1px solid #e2e8f0",marginBottom:8}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>{ct.name||"—"}</div>
+                          <div style={{fontSize:11,color:"#4a7fa5",fontWeight:600,marginTop:1}}>{ct.role}</div>
+                          {ct.email&&<div style={{fontSize:11,color:"#475569",marginTop:5}}>✉ {ct.email}</div>}
+                          {ct.phone&&<div style={{fontSize:11,color:"#475569",marginTop:2}}>📞 {ct.phone}</div>}
+                          {ct.notes&&<div style={{fontSize:11,color:"#64748b",marginTop:5,fontStyle:"italic",lineHeight:1.5}}>{ct.notes}</div>}
+                        </div>
+                        <div style={{flexShrink:0,display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
+                          {ct.market&&ct.market!=="Any"&&<Chip label={ct.market} scheme={SEG[ct.market]||{bg:"#f1f5f9",color:"#475569"}} />}
+                          {ct.fundingType&&ct.fundingType!=="Any"&&<Chip label={ct.fundingType} scheme={FUND[ct.fundingType]||{bg:"#f1f5f9",color:"#475569"}} />}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* NOTES / SOURCES */}
+          {detailTab === "Notes / Sources" && (
+            <div>
+              {isEditing ? (
+                <div>
+                  <label style={labelStyle}>
+                    Notes / Underwriting Caveats
+                    <textarea value={editData.notes||""} onChange={e=>setEditData(p=>({...p,notes:e.target.value}))}
+                      placeholder="Special conditions, eligibility rules, caveats..."
+                      rows={7} style={{...inputStyle,marginTop:6,resize:"vertical",fontFamily:"inherit"}} />
+                  </label>
+                  <label style={{...labelStyle,marginTop:14}}>
+                    Effective Guideline Date
+                    <DateInput  value={editData.effectiveDate||""} onChange={e=>setEditData(p=>({...p,effectiveDate:e.target.value}))}
+                      style={{...inputStyle,marginTop:4}} />
+                  </label>
+                  <label style={{...labelStyle,marginTop:14}}>
+                    Source
+                    <input value={editData.source||""} placeholder="e.g. Sales Gateway Q3 2025"
+                      onChange={e=>setEditData(p=>({...p,source:e.target.value}))}
+                      style={{...inputStyle,marginTop:4}} />
+                  </label>
+                </div>
+              ) : (
+                <div>
+                  {cur.notes ? (
+                    <div style={{fontSize:12,color:"#374151",lineHeight:1.8,whiteSpace:"pre-wrap",
+                      background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:8,padding:"12px 14px"}}>
+                      {cur.notes}
+                    </div>
+                  ) : (
+                    <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No notes on file.</div>
+                  )}
+                  {(cur.effectiveDate||cur.source)&&(
+                    <div style={{marginTop:14,display:"flex",gap:16,flexWrap:"wrap"}}>
+                      {cur.effectiveDate&&<div style={{fontSize:11,color:"#64748b"}}><span style={{fontWeight:700}}>Effective: </span>{cur.effectiveDate}</div>}
+                      {cur.source&&<div style={{fontSize:11,color:"#64748b"}}><span style={{fontWeight:700}}>Source: </span>{cur.source}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Panel footer ── */}
+        <div style={{
+          flexShrink: 0, padding: "12px 20px",
+          borderTop: "1px solid #e2e8f0", background: "#f8fafc",
+          display: "flex", gap: 8, alignItems: "center",
+        }}>
+          {isEditing ? (
+            <>
               <button type="button" onClick={saveEdit} style={{
                 flex: 1, background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
                 border: "none", borderRadius: 8, padding: "9px 0",
                 fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
               }}>Save Carrier</button>
-              <button type="button" onClick={() => { setEditingId(null); setEditData(null); }} style={{
+              <button type="button" onClick={cancelEdit} style={{
                 background: "#f1f5f9", border: "none", borderRadius: 8, padding: "9px 16px",
                 fontSize: 13, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit",
               }}>Cancel</button>
+            </>
+          ) : (
+            <>
+              {canEdit && (
+                <button type="button" onClick={() => startEdit(cur)} style={{
+                  flex: 1, background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
+                  border: "none", borderRadius: 8, padding: "9px 0",
+                  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}>Edit Carrier</button>
+              )}
+              <button type="button" onClick={() => togglePin(cur.id)} style={{
+                padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                border: `1.5px solid ${cur.pinned ? "#fcd34d" : "#e2e8f0"}`,
+                background: cur.pinned ? "#fef9c3" : "#fff",
+                color: cur.pinned ? "#92400e" : "#475569",
+                cursor: "pointer", fontFamily: "inherit",
+              }}>📌 {cur.pinned ? "Pinned" : "Pin"}</button>
+              {canDelete && (
+                <button type="button" onClick={() => deleteCarrier(cur.id)} style={{
+                  padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                  border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>Delete</button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── CARRIER CARD ──────────────────────────────────────────────────────────
+  function CarrierCard({ carrier }) {
+    const isSelected = selectedId === carrier.id;
+    const comm = commSummary(carrier);
+    const elig = eligText(carrier);
+    const part = partText(carrier);
+    const maxP = maxPlansText(carrier);
+
+    return (
+      <div onClick={() => openDetail(carrier)} style={{
+        background: isSelected ? "#f0f6fb" : "#fff",
+        borderRadius: 12,
+        border: `1.5px solid ${isSelected ? "#4a7fa5" : "#e2e8f0"}`,
+        padding: "14px 16px",
+        cursor: "pointer",
+        transition: "border-color .15s, background .15s",
+      }}>
+        {/* Header row */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <CarrierAvatar name={carrier.name} size={36} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+              <span style={{ fontWeight: 800, fontSize: 14.5, color: "#0f172a" }}>{carrier.name}</span>
+              {carrier.pinned && <span style={{ fontSize: 11 }}>📌</span>}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {(carrier.products || []).map(p  => <Chip key={p} label={p} />)}
+              {carrier.type                    && <Chip label={carrier.type} />}
+              {(carrier.segments || []).map(s  => <Chip key={s} label={s} scheme={SEG[s]} />)}
+              {(carrier.funding  || []).map(f  => <Chip key={f} label={f} scheme={FUND[f]} />)}
+            </div>
+          </div>
+          {/* Actions — stop propagation so clicks don't open the detail panel */}
+          <div style={{ display: "flex", gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={() => openDetail(carrier)} style={{
+              padding: "5px 13px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+              background: isSelected ? "#dce8f0" : "#f1f5f9",
+              border: `1.5px solid ${isSelected ? "#4a7fa5" : "#e2e8f0"}`,
+              color: isSelected ? "#2d4a6b" : "#475569",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>View Details →</button>
+            <button type="button" onClick={() => togglePin(carrier.id)}
+              title={carrier.pinned ? "Unpin" : "Pin to top"} style={{
+                padding: "5px 9px", borderRadius: 7, fontSize: 12,
+                border: `1.5px solid ${carrier.pinned ? "#fcd34d" : "#e2e8f0"}`,
+                background: carrier.pinned ? "#fef9c3" : "#f8fafc",
+                cursor: "pointer",
+              }}>📌</button>
+            {canDelete && (
+              <button type="button" onClick={() => { if (!window.confirm(`Delete ${carrier.name}?`)) return; deleteCarrier(carrier.id); }}
+                style={{
+                  padding: "5px 9px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+                  border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>✕</button>
+            )}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        {[elig, part, maxP, comm].some(Boolean) && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${[elig, part, maxP, comm].filter(Boolean).length}, 1fr)`,
+            gap: 16, marginTop: 10,
+            paddingTop: 10, borderTop: "1px solid #f1f5f9",
+          }}>
+            {elig && <StatTile icon="👥" label="Eligible Range"  value={elig} />}
+            {part && <StatTile icon="📊" label="Participation"   value={part} />}
+            {maxP && <StatTile icon="📋" label="Max Plans"       value={maxP} />}
+            {comm && <StatTile icon="💰" label="Commission"      value={comm} />}
+          </div>
+        )}
+
+        {/* Footnote */}
+        {(carrier.effectiveDate || carrier.source) && (
+          <div style={{ marginTop: 8, fontSize: 10.5, color: "#94a3b8", display: "flex", gap: 14 }}>
+            {carrier.effectiveDate && <span>Last updated: {carrier.effectiveDate}</span>}
+            {carrier.source        && <span>Source: {carrier.source}</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── MAIN RENDER ───────────────────────────────────────────────────────────
+  return (
+    <div style={{
+      display: "flex", alignItems: "stretch",
+      // Bleed out of the parent's 22px top / 28px side / 32px bottom padding
+      // so the detail panel can fill the full viewport height
+      margin: "-22px -28px -32px",
+      minHeight: "calc(100vh - 54px)",
+      overflow: "hidden",
+    }}>
+
+      {/* ── Left: list column ── */}
+      <div style={{ flex: 1, minWidth: 0, paddingRight: selectedCarrier ? 16 : 0,
+        overflowY: "auto", padding: "22px 28px 32px",
+        paddingRight: selectedCarrier ? 16 : 28 }}>
+
+        {/* Sticky header */}
+        <div style={{
+          position: "sticky", top: 0, zIndex: 40,
+          background: "#f4f7f9",
+          paddingTop: 28, paddingBottom: 14, marginBottom: 16,
+          borderBottom: "1px solid #e2e8f0",
+          boxShadow: "0 2px 8px rgba(0,0,0,.04)",
+        }}>
+          {/* Title + actions */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
+                Carrier Products
+              </div>
+              <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                Configure available products and eligibility rules per carrier
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {canEdit && (
+                <button type="button" onClick={startNew} style={{
+                  background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
+                  border: "none", borderRadius: 9, padding: "9px 20px",
+                  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Add Carrier
+                </button>
+              )}
+              <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
+            </div>
+          </div>
+
+          {/* Category tabs + search */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              {CARRIER_CATEGORIES.map(cat => (
+                <button key={cat} type="button" onClick={() => setActiveCategory(cat)} style={{
+                  padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                  border: `1.5px solid ${activeCategory === cat ? "#4a7fa5" : "#e2e8f0"}`,
+                  background: activeCategory === cat ? "#2d4a6b" : "#fff",
+                  color: activeCategory === cat ? "#fff" : "#64748b",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>{cat}</button>
+              ))}
+            </div>
+            <div style={{ position: "relative" }}>
+              <input
+                value={searchQ}
+                onChange={e => { setSearchQ(e.target.value); setPage(1); }}
+                placeholder="Filter carriers..."
+                style={{ ...inputStyle, marginTop: 0, paddingLeft: 28, width: 200, fontSize: 12 }}
+              />
+              <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "#94a3b8", pointerEvents: "none" }}>🔍</span>
+            </div>
+          </div>
+        </div>
+
+        {/* New carrier placeholder */}
+        {editingId && !carriers.find(c => c.id === editingId) && editData && (
+          <div style={{ marginBottom: 10, padding: "12px 16px", borderRadius: 12,
+            background: "#f0f6fb", border: "1.5px dashed #4a7fa5",
+            fontSize: 13, color: "#2d4a6b", fontWeight: 600 }}>
+            ✏️ New carrier — fill in the detail panel and click "Save Carrier".
+          </div>
+        )}
+
+        {/* Pinned section */}
+        {pinnedList.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b",
+              letterSpacing: "1px", textTransform: "uppercase",
+              display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
+              📌 Pinned
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {pinnedList.map(c => <CarrierCard key={c.id} carrier={c} />)}
+            </div>
+            {unpinnedList.length > 0 && (
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
+                letterSpacing: "1px", textTransform: "uppercase",
+                marginTop: 18, marginBottom: 8 }}>
+                A – Z
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Unpinned list */}
+        {allFiltered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "48px 20px",
+            background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+            <div style={{ fontWeight: 700 }}>No {activeCategory} carriers yet</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add Carrier" to get started</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {pagedUnpinned.map(c => <CarrierCard key={c.id} carrier={c} />)}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            marginTop: 18, padding: "0 2px" }}>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>
+              Showing {(page-1)*PER_PAGE+1}–{Math.min(page*PER_PAGE, unpinnedList.length)} of {unpinnedList.length} carriers
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}
+                style={{ padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
+                  border:"1.5px solid #e2e8f0", background:page===1?"#f8fafc":"#fff",
+                  color:page===1?"#cbd5e1":"#475569", cursor:page===1?"default":"pointer", fontFamily:"inherit" }}>←</button>
+              {Array.from({length:totalPages},(_,i)=>i+1)
+                .filter(n=>n===1||n===totalPages||Math.abs(n-page)<=1)
+                .reduce((acc,n,i,arr)=>{
+                  if(i>0&&n-arr[i-1]>1) acc.push("…");
+                  acc.push(n); return acc;
+                },[])
+                .map((n,i)=> n==="…"
+                  ? <span key={`e${i}`} style={{padding:"5px 4px",fontSize:12,color:"#94a3b8"}}>…</span>
+                  : <button key={n} onClick={()=>setPage(n)} style={{
+                      padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
+                      border:`1.5px solid ${page===n?"#4a7fa5":"#e2e8f0"}`,
+                      background:page===n?"#2d4a6b":"#fff", color:page===n?"#fff":"#475569",
+                      cursor:"pointer", fontFamily:"inherit",
+                    }}>{n}</button>
+                )}
+              <button onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page===totalPages}
+                style={{ padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
+                  border:"1.5px solid #e2e8f0", background:page===totalPages?"#f8fafc":"#fff",
+                  color:page===totalPages?"#cbd5e1":"#475569", cursor:page===totalPages?"default":"pointer", fontFamily:"inherit" }}>→</button>
             </div>
           </div>
         )}
       </div>
+
+      {/* ── Right: detail panel ── */}
+      {selectedCarrier && (
+        <DetailPanel carrier={selectedCarrier} />
+      )}
     </div>
   );
 }
@@ -14787,7 +15903,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
       updated[t.group] = { ...updated[t.group], [t.taskId]: { ...base, ...fields } };
     } else if (t.group === "openEnrollment") {
       const existing = updated.openEnrollment?.tasks?.[t.taskId];
-      const base = (typeof existing === "object" && existing) ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" };
+      const base = (typeof existing === "object" && existing) ? existing : { status: "Not Started", assignee: "", dueDate: "", completedDate: "" }; // assignee seeded on open
       updated.openEnrollment = { ...updated.openEnrollment, tasks: { ...(updated.openEnrollment?.tasks || {}), [t.taskId]: { ...base, ...fields } } };
     } else if (t.group === "postOETasks" || t.group === "miscTasks" || t.group === "renewalTasks") {
       const arr = [...(updated[t.group] || [])];
@@ -14876,7 +15992,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
           </label>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Due Date
-            <input type="date" value={localDueDate}
+            <DateInput  value={localDueDate}
               onChange={e => setLocalDueDate(e.target.value)}
               onBlur={e => { if (e.target.value !== (t.dueDate || "")) updateTaskFields({ dueDate: e.target.value }); }}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px",
@@ -14884,7 +16000,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
           </label>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Completed Date
-            <input type="date" value={localCompletedDate}
+            <DateInput  value={localCompletedDate}
               onChange={e => setLocalCompletedDate(e.target.value)}
               onBlur={e => { if (e.target.value !== (t.completedDate || "")) updateTaskFields({ completedDate: e.target.value, ...(e.target.value ? { status: "Complete" } : {}) }); }}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
@@ -15243,20 +16359,20 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
         </div>
       ) : (
         <div style={{ background:"#fff", border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1.6fr 1.4fr 1.6fr 120px 100px 100px 100px",
+          <div style={{ display:"grid", gridTemplateColumns:"1.6fr 1.4fr 1.6fr 120px 100px 100px 100px 100px",
             padding:"8px 16px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0",
             fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".5px" }}>
-            {["Client","Member","Type","Status","Assignee","Received","Due"].map(h => <div key={h}>{h}</div>)}
+            {["Client","Member","Type","Status","Assignee","Received","Due","Completed"].map(h => <div key={h}>{h}</div>)}
           </div>
           {rows.map((r, i) => {
             const ss = statusStyles[r.status] || statusStyles["Not Started"];
             return (
               <div key={`${r.clientId}-${r.idx}`}
-                style={{ display:"grid", gridTemplateColumns:"1.6fr 1.4fr 1.6fr 120px 100px 100px 100px",
+                style={{ display:"grid", gridTemplateColumns:"1.6fr 1.4fr 1.6fr 120px 100px 100px 100px 100px",
                   padding:"9px 16px", alignItems:"center",
                   borderBottom: i < rows.length-1 ? "1px solid #f8fafc" : "none",
                   background: r.overdue ? "#fff8f8" : "#fff", cursor:"pointer" }}
-                onClick={() => onOpenClient(r.client)}>
+                onClick={() => onOpenClient(r.client, "transactions")}>
                 <div>
                   <div style={{ fontSize:12, fontWeight:700, color:"#1e293b" }}>{r.clientName}</div>
                   {r.clientTeam && <div style={{ fontSize:10, color:"#94a3b8" }}>Team {r.clientTeam}</div>}
@@ -15276,6 +16392,9 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
                   fontWeight:r.overdue?700:400 }}>
                   {r.due ? new Date(r.due+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}) : "—"}
                 </div>
+                <div style={{ fontSize:11, color: r.completedDate ? "#166534" : "#94a3b8" }}>
+                  {r.completedDate ? new Date(r.completedDate+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}) : "—"}
+                </div>
               </div>
             );
           })}
@@ -15287,13 +16406,13 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
 
 // ── OpenTasksView ─────────────────────────────────────────────────────────────
 
-function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, onClearDashNav, marketsLibrary, fundingLibrary, onBack }) {
+function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUser, userTeamId, userTeams, dashNav, onClearDashNav, marketsLibrary, fundingLibrary, taskTypesLibrary, transactionTypesLibrary, onBack }) {
   const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const isRestricted = currentUser && !isLead && (userTeams||[]).length > 0;
   const [expandedTask, setExpandedTask] = useState(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [addForm, setAddForm] = useState({
-    clientId: "", category: "Miscellaneous", title: "", assignee: "", dueDate: "", notes: "",
+    clientId: "", category: "Miscellaneous", txnType: "", title: "", assignee: "", dueDate: "", notes: "",
   });
   const [ovTeam,     setOvTeam]     = useState(isRestricted ? userTeamId : "All");
   const [ovMarket,   setOvMarket]   = useState("All");
@@ -15536,33 +16655,69 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
         const teamMembers = selClient
           ? (selClient.team === "India" ? INDIA_MEMBERS : JULIET_MEMBERS)
           : ALL_MEMBERS;
-        const TASK_CATS = ["Miscellaneous", "Post-OE", "Pre-Renewal", "Compliance", "Open Enrollment"];
+        const TASK_CATS = (taskTypesLibrary && taskTypesLibrary.length)
+          ? [...taskTypesLibrary].sort((a,b) => (a.order??0)-(b.order??0)).map(t => t.label)
+          : ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing","Transactions"];
+
+        // Determine if Termination + which follow-up notice tasks to auto-add
+        const isTermination = addForm.category === "Transactions" && addForm.txnType === "Termination";
+        const clientForNotices = selClient;
+        const hasCobra     = isTermination && (clientForNotices?.continuation || []).includes("cobra");
+        const hasStateCont = isTermination && (clientForNotices?.continuation || []).includes("state_cont");
 
         function saveAddTask() {
           if (!addForm.clientId || !addForm.title.trim()) return;
+          if (addForm.category === "Transactions" && !addForm.txnType) return;
           const client = clients.find(c => String(c.id) === String(addForm.clientId));
           if (!client) return;
           const updated = JSON.parse(JSON.stringify(client));
-          const newTask = {
-            id: "task_" + Date.now(),
-            title: addForm.title.trim(),
-            status: "Not Started",
-            assignee: addForm.assignee,
-            dueDate: addForm.dueDate,
-            notes: addForm.notes,
-            completedDate: "",
-          };
-          if (addForm.category === "Miscellaneous") {
-            updated.miscTasks = [...(updated.miscTasks || []), newTask];
-          } else if (addForm.category === "Post-OE") {
-            updated.postOETasks = [...(updated.postOETasks || []), newTask];
-          } else if (addForm.category === "Pre-Renewal") {
-            updated.miscTasks = [...(updated.miscTasks || []), { ...newTask, _category: "Pre-Renewal" }];
-          } else {
-            updated.miscTasks = [...(updated.miscTasks || []), { ...newTask, _category: addForm.category }];
+
+          function makeTask(title, notes) {
+            return {
+              id: "task_" + Date.now() + "_" + Math.random().toString(36).slice(2,7),
+              title,
+              status: "Not Started",
+              assignee: addForm.assignee,
+              dueDate: addForm.dueDate,
+              notes: notes || addForm.notes,
+              completedDate: "",
+              _category: addForm.category,
+            };
           }
+
+          function pushTask(t) {
+            if (addForm.category === "Post-OE") {
+              updated.postOETasks = [...(updated.postOETasks || []), t];
+            } else {
+              // All other categories (including Transactions, Pre-Renewal, Compliance, etc.) go into miscTasks with _category tag
+              updated.miscTasks = [...(updated.miscTasks || []), t];
+            }
+          }
+
+          // Main task — for transactions include txnType in the title if set
+          const mainTitle = addForm.category === "Transactions" && addForm.txnType
+            ? `${addForm.txnType} — ${addForm.title.trim()}`
+            : addForm.title.trim();
+          pushTask(makeTask(mainTitle));
+
+          // Auto-add notice tasks for Termination based on client's continuation type
+          if (isTermination) {
+            if (hasCobra) {
+              pushTask(makeTask(
+                `COBRA Notice — ${addForm.title.trim()}`,
+                "Required COBRA election notice for qualifying termination event."
+              ));
+            }
+            if (hasStateCont) {
+              pushTask(makeTask(
+                `State Continuation Notice — ${addForm.title.trim()}`,
+                "Required state continuation notice for qualifying termination event."
+              ));
+            }
+          }
+
           onUpdateTask(updated);
-          setAddForm({ clientId: addForm.clientId, category: addForm.category, title: "", assignee: "", dueDate: "", notes: "" });
+          setAddForm({ clientId: addForm.clientId, category: addForm.category, txnType: "", title: "", assignee: "", dueDate: "", notes: "" });
           setShowAddTask(false);
         }
 
@@ -15591,12 +16746,60 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
               <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
                 Category
                 <select value={addForm.category}
-                  onChange={e => setAddForm(p => ({ ...p, category: e.target.value }))}
+                  onChange={e => setAddForm(p => ({ ...p, category: e.target.value, txnType: "" }))}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12 }}>
                   {TASK_CATS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>
             </div>
+            {/* Transaction Type sub-row — only shown when category is Transactions */}
+            {addForm.category === "Transactions" && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
+                    Transaction Type *
+                    <select value={addForm.txnType}
+                      onChange={e => setAddForm(p => ({ ...p, txnType: e.target.value }))}
+                      style={{ ...inputStyle, marginTop: 0, fontSize: 12 }}>
+                      <option value="">— Select transaction type —</option>
+                      {(transactionTypesLibrary && transactionTypesLibrary.length
+                        ? [...transactionTypesLibrary].sort((a,b) => (a.order??0)-(b.order??0)).map(t => t.label)
+                        : ["New Enrollment","Termination","Qualifying Event","Dependent Add","Dependent Remove","Plan Change","Address Change","Beneficiary Change","COBRA","Other"]
+                      ).map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </label>
+                  {/* Notice preview for Termination */}
+                  {addForm.txnType === "Termination" && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, justifyContent: "flex-end" }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Auto-Added Notice Tasks</span>
+                      {!selClient ? (
+                        <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>Select a client first</span>
+                      ) : (hasCobra || hasStateCont) ? (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {hasCobra && (
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+                              background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }}>
+                              ✓ COBRA Notice
+                            </span>
+                          )}
+                          {hasStateCont && (
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+                              background: "#ede9fe", color: "#5b21b6", border: "1px solid #c4b5fd" }}>
+                              ✓ State Continuation Notice
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
+                          No COBRA or State Continuation on file for this client
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
               {/* Library picker */}
               <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
@@ -15632,7 +16835,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
               {/* Due Date */}
               <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
                 Due Date
-                <input type="date" value={addForm.dueDate}
+                <DateInput  value={addForm.dueDate}
                   onChange={e => setAddForm(p => ({ ...p, dueDate: e.target.value }))}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12 }} />
               </label>
@@ -15647,13 +16850,13 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
             </label>
             <div style={{ display: "flex", gap: 8 }}>
               <button type="button" onClick={saveAddTask}
-                disabled={!addForm.clientId || !addForm.title.trim()}
+                disabled={!addForm.clientId || !addForm.title.trim() || (addForm.category === "Transactions" && !addForm.txnType)}
                 style={{ padding: "7px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
-                  background: (!addForm.clientId || !addForm.title.trim()) ? "#e2e8f0" : "linear-gradient(135deg,#6d28d9,#7c3aed)",
-                  color: (!addForm.clientId || !addForm.title.trim()) ? "#94a3b8" : "#fff",
-                  border: "none", cursor: (!addForm.clientId || !addForm.title.trim()) ? "default" : "pointer",
+                  background: (!addForm.clientId || !addForm.title.trim() || (addForm.category === "Transactions" && !addForm.txnType)) ? "#e2e8f0" : "linear-gradient(135deg,#6d28d9,#7c3aed)",
+                  color: (!addForm.clientId || !addForm.title.trim() || (addForm.category === "Transactions" && !addForm.txnType)) ? "#94a3b8" : "#fff",
+                  border: "none", cursor: (!addForm.clientId || !addForm.title.trim() || (addForm.category === "Transactions" && !addForm.txnType)) ? "default" : "pointer",
                   fontFamily: "inherit" }}>Save Task</button>
-              <button type="button" onClick={() => { setShowAddTask(false); setAddForm({ clientId: "", category: "Miscellaneous", title: "", assignee: "", dueDate: "", notes: "" }); }}
+              <button type="button" onClick={() => { setShowAddTask(false); setAddForm({ clientId: "", category: "Miscellaneous", txnType: "", title: "", assignee: "", dueDate: "", notes: "" }); }}
                 style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                   border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569",
                   cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
@@ -16709,7 +17912,7 @@ function RenewalsKanban({ clients, teams, currentUser, userTeams, onOpenClient, 
 
 // ── Client Profile (Full Page) ────────────────────────────────────────────────
 
-function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal, initialSection, initialBenefit, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary, contributionMethodsLibrary }) {
+function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDateRules, currentUser, teams, renewals, renewalStages, salespersonsLibrary, onUpdateRenewal, initialSection, initialBenefit, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary, contributionMethodsLibrary, transactionTypesLibrary }) {
   const [activeSection, setActiveSection] = React.useState(initialSection || "overview");
 
   const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
@@ -16768,7 +17971,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
     setData(p => {
       const existing = p[group]?.[id];
       const base = (!existing || typeof existing === "string")
-        ? { status: existing || "Not Started", assignee: "", dueDate: "" }
+        ? { status: existing || "Not Started", assignee: resolveDefaultAssignee(id, p.team, tasksDb), dueDate: "" }
         : { ...existing };
       const updated = { ...base, [field]: val };
       if (["status","dueDate","assignee","completedDate"].includes(field) && base[field] !== val) {
@@ -17073,6 +18276,7 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
             tasksDb={tasksDb} dueDateRules={dueDateRules}
             carriersData={carriersData} currentUser={currentUser}
             teams={teams}
+            transactionTypesLibrary={transactionTypesLibrary}
             markDirty={() => setIsDirty(true)}
           />
         )}
@@ -17140,6 +18344,80 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
   salespersonsLibrary, marketsLibrary, fundingLibrary, situsLibrary,
   employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary,
   onNavigateDocs, onEditPage, editMode, carriersData, onNavigateSection }) {
+
+  // ── Calculate annual revenue from benefit/commission data ───────────────────
+  function calcAnnualRevenue() {
+    const TIER_KEYS = { "4tier":["ee","es","ec","ff"], "3tier":["ee","es","ff"], "2tier":["ee","ff"] };
+    const activeIds = Object.keys(data.benefitActive || {}).filter(id => (data.benefitActive||{})[id]);
+    let totalAnnual = 0;
+
+    activeIds.forEach(benefitId => {
+      const comm = (data.benefitCommissions || {})[benefitId] || {};
+      if (!comm.type || !comm.amount) return;
+
+      const commAmt  = parseFloat(comm.amount) || 0;
+      const commType = comm.type;
+      const plans    = (data.benefitPlans || {})[benefitId] || [];
+      const tierMode = (data.benefitTierMode || {})[benefitId] || "4tier";
+      const tierKeys = TIER_KEYS[tierMode] || TIER_KEYS["4tier"];
+      const isUnitRate = ["basic_life","std","ltd"].includes(benefitId);
+
+      // Total monthly premium across all plans
+      const monthlyPremium = plans.reduce((s, pl) => {
+        if (isUnitRate) {
+          const uSize = benefitId === "basic_life" ? 1000 : benefitId === "std" ? 10 : 100;
+          return s + (parseFloat(pl.unitRate)||0) * (parseFloat(pl.volume)||0) / uSize;
+        }
+        if (pl.ageBands?.length) {
+          return s + pl.ageBands.reduce((ss, b) => ss + (parseFloat(b.rate)||0) * (parseInt(b.enrolled)||0), 0);
+        }
+        return s + tierKeys.reduce((ss, k) => ss + (parseFloat((pl.rates||{})[k])||0) * (parseInt((pl.enrolled||{})[k])||0), 0);
+      }, 0);
+
+      // Total enrolled
+      const enrolled = plans.length > 0
+        ? plans.reduce((s, pl) => {
+            if (pl.ageBands?.length) return s + pl.ageBands.reduce((ss, b) => ss + (parseInt(b.enrolled)||0), 0);
+            return s + tierKeys.reduce((ss, k) => ss + (parseInt((pl.enrolled||{})[k])||0), 0);
+          }, 0)
+        : parseInt((data.benefitEnrolled||{})[benefitId]) || 0;
+
+      let annualComm = 0;
+      if (commType === "PEPM") {
+        annualComm = commAmt * enrolled * 12;
+      } else if (commType === "Flat %") {
+        annualComm = monthlyPremium * (commAmt / 100) * 12;
+      } else if (commType === "Graded") {
+        // Try to find graded tiers from carrier rules
+        const BENEFIT_ID_TO_NAME = {
+          medical:"Medical", dental:"Dental", vision:"Vision",
+          basic_life:"Basic Life/AD&D", vol_life:"Vol Life",
+          std:"STD", ltd:"LTD", worksite:"Worksite",
+          eap:"EAP", telehealth:"Telehealth", fsa:"FSA",
+          hsa_funding:"HSA", hra:"HRA", nydbl_pfl:"NYDBL & PFL",
+        };
+        const benefitName = BENEFIT_ID_TO_NAME[benefitId] || benefitId;
+        const carrierName = (data.benefitCarriers||{})[benefitId] || "";
+        const carrierObj  = (carriersData||[]).find(c => c.name === carrierName);
+        const rules = carrierObj?.commissionRules || [];
+        const match = rules.find(r =>
+          r.type === "Graded" &&
+          (r.benefit === benefitName || r.benefit === "All") &&
+          (r.segment === data.marketSize || r.segment === "All") &&
+          (r.fundingMethod === data.fundingMethod || r.fundingMethod === "All")
+        );
+        const tiers = match?.tiers?.length ? match.tiers : comm.tiers;
+        if (tiers?.length) {
+          annualComm = calcGradedCommission(monthlyPremium * 12, tiers);
+        } else {
+          annualComm = monthlyPremium * (commAmt / 100) * 12;
+        }
+      }
+      totalAnnual += annualComm;
+    });
+
+    return Math.round(totalAnnual);
+  }
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const mktOpts  = (marketsLibrary||[]).length ? [...marketsLibrary].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
@@ -17428,7 +18706,7 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
                   <span style={{ fontSize:16 }}>📅</span>
                   <span style={fieldLbl}>Renewal Date</span>
                   {editMode
-                    ? <input type="date" value={data.renewalDate||""} onChange={e=>set("renewalDate",e.target.value)}
+                    ? <DateInput  value={data.renewalDate||""} onChange={e=>set("renewalDate",e.target.value)}
                         style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }} />
                     : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.renewalDate ? new Date(data.renewalDate+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"}) : "—"}</span>
                   }
@@ -17511,9 +18789,24 @@ function ClientOverview({ data, set, setData, client, team, currentUser,
                 <div style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0" }}>
                   <span style={fieldLbl}>Annual Revenue</span>
                   {editMode
-                    ? <input value={data.annualRevenue||""} onChange={e=>set("annualRevenue",e.target.value)}
-                        placeholder="e.g. 120,000"
-                        style={{ marginLeft:"auto", fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff" }} />
+                    ? <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:6 }}>
+                        <input value={data.annualRevenue||""} onChange={e=>set("annualRevenue",e.target.value)}
+                          placeholder="e.g. 120,000"
+                          style={{ fontSize:12, padding:"2px 6px", border:"1px solid #93c5fd", borderRadius:5, fontFamily:"inherit", background:"#f0f7ff", width:110 }} />
+                        <button
+                          type="button"
+                          title="Calculate from benefit/commission data"
+                          onClick={() => {
+                            const calc = calcAnnualRevenue();
+                            if (calc > 0) set("annualRevenue", calc.toLocaleString());
+                            else alert("No commission data found. Set up benefit carriers and commission rules in the Benefits section first.");
+                          }}
+                          style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:5, whiteSpace:"nowrap",
+                            border:"1px solid #93c5fd", background:"#dbeafe", color:"#1d4ed8",
+                            cursor:"pointer", fontFamily:"inherit" }}>
+                          ⟳ Calculate
+                        </button>
+                      </div>
                     : <span style={{ ...fieldVal, marginLeft:"auto" }}>{data.annualRevenue ? `$${data.annualRevenue}` : "—"}</span>
                   }
                 </div>
@@ -18941,7 +20234,7 @@ function BenefitEmployeeClasses({ data, setData }) {
 // All state (data, set, setTask, etc.) is passed as props from ClientProfile.
 
 function ClientModalSection({ section, data, set, setData, setTask, getTask,
-  applyDDR, setWithDDR, oe, setOE, tasksDb, dueDateRules, carriersData, currentUser, teams, markDirty }) {
+  applyDDR, setWithDDR, oe, setOE, tasksDb, dueDateRules, carriersData, currentUser, teams, markDirty, transactionTypesLibrary }) {
 
   // markDirty triggers ClientProfile's auto-save when setData is called directly
   const dirty = markDirty || (() => {});
@@ -19003,7 +20296,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                 onChange={e => setData(p => applyDDR({ ...p, renewalReceived: { ...rv, received: e.target.checked } }))}
                 style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
             </label>
-            <input type="date" value={rv.date || ""}
+            <DateInput  value={rv.date || ""}
               onChange={e => setData(p => applyDDR({ ...p, renewalReceived: { ...rv, date: e.target.value } }))}
               disabled={!rv.received}
               style={{ ...inputStyle, marginTop: 0, padding: "4px 8px", fontSize: 12, opacity: rv.received ? 1 : 0.4 }} />
@@ -19038,7 +20331,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
               borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>📋 Decisions Received</span>
-              <input type="date" value={data.decisionsReceivedDate || ""}
+              <DateInput  value={data.decisionsReceivedDate || ""}
                 onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
                 style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", width: 160 }} />
             </div>
@@ -19052,7 +20345,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Renewal Tracker Updated</span>
                 </label>
                 {data.renewalTrackerUpdated && (
-                  <input type="date" value={data.renewalTrackerUpdatedDate || ""}
+                  <DateInput  value={data.renewalTrackerUpdatedDate || ""}
                     onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", width: 160 }} />
                 )}
@@ -19094,10 +20387,10 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     <option value="">Unassigned</option>
                     {teamMembers.map(m => <option key={m}>{m}</option>)}
                   </select>
-                  <input type="date" value={task.dueDate || ""}
+                  <DateInput  value={task.dueDate || ""}
                     onChange={e => setTask("preRenewal", taskDef.id, "dueDate", e.target.value, taskDef.label, "Pre-Renewal")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                  <input type="date" value={task.completedDate || ""}
+                  <DateInput  value={task.completedDate || ""}
                     onChange={e => setTask("preRenewal", taskDef.id, "completedDate", e.target.value, taskDef.label, "Pre-Renewal")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 </div>
@@ -19160,10 +20453,10 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     <option value="">Unassigned</option>
                     {teamMembers.map(m => <option key={m}>{m}</option>)}
                   </select>
-                  <input type="date" value={task.dueDate || autoDate}
+                  <DateInput  value={task.dueDate || autoDate}
                     onChange={e => setTask("compliance", taskDef.id, "dueDate", e.target.value, taskDef.label, "Compliance")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                  <input type="date" value={task.completedDate || ""}
+                  <DateInput  value={task.completedDate || ""}
                     onChange={e => setTask("compliance", taskDef.id, "completedDate", e.target.value, taskDef.label, "Compliance")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 </div>
@@ -19257,9 +20550,9 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
               <option value="">Unassigned</option>
               {teamMembers.map(m => <option key={m}>{m}</option>)}
             </select>
-            <input type="date" value={task.dueDate || ""} onChange={e => task.onChange("dueDate", e.target.value)}
+            <DateInput  value={task.dueDate || ""} onChange={e => task.onChange("dueDate", e.target.value)}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-            <input type="date" value={task.completedDate || ""} onChange={e => task.onChange("completedDate", e.target.value)}
+            <DateInput  value={task.completedDate || ""} onChange={e => task.onChange("completedDate", e.target.value)}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
             <button type="button" onClick={() => setExpanded(p => !p)}
               style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#94a3b8", padding: "2px" }}>
@@ -19269,7 +20562,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
           {expanded && (
             <div style={{ padding: "8px 12px", borderTop: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, background: "#fff" }}>
               <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notes</label>
-              <input type="text" value={task.notes || ""} onChange={e => task.onChange("notes", e.target.value)}
+              <DebouncedInput value={task.notes || ""} onChange={v => task.onChange("notes", v)}
                 placeholder="Add notes…" style={{ ...inputStyle, marginTop: 0, fontSize: 11, width: "100%", boxSizing: "border-box", marginBottom: 8 }} />
               <FollowUpBlock
                 followUps={task.followUps || []}
@@ -19325,12 +20618,12 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
         <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", padding: "16px 20px" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <label style={{ ...labelStyle }}>OE Start Date
-              <input type="date" value={oeData.oeStartDate || ""}
+              <DateInput  value={oeData.oeStartDate || ""}
                 onChange={e => setOE ? setOE("oeStartDate", e.target.value) : null}
                 style={{ ...inputStyle, marginTop: 4 }} />
             </label>
             <label style={{ ...labelStyle }}>OE End Date
-              <input type="date" value={oeData.oeEndDate || ""}
+              <DateInput  value={oeData.oeEndDate || ""}
                 onChange={e => setOE ? setOE("oeEndDate", e.target.value) : null}
                 style={{ ...inputStyle, marginTop: 4 }} />
             </label>
@@ -19409,10 +20702,10 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     <option value="">Unassigned</option>
                     {teamMembers.map(m => <option key={m}>{m}</option>)}
                   </select>
-                  <input type="date" value={task.dueDate || ""}
+                  <DateInput  value={task.dueDate || ""}
                     onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, dueDate: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                  <input type="date" value={task.completedDate || ""}
+                  <DateInput  value={task.completedDate || ""}
                     onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, completedDate: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 </div>
@@ -19456,10 +20749,10 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                         <option value="">Unassigned</option>
                         {teamMembers.map(m => <option key={m}>{m}</option>)}
                       </select>
-                      <input type="date" value={task.dueDate || ""}
+                      <DateInput  value={task.dueDate || ""}
                         onChange={e => updatePOT("dueDate", e.target.value)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                      <input type="date" value={task.completedDate || ""}
+                      <DateInput  value={task.completedDate || ""}
                         onChange={e => updatePOT("completedDate", e.target.value)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                       <button type="button" onClick={() => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],_expanded:!t[idx]._expanded}; set("postOETasks",t); }}
@@ -19470,7 +20763,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     {task._expanded && (
                       <div style={{ padding: "8px 12px", borderTop: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, background: "#fff" }}>
                         <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notes</label>
-                        <input type="text" value={task.notes || ""} onChange={e => updatePOT("notes", e.target.value)}
+                        <DebouncedInput value={task.notes || ""} onChange={v => updatePOT("notes", v)}
                           placeholder="Add notes…" style={{ ...inputStyle, marginTop: 0, fontSize: 11, width: "100%", boxSizing: "border-box", marginBottom: 8 }} />
                         <FollowUpBlock
                           followUps={task.followUps || []}
@@ -19544,7 +20837,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                         <option value="">Unassigned</option>
                         {teamMembers.map(m => <option key={m}>{m}</option>)}
                       </select>
-                      <input type="date" value={task.dueDate || ""}
+                      <DateInput  value={task.dueDate || ""}
                         onChange={e => updateMT("dueDate", e.target.value)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                       <button type="button" onClick={() => updateMT("_expanded", !task._expanded)}
@@ -19558,7 +20851,7 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     {task._expanded && (
                       <div style={{ padding: "8px 12px", borderTop: `1px solid ${isDone ? "#bbf7d0" : "#e2e8f0"}`, background: "#fff" }}>
                         <label style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: ".5px", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notes</label>
-                        <input type="text" value={task.notes || ""} onChange={e => updateMT("notes", e.target.value)}
+                        <DebouncedInput value={task.notes || ""} onChange={v => updateMT("notes", v)}
                           placeholder="Add notes…" style={{ ...inputStyle, marginTop: 0, fontSize: 11, width: "100%", boxSizing: "border-box", marginBottom: 8 }} />
                         <FollowUpBlock
                           followUps={task.followUps || []}
@@ -19615,11 +20908,13 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                   onChange={e => { const t=[...txns]; t[idx]={...t[idx],memberName:e.target.value}; set("transactions",t); }}
                   placeholder="Member name"
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
-                <input type="text" value={txn.changeType || txn.label || ""}
-                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],changeType:e.target.value,label:e.target.value}; set("transactions",t); }}
-                  placeholder="Type of change"
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
-                <input type="date" value={txn.receivedDate || ""}
+                <select value={txn.changeType || ""}
+                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],changeType:e.target.value,label:[t[idx].memberName,e.target.value].filter(Boolean).join(' – ')}; set("transactions",t); }}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }}>
+                  <option value="">— Select —</option>
+                  {([...(transactionTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)).map(o=><option key={o}>{o}</option>)}
+                </select>
+                <DateInput  value={txn.receivedDate || ""}
                   onChange={e => { const t=[...txns]; t[idx]={...t[idx],receivedDate:e.target.value}; set("transactions",t); }}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 <select value={txn.status || "Not Started"}
@@ -19912,7 +21207,7 @@ function ClientBenefitsEditor({ data, set, setData, carriersData, currentUser, b
                 )}
               </label>
               <label style={{ ...labelStyle, marginTop: 0 }}>Effective Date
-                <input type="date" value={effectiveDate}
+                <DateInput  value={effectiveDate}
                   onChange={e => setData(p => ({ ...p, benefitEffectiveDates: { ...p.benefitEffectiveDates, [selBenefit.id]: e.target.value } }))}
                   style={{ ...inputStyle, marginTop: 3 }} />
               </label>
@@ -20847,13 +22142,13 @@ function PlanYearsSection({ data, set, setData, tasksDb, dueDateRules, currentUs
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12, marginBottom: 12 }}>
             <label style={{ ...labelStyle }}>
               Effective From
-              <input type="date" value={archiveForm.effectiveFrom}
+              <DateInput  value={archiveForm.effectiveFrom}
                 onChange={e => setArchiveForm(p => ({ ...p, effectiveFrom: e.target.value }))}
                 style={{ ...inputStyle, marginTop: 3 }} />
             </label>
             <label style={{ ...labelStyle }}>
               Effective To
-              <input type="date" value={archiveForm.effectiveTo}
+              <DateInput  value={archiveForm.effectiveTo}
                 onChange={e => setArchiveForm(p => ({ ...p, effectiveTo: e.target.value }))}
                 style={{ ...inputStyle, marginTop: 3 }} />
             </label>
