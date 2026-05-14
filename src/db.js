@@ -179,6 +179,60 @@ export async function deleteCarrier(id) {
   if (error) console.error('deleteCarrier error:', error)
 }
 
+// ── CARRIER DOCUMENTS ────────────────────────────────────────────────────────
+
+export async function fetchCarrierDocuments(carrierId) {
+  const q = supabase
+    .from('carrier_documents')
+    .select('*')
+    .order('created_at', { ascending: false })
+  const { data, error } = carrierId ? await q.eq('carrier_id', carrierId) : await q
+  if (error) { console.error('fetchCarrierDocuments error:', error); return [] }
+  return (data || []).map(row => ({
+    id:         row.id,
+    carrierId:  row.carrier_id,
+    name:       row.name,
+    size:       row.size,
+    mimeType:   row.mime_type,
+    storagePath: row.storage_path,
+    url:        row.url,
+    uploadedAt: row.created_at,
+  }))
+}
+
+export async function insertCarrierDocument({ carrierId, name, size, mimeType, storagePath, url }) {
+  const { data, error } = await supabase.from('carrier_documents').insert({
+    carrier_id:   carrierId,
+    name,
+    size:         size || 0,
+    mime_type:    mimeType || '',
+    storage_path: storagePath || '',
+    url:          url || '',
+  }).select().single()
+  if (error) { console.error('insertCarrierDocument error:', error); return null }
+  return {
+    id:          data.id,
+    carrierId:   data.carrier_id,
+    name:        data.name,
+    size:        data.size,
+    mimeType:    data.mime_type,
+    storagePath: data.storage_path,
+    url:         data.url,
+    uploadedAt:  data.created_at,
+  }
+}
+
+export async function deleteCarrierDocument(id, storagePath) {
+  if (storagePath) {
+    const { error: stErr } = await supabase.storage
+      .from('carrier-documents')
+      .remove([storagePath])
+    if (stErr) console.warn('deleteCarrierDocument storage error:', stErr.message)
+  }
+  const { error } = await supabase.from('carrier_documents').delete().eq('id', id)
+  if (error) console.error('deleteCarrierDocument db error:', error)
+}
+
 // ── TASKS ─────────────────────────────────────────────────────────────────────
 
 export async function fetchTasks() {

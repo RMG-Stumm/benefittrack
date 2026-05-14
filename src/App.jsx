@@ -80,7 +80,7 @@ function DateInput({ value, onChange, style, placeholder, tabIndex, disabled, id
 
 import React from "react";
 import { useState, useMemo, useEffect } from "react";
-import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB, insertAuditLog, fetchAuditLogs, fetchUserProfile, fetchRenewals, fetchRenewalStages, upsertRenewal } from './db.js';
+import { fetchClients, upsertClient, deleteClient as deleteClientDB, fetchCarriers, upsertCarrier, deleteCarrier as deleteCarrierDB, fetchTasks, upsertTask, deleteTask as deleteTaskDB, fetchDDR, upsertDDR, deleteDDR as deleteDDRDB, fetchMeetings, upsertMeeting, deleteMeeting as deleteMeetingDB, fetchTeams, upsertTeam, deleteTeam as deleteTeamDB, insertAuditLog, fetchAuditLogs, fetchUserProfile, fetchRenewals, fetchRenewalStages, upsertRenewal, fetchCarrierDocuments, insertCarrierDocument, deleteCarrierDocument } from './db.js';
 import { supabase } from './supabase.js';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
@@ -5271,7 +5271,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                   <option value="">— Select carrier —</option>
                                   {carriersForBenefit(cat.id, carriersData)
                                     .filter(c => c !== (data.benefitCarriers || {})[cat.id])
-                                    .map(c => <option key={c} value={c}>{c}</option>)}
+                                    .map(c => {
+                                      const cObj = (carriersData||[]).find(x => x.name === c);
+                                      const hasDocs = cObj && ((cObj._docCount || 0) > 0 || (cObj.forms||[]).length > 0);
+                                      return <option key={c} value={c}>{hasDocs ? `${c} 📎` : c}</option>;
+                                    })}
                                 </select>
                               </label>
                             </div>
@@ -15113,14 +15117,29 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
   const [selectedId,  setSelectedId]  = React.useState(null);
   const [editingId,   setEditingId]   = React.useState(null);
   const [editData,    setEditData]    = React.useState(null);
-  const [detailTab,   setDetailTab]   = React.useState("Overview");
+  const [sidebarSection, setSidebarSection] = React.useState("Overview");
   const [page,        setPage]        = React.useState(1);
   const [searchQ,     setSearchQ]     = React.useState("");
+  // documents keyed by carrierId
+  const [docsMap,     setDocsMap]     = React.useState({});
+  const [docsLoading, setDocsLoading] = React.useState({});
+  const [uploadingFor, setUploadingFor] = React.useState(null);
+  const fileInputRef = React.useRef(null);
   const PER_PAGE = 10;
 
   React.useEffect(() => {
     setPage(1); setSearchQ(""); setSelectedId(null); setEditingId(null); setEditData(null);
   }, [activeCategory]);
+
+  // ── Load documents when a carrier is selected ─────────────────────────────
+  React.useEffect(() => {
+    if (!selectedId || docsMap[selectedId] !== undefined) return;
+    setDocsLoading(p => ({ ...p, [selectedId]: true }));
+    fetchCarrierDocuments(selectedId).then(docs => {
+      setDocsMap(p => ({ ...p, [selectedId]: docs || [] }));
+      setDocsLoading(p => ({ ...p, [selectedId]: false }));
+    });
+  }, [selectedId]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const allFiltered = React.useMemo(() => {
@@ -15143,11 +15162,6 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
   const totalPages    = Math.max(1, Math.ceil(unpinnedList.length / PER_PAGE));
   const pagedUnpinned = unpinnedList.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
-  // When editing, show editData in the panel; otherwise show the saved version
-  const selectedCarrier = selectedId
-    ? (editingId === selectedId && editData ? editData : carriers.find(c => c.id === selectedId))
-    : null;
-
   // ── Actions ────────────────────────────────────────────────────────────────
   function togglePin(id) {
     onSave(prev => prev.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c));
@@ -15155,26 +15169,36 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
   function openDetail(carrier) {
     if (editingId && editingId !== carrier.id) cancelEdit();
     setSelectedId(carrier.id);
-    setDetailTab("Overview");
+    setSidebarSection("Overview");
   }
   function startEdit(carrier) {
     setEditingId(carrier.id);
-    setEditData(JSON.parse(JSON.stringify(carrier)));
+    // Ensure new fields exist on older carrier objects
+    setEditData({
+      producerNumber: "", website: "", brokerPortalUrl: "",
+      censusSubmissionUrl: "", groupEnrollmentPortalUrl: "",
+      availableStates: [], preferredStates: [], forms: [],
+      ...JSON.parse(JSON.stringify(carrier)),
+    });
     setSelectedId(carrier.id);
-    setDetailTab("Overview");
+    setSidebarSection("Overview");
   }
   function startNew() {
     const newId = "c_" + Date.now();
+    const categorySnapshot = activeCategory;
     const blank = {
-      id: newId, name: "", type: "National", category: activeCategory,
-      segments: [], products: [], funding: [], states: [], notes: "",
-      requirements: [], contacts: [], benefitDetails: "", planLimits: [],
-      commissionRules: [],
+      id: newId, name: "", type: "National", category: categorySnapshot,
+      segments: [], products: [], funding: [], states: [],
+      availableStates: [], preferredStates: [],
+      notes: "", requirements: [], contacts: [], benefitDetails: "",
+      planLimits: [], commissionRules: [], forms: [],
+      producerNumber: "",
+      website: "", brokerPortalUrl: "", censusSubmissionUrl: "", groupEnrollmentPortalUrl: "",
     };
     setEditingId(newId);
     setEditData(blank);
     setSelectedId(newId);
-    setDetailTab("Overview");
+    setSidebarSection("Overview");
   }
   function saveEdit() {
     if (!editData.name.trim()) return;
@@ -15286,14 +15310,16 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
   function commSummary(carrier) {
     const rules = carrier.commissionRules || [];
     if (!rules.length) return null;
+    const allPEPM = rules.every(r => r.type === "PEPM");
     const amounts = rules.map(r => parseFloat(r.amount)).filter(n => !isNaN(n) && n > 0);
     if (!amounts.length) return null;
     const lo = Math.min(...amounts), hi = Math.max(...amounts);
-    const hasPEPM = rules.some(r => r.type === "PEPM");
-    if (lo === hi) return hasPEPM ? `$${lo} PEPM` : `${lo}%`;
+    if (allPEPM) return lo === hi ? `$${lo} PEPM` : `$${lo}–$${hi} PEPM`;
+    if (lo === hi) return `${lo}%`;
     return `${lo}% – ${hi}%`;
   }
   function eligText(carrier) {
+    if (carrier.category === "FSA/HSA/HRA Administrator") return null;
     const reqs = carrier.requirements || [];
     const il   = reqs.find(r => r.label?.includes("(IL)") || r.label?.toLowerCase() === "afa segment (il)");
     if (il) return il.value;
@@ -15314,30 +15340,70 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
     return `${lims[0].maxPlans} plans`;
   }
 
-  // ── Detail panel tabs — identical spec to ClientModal ─────────────────────
-  //   Container:  display:flex, borderBottom:"2px solid #e2e8f0",
-  //               background:"#f8fafc", paddingLeft:20
-  //   Button:     padding:"11px 22px", fontSize:13, fontWeight:700,
-  //               border:"none", background:"none", marginBottom:-2
-  //   Active:     borderBottom:"3px solid #3e5878", color:"#3e5878"
-  //   Inactive:   borderBottom:"3px solid transparent", color:"#94a3b8"
-  // ─────────────────────────────────────────────────────────────────────────
-  const DETAIL_TABS = ["Overview", "Eligibility Rules", "Participation", "Commissions", "Contacts", "Forms", "Notes / Sources"];
+  // ── SIDEBAR NAV DEFINITION ──────────────────────────────────────────────────
+  const SIDEBAR_SECTIONS = [
+    { group: "Carrier info", items: [
+      { id: "Overview",         icon: "ℹ️" },
+      { id: "Eligibility Rules",icon: "👥" },
+      { id: "Participation",    icon: "📊" },
+      { id: "Commissions",      icon: "💰" },
+    ]},
+    { group: "Resources", items: [
+      { id: "Contacts",         icon: "📇" },
+      { id: "Forms",            icon: "📄" },
+      { id: "Portals",          icon: "🔗" },
+      { id: "Notes / Sources",  icon: "📝" },
+    ]},
+  ];
 
-  // ── DETAIL PANEL ─────────────────────────────────────────────────────────
-  function DetailPanel({ carrier }) {
+  // ── UPLOAD HANDLER ────────────────────────────────────────────────────────
+  async function handleUpload(carrierId, files) {
+    if (!files || !files.length) return;
+    setUploadingFor(carrierId);
+    for (const file of Array.from(files)) {
+      const path = `${carrierId}/${Date.now()}_${file.name.replace(/\s+/g,'_')}`;
+      const { error: upErr } = await supabase.storage
+        .from('carrier-documents')
+        .upload(path, file, { upsert: false });
+      if (upErr) { console.error('Upload error:', upErr); continue; }
+      const { data: urlData } = supabase.storage
+        .from('carrier-documents')
+        .getPublicUrl(path);
+      const doc = await insertCarrierDocument({
+        carrierId,
+        name: file.name,
+        size: file.size,
+        mimeType: file.type,
+        storagePath: path,
+        url: urlData?.publicUrl || '',
+      });
+      if (doc) {
+        setDocsMap(p => ({ ...p, [carrierId]: [doc, ...(p[carrierId] || [])] }));
+      }
+    }
+    setUploadingFor(null);
+  }
+
+  async function handleDeleteDoc(carrierId, doc) {
+    if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return;
+    await deleteCarrierDocument(doc.id, doc.storagePath);
+    setDocsMap(p => ({ ...p, [carrierId]: (p[carrierId] || []).filter(d => d.id !== doc.id) }));
+  }
+
+  // ── DETAIL VIEW (full-width) ──────────────────────────────────────────────
+  function DetailView({ carrier }) {
     const isNew     = !carriers.find(c => c.id === carrier.id);
     const isEditing = editingId === selectedId;
-    const cur       = isEditing ? editData : carrier; // always read from cur
-
-    const allProducts = activeCategory === "Medical"    ? PRODUCT_LIST.medical
-                      : activeCategory === "Ancillary"  ? PRODUCT_LIST.ancillary
+    const cur       = isEditing ? editData : carrier;
+    const docs      = docsMap[carrier.id] || [];
+    const docsSpinner = docsLoading[carrier.id];
+    const allProducts = cur.category === "Medical"    ? PRODUCT_LIST.medical
+                      : cur.category === "Ancillary"  ? PRODUCT_LIST.ancillary
                       : PRODUCT_LIST.admin;
 
-    // Simple label-value row for Overview
     function TR({ label, value }) {
       return (
-        <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", padding: "7px 0",
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", padding: "7px 0",
           borderBottom: "1px solid #f1f5f9", fontSize: 12 }}>
           <div style={{ color: "#64748b", fontWeight: 600 }}>{label}</div>
           <div style={{ color: "#0f172a", fontWeight: 500, wordBreak: "break-word" }}>
@@ -15347,673 +15413,878 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
       );
     }
 
-    return (
-      <div style={{
-        width: 520, flexShrink: 0,
-        background: "#fff", borderLeft: "1.5px solid #e2e8f0",
-        display: "flex", flexDirection: "column",
-        height: "100%", overflow: "hidden",
-      }}>
+    function LinkField({ label, value, onChange }) {
+      if (isEditing) {
+        return (
+          <label style={{ ...labelStyle, display: "block", marginBottom: 12 }}>
+            {label}
+            <input value={value || ""} onChange={e => onChange(e.target.value)}
+              placeholder="https://" style={{ ...inputStyle, marginTop: 4 }} />
+          </label>
+        );
+      }
+      if (!value) return <TR label={label} value="" />;
+      return (
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", padding: "7px 0",
+          borderBottom: "1px solid #f1f5f9", fontSize: 12 }}>
+          <div style={{ color: "#64748b", fontWeight: 600 }}>{label}</div>
+          <a href={value.startsWith("http") ? value : `https://${value}`}
+            target="_blank" rel="noopener noreferrer"
+            style={{ color: "#2563eb", fontWeight: 500, wordBreak: "break-all" }}>
+            {value} ↗
+          </a>
+        </div>
+      );
+    }
 
-        {/* ── Panel header ── */}
-        <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-              <CarrierAvatar name={cur.name} size={44} />
-              <div style={{ minWidth: 0 }}>
-                {isEditing ? (
-                  <input
-                    value={editData.name}
-                    onChange={e => setEditData(p => ({ ...p, name: e.target.value }))}
-                    placeholder="Carrier name"
-                    style={{ ...inputStyle, marginTop: 0, fontWeight: 800, fontSize: 17,
-                      color: "#0f172a", padding: "4px 8px", border: "1.5px solid #cbd5e1" }}
-                  />
-                ) : (
-                  <div style={{ fontFamily: "'Playfair Display', Georgia, serif",
-                    fontWeight: 800, fontSize: 18, color: "#0f172a",
-                    display: "flex", alignItems: "center", gap: 8 }}>
-                    {cur.name}
-                    {cur.pinned && <span style={{ fontSize: 13 }}>📌</span>}
-                  </div>
-                )}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
-                  {(cur.products || []).slice(0, 3).map(p => <Chip key={p} label={p} />)}
-                  {cur.type && <Chip label={cur.type} />}
-                  {(cur.segments || []).map(s => <Chip key={s} label={s} scheme={SEG[s]} />)}
-                  {(cur.funding  || []).map(f => <Chip key={f} label={f} scheme={FUND[f]} />)}
-                </div>
-              </div>
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, flex: 1 }}>
+        {/* Top bar */}
+        <div style={{ flexShrink: 0, padding: "12px 20px", borderBottom: "1px solid #e8eef2",
+          background: "#ffffff", display: "flex", alignItems: "center",
+          justifyContent: "space-between", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button type="button" onClick={() => { cancelEdit(); setSelectedId(null); }}
+              style={{ ...btnOutline, padding: "6px 14px", fontSize: 12,
+                display: "flex", alignItems: "center", gap: 5 }}>← Back to carriers</button>
+            <div style={{ width: 1, height: 18, background: "#e2e8f0" }} />
+            <CarrierAvatar name={cur.name} size={30} />
+            {isEditing ? (
+              <input value={editData.name} onChange={e => setEditData(p => ({ ...p, name: e.target.value }))}
+                placeholder="Carrier name"
+                style={{ ...inputStyle, marginTop: 0, fontWeight: 800, fontSize: 16,
+                  padding: "3px 8px", border: "1.5px solid #cbd5e1", width: 220 }} />
+            ) : (
+              <span style={{ fontFamily: "'Playfair Display',Georgia,serif",
+                fontWeight: 800, fontSize: 17, color: "#0f172a" }}>{cur.name}</span>
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {(cur.products||[]).slice(0,3).map(p => <Chip key={p} label={p} />)}
+              {cur.type && <Chip label={cur.type} />}
+              {(cur.segments||[]).map(s => <Chip key={s} label={s} scheme={SEG[s]} />)}
+              {(cur.funding||[]).map(f => <Chip key={f} label={f} scheme={FUND[f]} />)}
+              {cur.pinned && <span style={{ fontSize: 13 }}>📌</span>}
             </div>
-            <button onClick={() => { cancelEdit(); setSelectedId(null); }} style={{
-              flexShrink: 0, width: 28, height: 28, borderRadius: 8,
-              border: "1.5px solid #e2e8f0", background: "#f8fafc",
-              cursor: "pointer", fontSize: 15, color: "#64748b",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>✕</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            {isEditing ? (
+              <>
+                <button type="button" onClick={saveEdit}
+                  style={{ ...btnPrimary, padding: "7px 18px", fontSize: 12 }}>Save carrier</button>
+                <button type="button" onClick={cancelEdit}
+                  style={{ ...btnOutline, padding: "7px 14px", fontSize: 12 }}>Cancel</button>
+              </>
+            ) : (
+              <>
+                {canEdit && (
+                  <button type="button" onClick={() => startEdit(cur)}
+                    style={{ ...btnPrimary, padding: "7px 18px", fontSize: 12 }}>Edit carrier</button>
+                )}
+                <button type="button" onClick={() => togglePin(cur.id)} style={{
+                  ...btnOutline, padding: "7px 12px", fontSize: 12,
+                  border: `1.5px solid ${cur.pinned ? "#fcd34d" : "#e2e8f0"}`,
+                  background: cur.pinned ? "#fef9c3" : "#fff",
+                  color: cur.pinned ? "#92400e" : "#475569",
+                }}>📌 {cur.pinned ? "Pinned" : "Pin"}</button>
+                {canDelete && (
+                  <button type="button" onClick={() => deleteCarrier(cur.id)} style={{
+                    ...btnOutline, padding: "7px 12px", fontSize: 12,
+                    border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                  }}>Delete</button>
+                )}
+              </>
+            )}
           </div>
         </div>
 
-        {/* ── Tab bar — exact ClientModal spec ── */}
-        <div style={{
-          display: "flex",
-          borderBottom: "2px solid #e2e8f0",
-          background: "#f8fafc",
-          paddingLeft: 20,
-          flexShrink: 0,
-          overflowX: "auto",
-        }}>
-          {DETAIL_TABS.map(tab => (
-            <button key={tab} type="button" onClick={() => setDetailTab(tab)} style={{
-              padding: "11px 16px",
-              fontSize: 12.5,
-              fontWeight: 700,
-              fontFamily: "inherit",
-              cursor: "pointer",
-              border: "none",
-              background: "none",
-              whiteSpace: "nowrap",
-              borderBottom: detailTab === tab ? "3px solid #3e5878" : "3px solid transparent",
-              color:        detailTab === tab ? "#3e5878" : "#94a3b8",
-              marginBottom: -2,
-              transition: "color .15s",
-            }}>{tab}</button>
-          ))}
-        </div>
+        {/* Body: sidebar + content */}
+        <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
+          {/* Sidebar — matches main app nav style */}
+          <div style={{ width: 210, flexShrink: 0, borderRight: "1px solid #3a4f62",
+            background: "#2b3a4a", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            <style>{`.carrier-nav-item:hover { background: rgba(255,255,255,0.07) !important; }`}</style>
+            <nav style={{ flex: 1, padding: "10px 8px" }}>
+              {SIDEBAR_SECTIONS.map(grp => (
+                <div key={grp.group} style={{ marginBottom: 6 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#a8bfcc",
+                    textTransform: "uppercase", letterSpacing: "0.9px",
+                    padding: "8px 11px 4px" }}>{grp.group}</div>
+                  {grp.items.map(item => {
+                    const active = sidebarSection === item.id;
+                    const docCount = item.id === "Forms" ? docs.length : 0;
+                    return (
+                      <button key={item.id} type="button" className="carrier-nav-item"
+                        onClick={() => setSidebarSection(item.id)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", gap: 9,
+                          padding: "8px 11px", borderRadius: 7, marginBottom: 1,
+                          border: "none",
+                          borderLeft: `3px solid ${active ? "#4b7896" : "transparent"}`,
+                          background: active ? "rgba(75,120,150,0.18)" : "transparent",
+                          color: active ? "#e8f2f8" : "#a8bfcc",
+                          cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                          fontWeight: active ? 700 : 500, fontSize: 13,
+                          transition: "all .12s",
+                        }}>
+                        <span style={{ fontSize: 14, width: 18, textAlign: "center",
+                          flexShrink: 0, opacity: active ? 1 : 0.65 }}>{item.icon}</span>
+                        <span style={{ flex: 1 }}>{item.id}</span>
+                        {docCount > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 700,
+                            background: "rgba(75,120,150,0.35)", color: "#e8f2f8",
+                            borderRadius: 99, padding: "1px 7px", flexShrink: 0 }}>{docCount}</span>
+                        )}
+                        {item.id === "Portals" && docCount === 0 && (
+                          <span style={{ fontSize: 9, fontWeight: 700, background: "#2d5a3d",
+                            color: "#86efac", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>New</span>
+                        )}
+                        {active && (
+                          <span style={{ width: 5, height: 5, borderRadius: "50%",
+                            background: "#4b7896", flexShrink: 0 }} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </nav>
+          </div>
 
-        {/* ── Tab content (scrollable) ── */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+          {/* Main content */}
+          <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px 28px" }}>
 
-          {/* OVERVIEW */}
-          {detailTab === "Overview" && (
-            <div>
-              {isEditing ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <div style={{ ...labelStyle, marginBottom: 5 }}>Category</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {CARRIER_CATEGORIES.map(cat => (
-                        <EditChip key={cat} label={cat} active={editData.category === cat}
-                          onClick={() => setEditData(p => ({ ...p, category: cat }))} />
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ ...labelStyle, marginBottom: 5 }}>Type</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {CARRIER_TYPES.map(t => (
-                        <EditChip key={t} label={t} active={editData.type === t}
-                          onClick={() => setEditData(p => ({ ...p, type: t }))} />
-                      ))}
-                    </div>
-                  </div>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <div style={{ ...labelStyle, marginBottom: 5 }}>Market Segments</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {CARRIER_SEGMENTS.map(s => (
-                        <EditChip key={s} label={s} active={(editData.segments || []).includes(s)}
-                          onClick={() => toggleItem("segments", s)} />
-                      ))}
-                    </div>
-                  </div>
-                  {activeCategory !== "FSA/HSA/HRA Administrator" && (
+            {sidebarSection === "Overview" && (
+              <div>
+                {isEditing ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                     <div style={{ gridColumn: "1 / -1" }}>
-                      <div style={{ ...labelStyle, marginBottom: 5 }}>Funding Methods</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {FUNDING_OPTIONS.map(f => (
-                          <EditChip key={f} label={f} active={(editData.funding || []).includes(f)}
-                            onClick={() => toggleItem("funding", f)} />
+                      <div style={{ ...labelStyle, marginBottom: 6 }}>Category</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {CARRIER_CATEGORIES.map(cat => (
+                          <EditChip key={cat} label={cat} active={editData.category === cat}
+                            onClick={() => setEditData(p => ({ ...p, category: cat }))} />
                         ))}
                       </div>
                     </div>
-                  )}
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <div style={{ ...labelStyle, marginBottom: 5 }}>Products Offered</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {allProducts.map(p => (
-                        <EditChip key={p} label={p} active={(editData.products || []).includes(p)}
-                          onClick={() => toggleItem("products", p)} />
+                    <div>
+                      <div style={{ ...labelStyle, marginBottom: 6 }}>Type</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {CARRIER_TYPES.map(t => (
+                          <EditChip key={t} label={t} active={editData.type === t}
+                            onClick={() => setEditData(p => ({ ...p, type: t }))} />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Producer #
+                        <input value={editData.producerNumber || ""}
+                          placeholder="e.g. PRD-04471"
+                          onChange={e => setEditData(p => ({ ...p, producerNumber: e.target.value }))}
+                          style={{ ...inputStyle, marginTop: 4 }} />
+                      </label>
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={{ ...labelStyle, marginBottom: 6 }}>Market Segments</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {CARRIER_SEGMENTS.map(s => (
+                          <EditChip key={s} label={s} active={(editData.segments||[]).includes(s)}
+                            onClick={() => toggleItem("segments", s)} />
+                        ))}
+                      </div>
+                    </div>
+                    {cur.category !== "FSA/HSA/HRA Administrator" && (
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <div style={{ ...labelStyle, marginBottom: 6 }}>Funding Methods</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {FUNDING_OPTIONS.map(f => (
+                            <EditChip key={f} label={f} active={(editData.funding||[]).includes(f)}
+                              onClick={() => toggleItem("funding", f)} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={{ ...labelStyle, marginBottom: 6 }}>Products Offered</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {allProducts.map(p => (
+                          <EditChip key={p} label={p} active={(editData.products||[]).includes(p)}
+                            onClick={() => toggleItem("products", p)} />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Available States
+                        <input
+                          value={(editData.availableStates||[]).join(", ")}
+                          placeholder="IL, IN, WI, ..."
+                          onChange={e => setEditData(p => ({ ...p, availableStates: e.target.value.split(",").map(s=>s.trim()).filter(Boolean) }))}
+                          style={{ ...inputStyle, marginTop: 4 }} />
+                      </label>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Preferred States
+                        <input
+                          value={(editData.preferredStates||[]).join(", ")}
+                          placeholder="IL, WI"
+                          onChange={e => setEditData(p => ({ ...p, preferredStates: e.target.value.split(",").map(s=>s.trim()).filter(Boolean) }))}
+                          style={{ ...inputStyle, marginTop: 4 }} />
+                      </label>
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                        <div style={labelStyle}>Plan Limits</div>
+                        <button type="button" onClick={() => setEditData(p => ({
+                          ...p, planLimits: [...(p.planLimits||[]), { benefit:"Medical", maxPlans:"", condition:"" }],
+                        }))} style={{ fontSize:11, fontWeight:700, color:"#2d4a6b", background:"#dce8f0",
+                          border:"none", borderRadius:6, padding:"2px 8px", cursor:"pointer", fontFamily:"inherit" }}>+ Add</button>
+                      </div>
+                      {(editData.planLimits||[]).map((pl,pli) => (
+                        <div key={pli} style={{ display:"grid", gridTemplateColumns:"1fr 80px 1fr auto",
+                          gap:5, marginBottom:5, alignItems:"center" }}>
+                          <select value={pl.benefit||"Medical"}
+                            onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],benefit:e.target.value};setEditData(p=>({...p,planLimits:l}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                            {["Medical","Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Worksite","FSA","HSA","HRA","EAP","Telehealth"].map(b=><option key={b}>{b}</option>)}
+                          </select>
+                          <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                            <span style={{ fontSize:10, color:"#94a3b8", whiteSpace:"nowrap" }}>Max</span>
+                            <input type="text" inputMode="numeric" value={pl.maxPlans||""} placeholder="0"
+                              onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],maxPlans:e.target.value.replace(/\D/g,"")};setEditData(p=>({...p,planLimits:l}));}}
+                              style={{...inputStyle,marginTop:0,fontSize:12,padding:"4px 5px",textAlign:"center",fontWeight:700}} />
+                          </div>
+                          <input type="text" value={pl.condition||""} placeholder="Condition (e.g. 5+ enrolled)"
+                            onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],condition:e.target.value};setEditData(p=>({...p,planLimits:l}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
+                          <button type="button"
+                            onClick={()=>setEditData(p=>({...p,planLimits:p.planLimits.filter((_,i)=>i!==pli)}))}
+                            style={{padding:"4px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                        </div>
                       ))}
                     </div>
                   </div>
-                  {/* Plan limits inline */}
-                  <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                      <div style={{ ...labelStyle }}>Plan Limits</div>
-                      <button type="button" onClick={() => setEditData(p => ({
-                        ...p, planLimits: [...(p.planLimits||[]), { benefit:"Medical", maxPlans:"", condition:"" }],
-                      }))} style={{ fontSize:11, fontWeight:700, color:"#2d4a6b", background:"#dce8f0", border:"none", borderRadius:6, padding:"2px 8px", cursor:"pointer", fontFamily:"inherit" }}>+ Add</button>
+                ) : (
+                  <div>
+                    <TR label="Carrier"          value={cur.name} />
+                    <TR label="Market Segments"  value={(cur.segments||[]).join(", ")} />
+                    <TR label="Product Category" value={cur.category} />
+                    <TR label="Funding Methods"  value={(cur.funding||[]).join(", ")} />
+                    <TR label="Available States" value={
+                      (cur.availableStates||cur.states||[]).length
+                        ? (cur.availableStates||cur.states||[]).join(", ")
+                        : "National (see Eligibility Rules for exceptions)"
+                    } />
+                    {(cur.preferredStates||[]).length > 0 && (
+                      <TR label="Preferred States" value={(cur.preferredStates||[]).join(", ")} />
+                    )}
+                    {cur.producerNumber && <TR label="Producer #"              value={cur.producerNumber} />}
+                    {cur.effectiveDate  && <TR label="Effective Guideline Date" value={cur.effectiveDate} />}
+                    {cur.source         && <TR label="Source"                   value={cur.source} />}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {sidebarSection === "Eligibility Rules" && (
+              <div>
+                {isEditing ? (
+                  <div>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                      <div style={labelStyle}>Minimum Requirements</div>
+                      <button type="button"
+                        onClick={()=>setEditData(p=>({...p,requirements:[...(p.requirements||[]),{label:"",value:""}]}))}
+                        style={{fontSize:11,fontWeight:700,color:"#2d4a6b",background:"#dce8f0",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
                     </div>
-                    {(editData.planLimits || []).map((pl, pli) => (
-                      <div key={pli} style={{ display:"grid", gridTemplateColumns:"1fr 80px 1fr auto", gap:5, marginBottom:5, alignItems:"center" }}>
-                        <select value={pl.benefit||"Medical"} onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],benefit:e.target.value};setEditData(p=>({...p,planLimits:l}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
-                          {["Medical","Dental","Vision","Basic Life/AD&D","Voluntary Life/AD&D","STD","LTD","Worksite","FSA","HSA","HRA","EAP","Telehealth"].map(b=><option key={b}>{b}</option>)}
-                        </select>
-                        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-                          <span style={{ fontSize:10, color:"#94a3b8", whiteSpace:"nowrap" }}>Max</span>
-                          <input type="text" inputMode="numeric" value={pl.maxPlans||""} placeholder="0"
-                            onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],maxPlans:e.target.value.replace(/\D/g,"")};setEditData(p=>({...p,planLimits:l}));}}
-                            style={{...inputStyle,marginTop:0,fontSize:12,padding:"4px 5px",textAlign:"center",fontWeight:700}} />
-                        </div>
-                        <input type="text" value={pl.condition||""} placeholder="Condition (e.g. 5+ enrolled)"
-                          onChange={e=>{const l=[...(editData.planLimits||[])];l[pli]={...l[pli],condition:e.target.value};setEditData(p=>({...p,planLimits:l}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
-                        <button type="button" onClick={()=>setEditData(p=>({...p,planLimits:p.planLimits.filter((_,i)=>i!==pli)}))}
-                          style={{padding:"4px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                    {(editData.requirements||[]).length===0 && (
+                      <div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No requirements — click "+ Add" to begin.</div>
+                    )}
+                    {(editData.requirements||[]).map((req,ri)=>(
+                      <div key={ri} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:6,marginBottom:6}}>
+                        <input value={req.label} placeholder="Label (e.g. Min Eligible)"
+                          onChange={e=>{const r=[...editData.requirements];r[ri]={...r[ri],label:e.target.value};setEditData(p=>({...p,requirements:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"5px 8px"}} />
+                        <input value={req.value} placeholder="Value"
+                          onChange={e=>{const r=[...editData.requirements];r[ri]={...r[ri],value:e.target.value};setEditData(p=>({...p,requirements:r}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"5px 8px"}} />
+                        <button type="button"
+                          onClick={()=>setEditData(p=>({...p,requirements:p.requirements.filter((_,i)=>i!==ri)}))}
+                          style={{padding:"5px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : (
-                <div>
-                  <TR label="Carrier"              value={cur.name} />
-                  <TR label="Market Segments"      value={(cur.segments || []).join(", ")} />
-                  <TR label="Product Category"     value={cur.category} />
-                  <TR label="Funding Methods"      value={(cur.funding  || []).join(", ")} />
-                  <TR label="States / Situs Rules" value={
-                    (cur.states || []).length
-                      ? cur.states.join(", ")
-                      : "National (see Eligibility Rules for exceptions)"
-                  } />
-                  {cur.effectiveDate && <TR label="Effective Guideline Date" value={cur.effectiveDate} />}
-                  {cur.source        && <TR label="Source"                   value={cur.source} />}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ELIGIBILITY RULES */}
-          {detailTab === "Eligibility Rules" && (
-            <div>
-              {isEditing ? (
-                <div>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-                    <div style={labelStyle}>Minimum Requirements</div>
-                    <button type="button" onClick={()=>setEditData(p=>({...p,requirements:[...(p.requirements||[]),{label:"",value:""}]}))}
-                      style={{fontSize:11,fontWeight:700,color:"#2d4a6b",background:"#dce8f0",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
-                  </div>
-                  {(editData.requirements||[]).length===0 && (
-                    <div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No requirements — click "+ Add" to begin.</div>
-                  )}
-                  {(editData.requirements||[]).map((req,ri)=>(
-                    <div key={ri} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:6,marginBottom:6}}>
-                      <input value={req.label} placeholder="Label (e.g. Min Eligible)"
-                        onChange={e=>{const r=[...editData.requirements];r[ri]={...r[ri],label:e.target.value};setEditData(p=>({...p,requirements:r}));}}
-                        style={{...inputStyle,marginTop:0,fontSize:11,padding:"5px 8px"}} />
-                      <input value={req.value} placeholder="Value"
-                        onChange={e=>{const r=[...editData.requirements];r[ri]={...r[ri],value:e.target.value};setEditData(p=>({...p,requirements:r}));}}
-                        style={{...inputStyle,marginTop:0,fontSize:11,padding:"5px 8px"}} />
-                      <button type="button" onClick={()=>setEditData(p=>({...p,requirements:p.requirements.filter((_,i)=>i!==ri)}))}
-                        style={{padding:"5px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div>
-                  {(cur.requirements||[]).length > 0 ? (
-                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                      <thead>
-                        <tr style={{background:"#f8fafc"}}>
-                          {["State / Area","Requirement","Value"].map(h=>(
-                            <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,color:"#64748b",borderBottom:"2px solid #e2e8f0"}}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(cur.requirements||[]).map((r,i)=>(
-                          <tr key={i} style={{borderBottom:"1px solid #f1f5f9"}}>
-                            <td style={{padding:"7px 10px",color:"#64748b",fontStyle:"italic",fontSize:12}}>—</td>
-                            <td style={{padding:"7px 10px",color:"#374151",fontSize:12}}>{r.label}</td>
-                            <td style={{padding:"7px 10px",fontWeight:600,color:"#0f172a",fontSize:12}}>{r.value}</td>
+                ) : (
+                  <div>
+                    {(cur.requirements||[]).length > 0 ? (
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                        <thead>
+                          <tr style={{background:"#f8fafc"}}>
+                            {["State / Area","Requirement","Value"].map(h=>(
+                              <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,color:"#64748b",borderBottom:"2px solid #e2e8f0"}}>{h}</th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No eligibility rules on file.</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                        </thead>
+                        <tbody>
+                          {(cur.requirements||[]).map((r,i)=>(
+                            <tr key={i} style={{borderBottom:"1px solid #f1f5f9"}}>
+                              <td style={{padding:"7px 10px",color:"#64748b",fontStyle:"italic",fontSize:12}}>—</td>
+                              <td style={{padding:"7px 10px",color:"#374151",fontSize:12}}>{r.label}</td>
+                              <td style={{padding:"7px 10px",fontWeight:600,color:"#0f172a",fontSize:12}}>{r.value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No eligibility rules on file.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
-          {/* PARTICIPATION */}
-          {detailTab === "Participation" && (
-            <div>
-              {isEditing ? (
-                <label style={labelStyle}>
-                  Benefit Details / Participation Notes
-                  <textarea value={editData.benefitDetails||""}
-                    onChange={e=>setEditData(p=>({...p,benefitDetails:e.target.value}))}
-                    placeholder="Participation rules, waiver rules, contribution requirements..."
-                    rows={6} style={{...inputStyle,marginTop:6,resize:"vertical",fontFamily:"inherit"}} />
-                </label>
-              ) : (
-                <div>
-                  {(() => {
-                    const reqs    = cur.requirements || [];
-                    const contrib = reqs.find(r => r.label?.toLowerCase().includes("contrib") && !r.label?.toLowerCase().includes("non"));
-                    const nonCon  = reqs.find(r => r.label?.toLowerCase().includes("non-contrib") || r.label?.toLowerCase().includes("non contrib"));
-                    const waiver  = reqs.find(r => r.label?.toLowerCase().includes("waiver") || r.label?.toLowerCase().includes("imq"));
-                    const ops     = reqs.filter(r =>
-                      r.label?.toLowerCase().includes("billing") || r.label?.toLowerCase().includes("carve") ||
-                      r.label?.toLowerCase().includes("imq")     || r.label?.toLowerCase().includes("quote") ||
-                      r.label?.toLowerCase().includes("claims")
-                    );
-                    const hasContent = contrib || nonCon || waiver || ops.length;
-                    if (!hasContent && !cur.benefitDetails) {
-                      return <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No participation rules on file.</div>;
-                    }
-                    return (
-                      <div>
-                        {(contrib || nonCon || waiver) && (
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-                            {contrib && (
-                              <div style={{padding:"12px 14px",borderRadius:10,background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
-                                <div style={{fontSize:10,fontWeight:800,color:"#166534",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Contributory</div>
-                                <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{contrib.value}</div>
-                              </div>
-                            )}
-                            {nonCon && (
-                              <div style={{padding:"12px 14px",borderRadius:10,background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
-                                <div style={{fontSize:10,fontWeight:800,color:"#166534",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Non-Contributory</div>
-                                <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{nonCon.value}</div>
-                              </div>
-                            )}
-                            {waiver && (
-                              <div style={{padding:"12px 14px",borderRadius:10,background:"#eff6ff",border:"1px solid #bfdbfe",gridColumn:"1 / -1"}}>
-                                <div style={{fontSize:10,fontWeight:800,color:"#1e40af",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Waiver Rule</div>
-                                <div style={{fontSize:12,fontWeight:500,color:"#1e3a5f"}}>{waiver.value}</div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {ops.length > 0 && (
-                          <div>
-                            <div style={{fontSize:10,fontWeight:800,color:"#94a3b8",letterSpacing:"0.8px",textTransform:"uppercase",marginBottom:10}}>Operational Rules</div>
-                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
-                              {ops.map((r,i)=>(
-                                <div key={i} style={{padding:"10px 12px",borderRadius:8,background:"#f8fafc",border:"1px solid #e2e8f0"}}>
-                                  <div style={{fontSize:10,fontWeight:700,color:"#64748b",marginBottom:3}}>{r.label}</div>
-                                  <div style={{fontSize:12,fontWeight:600,color:"#0f172a"}}>{r.value}</div>
+            {sidebarSection === "Participation" && (
+              <div>
+                {isEditing ? (
+                  <label style={labelStyle}>
+                    Benefit Details / Participation Notes
+                    <textarea value={editData.benefitDetails||""}
+                      onChange={e=>setEditData(p=>({...p,benefitDetails:e.target.value}))}
+                      placeholder="Participation rules, waiver rules, contribution requirements..."
+                      rows={6} style={{...inputStyle,marginTop:6,resize:"vertical",fontFamily:"inherit"}} />
+                  </label>
+                ) : (
+                  <div>
+                    {(() => {
+                      const reqs    = cur.requirements || [];
+                      const contrib = reqs.find(r => r.label?.toLowerCase().includes("contrib") && !r.label?.toLowerCase().includes("non"));
+                      const nonCon  = reqs.find(r => r.label?.toLowerCase().includes("non-contrib") || r.label?.toLowerCase().includes("non contrib"));
+                      const waiver  = reqs.find(r => r.label?.toLowerCase().includes("waiver") || r.label?.toLowerCase().includes("imq"));
+                      const ops     = reqs.filter(r =>
+                        r.label?.toLowerCase().includes("billing") || r.label?.toLowerCase().includes("carve") ||
+                        r.label?.toLowerCase().includes("imq")     || r.label?.toLowerCase().includes("quote") ||
+                        r.label?.toLowerCase().includes("claims")
+                      );
+                      const hasContent = contrib || nonCon || waiver || ops.length;
+                      if (!hasContent && !cur.benefitDetails) {
+                        return <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No participation rules on file.</div>;
+                      }
+                      return (
+                        <div>
+                          {(contrib || nonCon || waiver) && (
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+                              {contrib && (
+                                <div style={{padding:"12px 14px",borderRadius:10,background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
+                                  <div style={{fontSize:10,fontWeight:800,color:"#166534",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Contributory</div>
+                                  <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{contrib.value}</div>
                                 </div>
-                              ))}
+                              )}
+                              {nonCon && (
+                                <div style={{padding:"12px 14px",borderRadius:10,background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
+                                  <div style={{fontSize:10,fontWeight:800,color:"#166534",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Non-Contributory</div>
+                                  <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{nonCon.value}</div>
+                                </div>
+                              )}
+                              {waiver && (
+                                <div style={{padding:"12px 14px",borderRadius:10,background:"#eff6ff",border:"1px solid #bfdbfe",gridColumn:"1 / -1"}}>
+                                  <div style={{fontSize:10,fontWeight:800,color:"#1e40af",textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:4}}>Waiver Rule</div>
+                                  <div style={{fontSize:12,fontWeight:500,color:"#1e3a5f"}}>{waiver.value}</div>
+                                </div>
+                              )}
                             </div>
+                          )}
+                          {ops.length > 0 && (
+                            <div>
+                              <div style={{fontSize:10,fontWeight:800,color:"#94a3b8",letterSpacing:"0.8px",textTransform:"uppercase",marginBottom:10}}>Operational Rules</div>
+                              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                                {ops.map((r,i)=>(
+                                  <div key={i} style={{padding:"10px 12px",borderRadius:8,background:"#f8fafc",border:"1px solid #e2e8f0"}}>
+                                    <div style={{fontSize:10,fontWeight:700,color:"#64748b",marginBottom:3}}>{r.label}</div>
+                                    <div style={{fontSize:12,fontWeight:600,color:"#0f172a"}}>{r.value}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {cur.benefitDetails && (
+                            <p style={{fontSize:12,color:"#374151",lineHeight:1.7,margin:0}}>{cur.benefitDetails}</p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {sidebarSection === "Commissions" && (
+              <div>
+                {isEditing ? (
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                      <div style={labelStyle}>Commission Schedule</div>
+                      <button type="button"
+                        onClick={()=>setEditData(p=>({...p,commissionRules:[...(p.commissionRules||[]),{benefit:"Medical",segment:"All",fundingMethod:"All",type:"Flat %",amount:"",notes:""}]}))}
+                        style={{fontSize:11,fontWeight:700,color:"#166534",background:"#dcfce7",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add Rule</button>
+                    </div>
+                    {(editData.commissionRules||[]).length===0 && (
+                      <div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No rules — click "+ Add Rule" to begin.</div>
+                    )}
+                    {(editData.commissionRules||[]).map((rule,ri)=>(
+                      <React.Fragment key={ri}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 65px 75px 1fr auto",gap:5,marginBottom:6,alignItems:"center"}}>
+                          <select value={rule.benefit||"Medical"}
+                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],benefit:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                            {["Medical","Dental","Vision","Basic Life/AD&D","Vol Life","STD","LTD","IDI","Worksite","EAP","Telehealth","FSA","HSA","HRA","All"].map(b=><option key={b}>{b}</option>)}
+                          </select>
+                          <select value={rule.segment||"All"}
+                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],segment:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                            {["All","ACA","Mid-Market","Large"].map(s=><option key={s}>{s}</option>)}
+                          </select>
+                          <select value={rule.fundingMethod||"All"}
+                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],fundingMethod:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                            {["All","Fully Insured","Level-Funded","Self-Funded"].map(f=><option key={f}>{f}</option>)}
+                          </select>
+                          <select value={rule.type||"Flat %"}
+                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],type:e.target.value,amount:""};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
+                            {["Flat %","PEPM","Graded"].map(t=><option key={t}>{t}</option>)}
+                          </select>
+                          <div style={{display:"flex",alignItems:"center"}}>
+                            {rule.type==="PEPM"&&<span style={{fontSize:11,color:"#64748b",marginRight:2}}>$</span>}
+                            <input type="text" inputMode="numeric" value={rule.amount||""} placeholder="0"
+                              onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],amount:e.target.value.replace(/[^0-9.]/g,"")};setEditData(p=>({...p,commissionRules:r}));}}
+                              style={{...inputStyle,marginTop:0,fontSize:12,padding:"4px 5px",textAlign:"right",fontWeight:700}} />
+                            {rule.type!=="PEPM"&&<span style={{fontSize:11,color:"#64748b",marginLeft:2}}>%</span>}
+                          </div>
+                          <input type="text" value={rule.notes||""} placeholder="Notes"
+                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],notes:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 7px"}} />
+                          <button type="button"
+                            onClick={()=>setEditData(p=>({...p,commissionRules:p.commissionRules.filter((_,i)=>i!==ri)}))}
+                            style={{padding:"5px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                        </div>
+                        {rule.type==="Graded"&&(
+                          <div style={{marginLeft:12,marginBottom:8,padding:"8px 12px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7}}>
+                            <div style={{fontSize:11,fontWeight:700,color:"#92400e",marginBottom:6}}>Graded Tiers</div>
+                            {(rule.tiers||[]).map((tier,ti)=>(
+                              <div key={ti} style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
+                                <span style={{fontSize:11,color:"#64748b",width:70,flexShrink:0}}>{ti===0?"$0 –":`$${(rule.tiers[ti-1].upTo||0).toLocaleString()} –`}</span>
+                                <input type="text" inputMode="numeric" value={tier.upTo!=null?tier.upTo:""} placeholder={ti===(rule.tiers||[]).length-1?"∞":"ceiling $"}
+                                  onChange={e=>{const r=[...(editData.commissionRules||[])];const t=[...(r[ri].tiers||[])];const v=e.target.value.replace(/[^0-9]/g,"");t[ti]={...t[ti],upTo:v===""?null:Number(v)};r[ri]={...r[ri],tiers:t};setEditData(p=>({...p,commissionRules:r}));}}
+                                  style={{...inputStyle,marginTop:0,fontSize:11,padding:"3px 6px",width:100,textAlign:"right"}} />
+                                <span style={{fontSize:11,color:"#64748b"}}>→</span>
+                                <input type="text" inputMode="numeric" value={tier.rate!=null?tier.rate:""} placeholder="%"
+                                  onChange={e=>{const r=[...(editData.commissionRules||[])];const t=[...(r[ri].tiers||[])];t[ti]={...t[ti],rate:e.target.value.replace(/[^0-9.]/g,"")};r[ri]={...r[ri],tiers:t};setEditData(p=>({...p,commissionRules:r}));}}
+                                  style={{...inputStyle,marginTop:0,fontSize:11,padding:"3px 5px",width:60,textAlign:"right"}} />
+                                <span style={{fontSize:11,color:"#64748b"}}>%</span>
+                                <button type="button"
+                                  onClick={()=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],tiers:(r[ri].tiers||[]).filter((_,i)=>i!==ti)};setEditData(p=>({...p,commissionRules:r}));}}
+                                  style={{fontSize:11,color:"#991b1b",background:"#fee2e2",border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer"}}>✕</button>
+                              </div>
+                            ))}
+                            <button type="button"
+                              onClick={()=>{const r=[...(editData.commissionRules||[])];const ex=r[ri].tiers||[];const upd=ex.map((t,i)=>i===ex.length-1&&t.upTo==null?{...t,upTo:0}:t);r[ri]={...r[ri],tiers:[...upd,{upTo:null,rate:""}]};setEditData(p=>({...p,commissionRules:r}));}}
+                              style={{fontSize:11,fontWeight:700,color:"#92400e",background:"#fef3c7",border:"1px solid #fde68a",borderRadius:5,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit",marginTop:2}}>+ Add Tier</button>
                           </div>
                         )}
-                        {cur.benefitDetails && (
-                          <p style={{fontSize:12,color:"#374151",lineHeight:1.7,margin:0}}>{cur.benefitDetails}</p>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* COMMISSIONS */}
-          {detailTab === "Commissions" && (
-            <div>
-              {isEditing ? (
-                <div>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                    <div style={labelStyle}>Commission Schedule</div>
-                    <button type="button" onClick={()=>setEditData(p=>({...p,commissionRules:[...(p.commissionRules||[]),{benefit:"Medical",segment:"All",fundingMethod:"All",type:"Flat %",amount:"",notes:""}]}))}
-                      style={{fontSize:11,fontWeight:700,color:"#166534",background:"#dcfce7",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add Rule</button>
+                      </React.Fragment>
+                    ))}
                   </div>
-                  {(editData.commissionRules||[]).length===0 && (
-                    <div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No rules — click "+ Add Rule" to begin.</div>
-                  )}
-                  {(editData.commissionRules||[]).map((rule,ri)=>(
-                    <React.Fragment key={ri}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 65px 75px 1fr auto",gap:5,marginBottom:6,alignItems:"center"}}>
-                        <select value={rule.benefit||"Medical"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],benefit:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
-                          {["Medical","Dental","Vision","Basic Life/AD&D","Vol Life","STD","LTD","IDI","Worksite","EAP","Telehealth","FSA","HSA","HRA","All"].map(b=><option key={b}>{b}</option>)}
-                        </select>
-                        <select value={rule.segment||"All"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],segment:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
-                          {["All","ACA","Mid-Market","Large"].map(s=><option key={s}>{s}</option>)}
-                        </select>
-                        <select value={rule.fundingMethod||"All"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],fundingMethod:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
-                          {["All","Fully Insured","Level-Funded","Self-Funded"].map(f=><option key={f}>{f}</option>)}
-                        </select>
-                        <select value={rule.type||"Flat %"} onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],type:e.target.value,amount:""};setEditData(p=>({...p,commissionRules:r}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 6px"}}>
-                          {["Flat %","PEPM","Graded"].map(t=><option key={t}>{t}</option>)}
-                        </select>
-                        <div style={{display:"flex",alignItems:"center"}}>
-                          {rule.type==="PEPM"&&<span style={{fontSize:11,color:"#64748b",marginRight:2}}>$</span>}
-                          <input type="text" inputMode="numeric" value={rule.amount||""} placeholder="0"
-                            onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],amount:e.target.value.replace(/[^0-9.]/g,"")};setEditData(p=>({...p,commissionRules:r}));}}
-                            style={{...inputStyle,marginTop:0,fontSize:12,padding:"4px 5px",textAlign:"right",fontWeight:700}} />
-                          {rule.type!=="PEPM"&&<span style={{fontSize:11,color:"#64748b",marginLeft:2}}>%</span>}
-                        </div>
-                        <input type="text" value={rule.notes||""} placeholder="Notes"
-                          onChange={e=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],notes:e.target.value};setEditData(p=>({...p,commissionRules:r}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 7px"}} />
-                        <button type="button" onClick={()=>setEditData(p=>({...p,commissionRules:p.commissionRules.filter((_,i)=>i!==ri)}))}
-                          style={{padding:"5px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
-                      </div>
-                      {rule.type==="Graded"&&(
-                        <div style={{marginLeft:12,marginBottom:8,padding:"8px 12px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7}}>
-                          <div style={{fontSize:11,fontWeight:700,color:"#92400e",marginBottom:6}}>Graded Tiers</div>
-                          {(rule.tiers||[]).map((tier,ti)=>(
-                            <div key={ti} style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
-                              <span style={{fontSize:11,color:"#64748b",width:70,flexShrink:0}}>{ti===0?"$0 –":`$${(rule.tiers[ti-1].upTo||0).toLocaleString()} –`}</span>
-                              <input type="text" inputMode="numeric" value={tier.upTo!=null?tier.upTo:""} placeholder={ti===(rule.tiers||[]).length-1?"∞":"ceiling $"}
-                                onChange={e=>{const r=[...(editData.commissionRules||[])];const t=[...(r[ri].tiers||[])];const v=e.target.value.replace(/[^0-9]/g,"");t[ti]={...t[ti],upTo:v===""?null:Number(v)};r[ri]={...r[ri],tiers:t};setEditData(p=>({...p,commissionRules:r}));}}
-                                style={{...inputStyle,marginTop:0,fontSize:11,padding:"3px 6px",width:100,textAlign:"right"}} />
-                              <span style={{fontSize:11,color:"#64748b"}}>→</span>
-                              <input type="text" inputMode="numeric" value={tier.rate!=null?tier.rate:""} placeholder="%"
-                                onChange={e=>{const r=[...(editData.commissionRules||[])];const t=[...(r[ri].tiers||[])];t[ti]={...t[ti],rate:e.target.value.replace(/[^0-9.]/g,"")};r[ri]={...r[ri],tiers:t};setEditData(p=>({...p,commissionRules:r}));}}
-                                style={{...inputStyle,marginTop:0,fontSize:11,padding:"3px 5px",width:60,textAlign:"right"}} />
-                              <span style={{fontSize:11,color:"#64748b"}}>%</span>
-                              <button type="button" onClick={()=>{const r=[...(editData.commissionRules||[])];r[ri]={...r[ri],tiers:(r[ri].tiers||[]).filter((_,i)=>i!==ti)};setEditData(p=>({...p,commissionRules:r}));}}
-                                style={{fontSize:11,color:"#991b1b",background:"#fee2e2",border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer"}}>✕</button>
-                            </div>
-                          ))}
-                          <button type="button" onClick={()=>{const r=[...(editData.commissionRules||[])];const ex=r[ri].tiers||[];const upd=ex.map((t,i)=>i===ex.length-1&&t.upTo==null?{...t,upTo:0}:t);r[ri]={...r[ri],tiers:[...upd,{upTo:null,rate:""}]};setEditData(p=>({...p,commissionRules:r}));}}
-                            style={{fontSize:11,fontWeight:700,color:"#92400e",background:"#fef3c7",border:"1px solid #fde68a",borderRadius:5,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit",marginTop:2}}>+ Add Tier</button>
-                        </div>
-                      )}
-                    </React.Fragment>
-                  ))}
-                </div>
-              ) : (
-                <div>
-                  {(cur.commissionRules||[]).length>0 ? (
-                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                      <thead>
-                        <tr style={{background:"#f8fafc"}}>
-                          {["Product","Segment","Funding","Commission"].map(h=>(
-                            <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,color:"#64748b",borderBottom:"2px solid #e2e8f0"}}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(cur.commissionRules||[]).map((r,i)=>(
-                          <tr key={i} style={{borderBottom:"1px solid #f1f5f9"}}>
-                            <td style={{padding:"7px 10px",fontWeight:600,color:"#0f172a"}}>{r.benefit}</td>
-                            <td style={{padding:"7px 10px",color:"#374151"}}>{r.segment}</td>
-                            <td style={{padding:"7px 10px",color:"#374151"}}>{r.fundingMethod}</td>
-                            <td style={{padding:"7px 10px",fontWeight:700,color:"#166534"}}>
-                              {r.type==="PEPM"?`$${r.amount} PEPM`:r.type==="Graded"?`Graded (up to ${r.amount}%)`:`${r.amount}%`}
-                              {r.notes&&<div style={{fontSize:10,color:"#94a3b8",fontWeight:400,marginTop:1}}>{r.notes}</div>}
-                            </td>
+                ) : (
+                  <div>
+                    {(cur.commissionRules||[]).length>0 ? (
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                        <thead>
+                          <tr style={{background:"#f8fafc"}}>
+                            {["Product","Segment","Funding","Commission"].map(h=>(
+                              <th key={h} style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,color:"#64748b",borderBottom:"2px solid #e2e8f0"}}>{h}</th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No commission schedule on file.</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* CONTACTS */}
-          {detailTab === "Contacts" && (
-            <div>
-              {isEditing ? (
-                <div>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                    <div style={labelStyle}>Contacts</div>
-                    <button type="button" onClick={()=>setEditData(p=>({...p,contacts:[...(p.contacts||[]),{role:"Sales Representative",name:"",email:"",phone:"",market:"Any",employerType:"Any",fundingType:"Any",notes:""}]}))}
-                      style={{fontSize:11,fontWeight:700,color:"#2d4a6b",background:"#dce8f0",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add Contact</button>
+                        </thead>
+                        <tbody>
+                          {(cur.commissionRules||[]).map((r,i)=>(
+                            <tr key={i} style={{borderBottom:"1px solid #f1f5f9"}}>
+                              <td style={{padding:"7px 10px",fontWeight:600,color:"#0f172a"}}>{r.benefit}</td>
+                              <td style={{padding:"7px 10px",color:"#374151"}}>{r.segment}</td>
+                              <td style={{padding:"7px 10px",color:"#374151"}}>{r.fundingMethod}</td>
+                              <td style={{padding:"7px 10px",fontWeight:700,color:"#166534"}}>
+                                {r.type==="PEPM"?`$${r.amount} PEPM`:r.type==="Graded"?`Graded (up to ${r.amount}%)`:`${r.amount}%`}
+                                {r.notes&&<div style={{fontSize:10,color:"#94a3b8",fontWeight:400,marginTop:1}}>{r.notes}</div>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No commission schedule on file.</div>
+                    )}
                   </div>
-                  {(editData.contacts||[]).length===0&&<div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No contacts yet.</div>}
-                  {(editData.contacts||[]).map((contact,ci)=>(
-                    <div key={ci} style={{background:"#f8fafc",borderRadius:8,border:"1px solid #e2e8f0",padding:"10px 12px",marginBottom:8}}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:6,marginBottom:6,alignItems:"center"}}>
-                        <select value={contact.role||"Sales Representative"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],role:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}}>
-                          {CARRIER_CONTACT_ROLES.map(r=><option key={r}>{r}</option>)}
-                        </select>
-                        <button type="button" disabled={ci===0} onClick={()=>{const c=[...(editData.contacts||[])];[c[ci-1],c[ci]]=[c[ci],c[ci-1]];setEditData(p=>({...p,contacts:c}));}}
-                          style={{padding:"4px 7px",borderRadius:6,fontSize:11,border:"1.5px solid #e2e8f0",background:ci===0?"#f8fafc":"#fff",color:ci===0?"#cbd5e1":"#475569",cursor:ci===0?"default":"pointer"}}>↑</button>
-                        <button type="button" disabled={ci===(editData.contacts||[]).length-1} onClick={()=>{const c=[...(editData.contacts||[])];[c[ci],c[ci+1]]=[c[ci+1],c[ci]];setEditData(p=>({...p,contacts:c}));}}
-                          style={{padding:"4px 7px",borderRadius:6,fontSize:11,border:"1.5px solid #e2e8f0",background:ci===(editData.contacts||[]).length-1?"#f8fafc":"#fff",color:ci===(editData.contacts||[]).length-1?"#cbd5e1":"#475569",cursor:ci===(editData.contacts||[]).length-1?"default":"pointer"}}>↓</button>
-                        <button type="button" onClick={()=>setEditData(p=>({...p,contacts:p.contacts.filter((_,i)=>i!==ci)}))}
-                          style={{padding:"4px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
-                      </div>
-                      <input value={contact.name||""} placeholder="Full Name"
-                        onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],name:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                        style={{...inputStyle,marginTop:0,marginBottom:6,fontSize:11,padding:"4px 8px",width:"100%",boxSizing:"border-box"}} />
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                        <input value={contact.email||""} placeholder="email@carrier.com" type="email"
-                          onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],email:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
-                        <input value={contact.phone||""} placeholder="(312) 555-0000"
-                          onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],phone:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
-                      </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:6}}>
-                        <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Market
-                          <select value={contact.market||"Any"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],market:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                            style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
-                            <option>Any</option>{CARRIER_SEGMENTS.map(s=><option key={s}>{s}</option>)}
-                          </select>
-                        </label>
-                        <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Employer
-                          <select value={contact.employerType||"Any"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],employerType:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                            style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
-                            {CARRIER_EMPLOYER_TYPES.map(t=><option key={t}>{t}</option>)}
-                          </select>
-                        </label>
-                        <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Funding
-                          <select value={contact.fundingType||"Any"} onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],fundingType:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                            style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
-                            <option>Any</option>{FUNDING_OPTIONS.map(f=><option key={f}>{f}</option>)}
-                          </select>
-                        </label>
-                      </div>
-                      <input value={contact.notes||""} placeholder="Notes..."
-                        onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],notes:e.target.value};setEditData(p=>({...p,contacts:c}));}}
-                        style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px",width:"100%",boxSizing:"border-box"}} />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div>
-                  {(cur.contacts||[]).length===0&&<div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No contacts on file.</div>}
-                  {(cur.contacts||[]).map((ct,i)=>(
-                    <div key={i} style={{padding:"12px 14px",borderRadius:10,background:"#f8fafc",border:"1px solid #e2e8f0",marginBottom:8}}>
-                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-                        <div style={{minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>{ct.name||"—"}</div>
-                          <div style={{fontSize:11,color:"#4a7fa5",fontWeight:600,marginTop:1}}>{ct.role}</div>
-                          {ct.email&&<div style={{fontSize:11,color:"#475569",marginTop:5}}>✉ {ct.email}</div>}
-                          {ct.phone&&<div style={{fontSize:11,color:"#475569",marginTop:2}}>📞 {ct.phone}</div>}
-                          {ct.notes&&<div style={{fontSize:11,color:"#64748b",marginTop:5,fontStyle:"italic",lineHeight:1.5}}>{ct.notes}</div>}
-                        </div>
-                        <div style={{flexShrink:0,display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
-                          {ct.market&&ct.market!=="Any"&&<Chip label={ct.market} scheme={SEG[ct.market]||{bg:"#f1f5f9",color:"#475569"}} />}
-                          {ct.fundingType&&ct.fundingType!=="Any"&&<Chip label={ct.fundingType} scheme={FUND[ct.fundingType]||{bg:"#f1f5f9",color:"#475569"}} />}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
 
-          {/* FORMS */}
-          {detailTab === "Forms" && (
-            <div>
-              {isEditing ? (
+            {sidebarSection === "Contacts" && (
+              <div>
+                {isEditing ? (
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                      <div style={labelStyle}>Contacts</div>
+                      <button type="button"
+                        onClick={()=>setEditData(p=>({...p,contacts:[...(p.contacts||[]),{role:"Sales Representative",name:"",email:"",phone:"",market:"Any",employerType:"Any",fundingType:"Any",notes:""}]}))}
+                        style={{fontSize:11,fontWeight:700,color:"#2d4a6b",background:"#dce8f0",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>+ Add Contact</button>
+                    </div>
+                    {(editData.contacts||[]).length===0&&<div style={{textAlign:"center",padding:"24px 0",fontSize:12,color:"#94a3b8"}}>No contacts yet.</div>}
+                    {(editData.contacts||[]).map((contact,ci)=>(
+                      <div key={ci} style={{background:"#f8fafc",borderRadius:8,border:"1px solid #e2e8f0",padding:"10px 12px",marginBottom:8}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:6,marginBottom:6,alignItems:"center"}}>
+                          <select value={contact.role||"Sales Representative"}
+                            onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],role:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}}>
+                            {CARRIER_CONTACT_ROLES.map(r=><option key={r}>{r}</option>)}
+                          </select>
+                          <button type="button" disabled={ci===0}
+                            onClick={()=>{const c=[...(editData.contacts||[])];[c[ci-1],c[ci]]=[c[ci],c[ci-1]];setEditData(p=>({...p,contacts:c}));}}
+                            style={{padding:"4px 7px",borderRadius:6,fontSize:11,border:"1.5px solid #e2e8f0",background:ci===0?"#f8fafc":"#fff",color:ci===0?"#cbd5e1":"#475569",cursor:ci===0?"default":"pointer"}}>↑</button>
+                          <button type="button" disabled={ci===(editData.contacts||[]).length-1}
+                            onClick={()=>{const c=[...(editData.contacts||[])];[c[ci],c[ci+1]]=[c[ci+1],c[ci]];setEditData(p=>({...p,contacts:c}));}}
+                            style={{padding:"4px 7px",borderRadius:6,fontSize:11,border:"1.5px solid #e2e8f0",background:ci===(editData.contacts||[]).length-1?"#f8fafc":"#fff",color:ci===(editData.contacts||[]).length-1?"#cbd5e1":"#475569",cursor:ci===(editData.contacts||[]).length-1?"default":"pointer"}}>↓</button>
+                          <button type="button"
+                            onClick={()=>setEditData(p=>({...p,contacts:p.contacts.filter((_,i)=>i!==ci)}))}
+                            style={{padding:"4px 8px",borderRadius:6,fontSize:11,border:"1.5px solid #fca5a5",background:"#fee2e2",color:"#991b1b",cursor:"pointer"}}>✕</button>
+                        </div>
+                        <input value={contact.name||""} placeholder="Full Name"
+                          onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],name:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                          style={{...inputStyle,marginTop:0,marginBottom:6,fontSize:11,padding:"4px 8px",width:"100%",boxSizing:"border-box"}} />
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+                          <input value={contact.email||""} placeholder="email@carrier.com" type="email"
+                            onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],email:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
+                          <input value={contact.phone||""} placeholder="(312) 555-0000"
+                            onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],phone:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                            style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px"}} />
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:6}}>
+                          <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Market
+                            <select value={contact.market||"Any"}
+                              onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],market:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                              style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
+                              <option>Any</option>{CARRIER_SEGMENTS.map(s=><option key={s}>{s}</option>)}
+                            </select>
+                          </label>
+                          <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Employer
+                            <select value={contact.employerType||"Any"}
+                              onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],employerType:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                              style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
+                              {CARRIER_EMPLOYER_TYPES.map(t=><option key={t}>{t}</option>)}
+                            </select>
+                          </label>
+                          <label style={{fontSize:10,fontWeight:700,color:"#94a3b8"}}>Funding
+                            <select value={contact.fundingType||"Any"}
+                              onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],fundingType:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                              style={{...inputStyle,marginTop:2,fontSize:11,padding:"3px 6px"}}>
+                              <option>Any</option>{FUNDING_OPTIONS.map(f=><option key={f}>{f}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                        <input value={contact.notes||""} placeholder="Notes..."
+                          onChange={e=>{const c=[...(editData.contacts||[])];c[ci]={...c[ci],notes:e.target.value};setEditData(p=>({...p,contacts:c}));}}
+                          style={{...inputStyle,marginTop:0,fontSize:11,padding:"4px 8px",width:"100%",boxSizing:"border-box"}} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div>
+                    {(cur.contacts||[]).length===0&&<div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No contacts on file.</div>}
+                    {(cur.contacts||[]).map((ct,i)=>(
+                      <div key={i} style={{padding:"12px 14px",borderRadius:10,background:"#f8fafc",border:"1px solid #e2e8f0",marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>{ct.name||"—"}</div>
+                            <div style={{fontSize:11,color:"#4a7fa5",fontWeight:600,marginTop:1}}>{ct.role}</div>
+                            {ct.email&&<div style={{fontSize:11,color:"#475569",marginTop:5}}>✉ {ct.email}</div>}
+                            {ct.phone&&<div style={{fontSize:11,color:"#475569",marginTop:2}}>📞 {ct.phone}</div>}
+                            {ct.notes&&<div style={{fontSize:11,color:"#64748b",marginTop:5,fontStyle:"italic",lineHeight:1.5}}>{ct.notes}</div>}
+                          </div>
+                          <div style={{flexShrink:0,display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
+                            {ct.market&&ct.market!=="Any"&&<Chip label={ct.market} scheme={SEG[ct.market]||{bg:"#f1f5f9",color:"#475569"}} />}
+                            {ct.fundingType&&ct.fundingType!=="Any"&&<Chip label={ct.fundingType} scheme={FUND[ct.fundingType]||{bg:"#f1f5f9",color:"#475569"}} />}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {sidebarSection === "Forms" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+
+                {/* ── Left: structured form records ── */}
                 <div>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-                    <div style={labelStyle}>Required Forms</div>
-                    <button type="button" onClick={() => setEditData(p => ({
-                      ...p, forms: [...(p.forms||[]), { name:"", purpose:"", submitTo:"", deadline:"", notes:"" }]
-                    }))} style={{ fontSize:11, fontWeight:700, color:"#2d4a6b", background:"#dce8f0",
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div style={labelStyle}>Required forms</div>
+                    {/* Always visible — auto-enters edit mode if needed */}
+                    <button type="button" onClick={() => {
+                      if (!isEditing) startEdit(cur);
+                      setEditData(p => ({
+                        ...p,
+                        forms: [...(p ? p.forms || [] : cur.forms || []),
+                          { name:"", purpose:"", submitTo:"", deadline:"", notes:"", _fromFile: false }]
+                      }));
+                    }} style={{ fontSize:11, fontWeight:700, color:"#2d4a6b", background:"#dce8f0",
                       border:"none", borderRadius:6, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit" }}>
                       + Add Form
                     </button>
                   </div>
-                  {(editData.forms||[]).length === 0 && (
-                    <div style={{ textAlign:"center", padding:"24px 0", fontSize:12, color:"#94a3b8" }}>
-                      No forms yet. Click "+ Add Form" to add one.
-                    </div>
-                  )}
-                  {(editData.forms||[]).map((form, fi) => (
-                    <div key={fi} style={{ background:"#f8fafc", borderRadius:8, border:"1px solid #e2e8f0",
-                      padding:"10px 12px", marginBottom:8 }}>
-                      <div style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
-                        <input value={form.name||""} placeholder="Form name (e.g. New Group Application)"
-                          onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],name:e.target.value}; setEditData(p=>({...p,forms:f})); }}
-                          style={{ ...inputStyle, marginTop:0, flex:1, fontSize:12, fontWeight:700, padding:"5px 8px" }} />
-                        <button type="button" onClick={() => setEditData(p=>({...p,forms:p.forms.filter((_,i)=>i!==fi)}))}
-                          style={{ padding:"5px 8px", borderRadius:6, fontSize:11, border:"1.5px solid #fca5a5",
-                            background:"#fee2e2", color:"#991b1b", cursor:"pointer" }}>✕</button>
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6 }}>
-                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Purpose
-                          <input value={form.purpose||""} placeholder="e.g. Plan Change Request"
-                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],purpose:e.target.value}; setEditData(p=>({...p,forms:f})); }}
-                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
-                        </label>
-                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Where to submit
-                          <input value={form.submitTo||""} placeholder="Portal URL, email, or fax"
-                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],submitTo:e.target.value}; setEditData(p=>({...p,forms:f})); }}
-                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
-                        </label>
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Deadline
-                          <input value={form.deadline||""} placeholder="e.g. 30 days before eff. date"
-                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],deadline:e.target.value}; setEditData(p=>({...p,forms:f})); }}
-                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
-                        </label>
-                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Notes
-                          <input value={form.notes||""} placeholder="Additional notes..."
-                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],notes:e.target.value}; setEditData(p=>({...p,forms:f})); }}
-                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div>
-                  {(cur.forms||[]).length === 0 ? (
-                    <div style={{ textAlign:"center", padding:"32px 0", color:"#94a3b8", fontSize:12 }}>
-                      No forms on file for this carrier.
-                    </div>
-                  ) : (
-                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                      {(cur.forms||[]).map((form, fi) => (
-                        <div key={fi} style={{ background:"#f8fafc", borderRadius:9, border:"1px solid #e2e8f0", padding:"10px 14px" }}>
-                          <div style={{ fontWeight:800, fontSize:13, color:"#0f172a", marginBottom:4 }}>{form.name||"Unnamed form"}</div>
-                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                            {form.purpose   && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Purpose </span><span style={{ fontSize:12, color:"#374151" }}>{form.purpose}</span></div>}
-                            {form.submitTo  && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Submit to </span><span style={{ fontSize:12, color:"#374151" }}>{form.submitTo}</span></div>}
-                            {form.deadline  && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Deadline </span><span style={{ fontSize:12, color:"#374151" }}>{form.deadline}</span></div>}
-                            {form.notes     && <div style={{ gridColumn:"1/-1" }}><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Notes </span><span style={{ fontSize:12, color:"#64748b", fontStyle:"italic" }}>{form.notes}</span></div>}
+
+                  {/* Drop zone on the left — populates form record AND uploads file */}
+                  <div
+                    onDragOver={e => { e.preventDefault(); e.currentTarget.style.outline = "2px dashed #4a7fa5"; e.currentTarget.style.background = "#f0f6fb"; }}
+                    onDragLeave={e => { e.currentTarget.style.outline = "none"; e.currentTarget.style.background = "transparent"; }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      e.currentTarget.style.outline = "none";
+                      e.currentTarget.style.background = "transparent";
+                      const files = Array.from(e.dataTransfer.files);
+                      if (!files.length) return;
+                      if (!isEditing) startEdit(cur);
+                      // For each dropped file, add a pre-filled form record + upload the file
+                      const newForms = files.map(file => {
+                        const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").replace(/\w/g, c => c.toUpperCase());
+                        const ext = file.name.split(".").pop().toLowerCase();
+                        const purpose = ext === "pdf" || ext === "docx" || ext === "doc"
+                          ? "Form / Application" : ext === "xlsx" || ext === "xls" || ext === "csv"
+                          ? "Census / Data" : "Document";
+                        return { name: baseName, purpose, submitTo:"", deadline:"", notes: file.name, _fromFile: true };
+                      });
+                      setEditData(p => ({ ...p, forms: [...(p ? p.forms||[] : cur.forms||[]), ...newForms] }));
+                      // Also upload to storage
+                      handleUpload(carrier.id, e.dataTransfer.files);
+                    }}
+                    style={{ borderRadius: 8, padding: "4px 0 8px", transition: "background .15s, outline .15s", minHeight: 4 }}
+                  />
+
+                  {/* Form records list */}
+                  {isEditing ? (
+                    <>
+                      {(editData.forms||[]).length === 0 && (
+                        <div style={{ textAlign:"center", padding:"24px 0", fontSize:12, color:"#94a3b8",
+                          border: "2px dashed #e2e8f0", borderRadius: 8 }}>
+                          No forms yet — click "+ Add Form" or drop a file here
+                        </div>
+                      )}
+                      {(editData.forms||[]).map((form, fi) => (
+                        <div key={fi} style={{ background: form._fromFile ? "#f0f6fb" : "#f8fafc",
+                          borderRadius:8, border: `1px solid ${form._fromFile ? "#bfdbfe" : "#e2e8f0"}`,
+                          padding:"10px 12px", marginBottom:8 }}>
+                          {form._fromFile && (
+                            <div style={{ fontSize:10, fontWeight:700, color:"#2563eb",
+                              marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
+                              📎 Pre-filled from file — review and adjust as needed
+                            </div>
+                          )}
+                          <div style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
+                            <input value={form.name||""} placeholder="Form name (e.g. New Group Application)"
+                              onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],name:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                              style={{ ...inputStyle, marginTop:0, flex:1, fontSize:12, fontWeight:700, padding:"5px 8px" }} />
+                            <button type="button" onClick={() => setEditData(p=>({...p,forms:p.forms.filter((_,i)=>i!==fi)}))}
+                              style={{ padding:"5px 8px", borderRadius:6, fontSize:11, border:"1.5px solid #fca5a5", background:"#fee2e2", color:"#991b1b", cursor:"pointer" }}>✕</button>
+                          </div>
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6 }}>
+                            <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Purpose
+                              <input value={form.purpose||""} placeholder="e.g. Plan Change Request"
+                                onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],purpose:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                                style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                            </label>
+                            <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Where to submit
+                              <input value={form.submitTo||""} placeholder="Portal URL, email, or fax"
+                                onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],submitTo:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                                style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                            </label>
+                          </div>
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                            <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Deadline
+                              <input value={form.deadline||""} placeholder="e.g. 30 days before eff. date"
+                                onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],deadline:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                                style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                            </label>
+                            <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Notes
+                              <input value={form.notes||""} placeholder="Additional notes..."
+                                onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],notes:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                                style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                            </label>
                           </div>
                         </div>
                       ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* NOTES / SOURCES */}
-          {detailTab === "Notes / Sources" && (
-            <div>
-              {isEditing ? (
-                <div>
-                  <label style={labelStyle}>
-                    Notes / Underwriting Caveats
-                    <textarea value={editData.notes||""} onChange={e=>setEditData(p=>({...p,notes:e.target.value}))}
-                      placeholder="Special conditions, eligibility rules, caveats..."
-                      rows={7} style={{...inputStyle,marginTop:6,resize:"vertical",fontFamily:"inherit"}} />
-                  </label>
-                  <label style={{...labelStyle,marginTop:14}}>
-                    Effective Guideline Date
-                    <DateInput  value={editData.effectiveDate||""} onChange={e=>setEditData(p=>({...p,effectiveDate:e.target.value}))}
-                      style={{...inputStyle,marginTop:4}} />
-                  </label>
-                  <label style={{...labelStyle,marginTop:14}}>
-                    Source
-                    <input value={editData.source||""} placeholder="e.g. Sales Gateway Q3 2025"
-                      onChange={e=>setEditData(p=>({...p,source:e.target.value}))}
-                      style={{...inputStyle,marginTop:4}} />
-                  </label>
-                </div>
-              ) : (
-                <div>
-                  {cur.notes ? (
-                    <div style={{fontSize:12,color:"#374151",lineHeight:1.8,whiteSpace:"pre-wrap",
-                      background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:8,padding:"12px 14px"}}>
-                      {cur.notes}
-                    </div>
+                    </>
                   ) : (
-                    <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No notes on file.</div>
+                    <>
+                      {(cur.forms||[]).length === 0 ? (
+                        <div style={{ textAlign:"center", padding:"32px 0", color:"#94a3b8", fontSize:12,
+                          border: "2px dashed #e2e8f0", borderRadius: 8 }}>
+                          No forms on file — click "+ Add Form" to begin
+                        </div>
+                      ) : (
+                        (cur.forms||[]).map((form, fi) => (
+                          <div key={fi} style={{ background:"#f8fafc", borderRadius:9, border:"1px solid #e2e8f0", padding:"10px 14px", marginBottom:8 }}>
+                            <div style={{ fontWeight:800, fontSize:13, color:"#0f172a", marginBottom:4 }}>{form.name||"Unnamed form"}</div>
+                            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                              {form.purpose   && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Purpose </span><span style={{ fontSize:12, color:"#374151" }}>{form.purpose}</span></div>}
+                              {form.submitTo  && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Submit to </span><span style={{ fontSize:12, color:"#374151" }}>{form.submitTo}</span></div>}
+                              {form.deadline  && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Deadline </span><span style={{ fontSize:12, color:"#374151" }}>{form.deadline}</span></div>}
+                              {form.notes     && <div style={{ gridColumn:"1/-1" }}><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Notes </span><span style={{ fontSize:12, color:"#64748b", fontStyle:"italic" }}>{form.notes}</span></div>}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </>
                   )}
-                  {(cur.effectiveDate||cur.source)&&(
-                    <div style={{marginTop:14,display:"flex",gap:16,flexWrap:"wrap"}}>
-                      {cur.effectiveDate&&<div style={{fontSize:11,color:"#64748b"}}><span style={{fontWeight:700}}>Effective: </span>{cur.effectiveDate}</div>}
-                      {cur.source&&<div style={{fontSize:11,color:"#64748b"}}><span style={{fontWeight:700}}>Source: </span>{cur.source}</div>}
+                </div>
+
+                {/* ── Right: uploaded documents ── */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div style={labelStyle}>Uploaded documents</div>
+                    <button type="button" onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingFor === carrier.id}
+                      style={{ fontSize:11, fontWeight:700, color:"#166534", background:"#dcfce7",
+                        border:"none", borderRadius:6, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit",
+                        opacity: uploadingFor === carrier.id ? 0.6 : 1 }}>
+                      {uploadingFor === carrier.id ? "Uploading…" : "↑ Upload"}
+                    </button>
+                    <input ref={fileInputRef} type="file" multiple
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                      style={{ display: "none" }}
+                      onChange={e => { handleUpload(carrier.id, e.target.files); e.target.value = ""; }} />
+                  </div>
+                  {docs.length === 0 && !docsSpinner && (
+                    <div
+                      onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#4a7fa5"; }}
+                      onDragLeave={e => { e.currentTarget.style.borderColor = "#cbd5e1"; }}
+                      onDrop={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#cbd5e1"; handleUpload(carrier.id, e.dataTransfer.files); }}
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{ border: "2px dashed #cbd5e1", borderRadius: 10, padding: "28px 16px",
+                        textAlign: "center", cursor: "pointer", transition: "border-color .15s" }}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>📎</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#64748b", marginBottom: 4 }}>Drop files here or click to upload</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8" }}>PDF, DOCX, XLSX — any carrier form or guide</div>
+                    </div>
+                  )}
+                  {docsSpinner && (
+                    <div style={{ textAlign: "center", padding: "24px 0", fontSize: 12, color: "#94a3b8" }}>Loading documents…</div>
+                  )}
+                  {docs.length > 0 && (
+                    <div
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => { e.preventDefault(); handleUpload(carrier.id, e.dataTransfer.files); }}
+                      style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                      {docs.map((doc, di) => {
+                        const ext = (doc.name || "").split('.').pop().toLowerCase();
+                        const icon = ext === "pdf" ? "🔴" : ext === "xlsx" || ext === "xls" ? "🟢" : ext === "docx" || ext === "doc" ? "🔵" : "📄";
+                        const sizeStr = doc.size > 1024*1024 ? `${(doc.size/1024/1024).toFixed(1)} MB`
+                          : doc.size > 0 ? `${Math.round(doc.size/1024)} KB` : "";
+                        const uploadedStr = doc.uploadedAt
+                          ? new Date(doc.uploadedAt).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
+                        return (
+                          <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                            padding: "9px 12px",
+                            borderBottom: di < docs.length - 1 ? "1px solid #f1f5f9" : "none",
+                            background: "#fff" }}>
+                            <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a",
+                                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.name}</div>
+                              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>
+                                {[uploadedStr, sizeStr].filter(Boolean).join(" · ")}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                              {doc.url && (
+                                <a href={doc.url} target="_blank" rel="noopener noreferrer"
+                                  style={{ padding: "4px 9px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                                    border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569",
+                                    textDecoration: "none", cursor: "pointer" }}>↓</a>
+                              )}
+                              <button type="button" onClick={() => handleDeleteDoc(carrier.id, doc)}
+                                style={{ padding: "4px 9px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                                  border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+                                  cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
 
-        {/* ── Panel footer ── */}
-        <div style={{
-          flexShrink: 0, padding: "12px 20px",
-          borderTop: "1px solid #e2e8f0", background: "#f8fafc",
-          display: "flex", gap: 8, alignItems: "center",
-        }}>
-          {isEditing ? (
-            <>
-              <button type="button" onClick={saveEdit} style={{
-                flex: 1, background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
-                border: "none", borderRadius: 8, padding: "9px 0",
-                fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-              }}>Save Carrier</button>
-              <button type="button" onClick={cancelEdit} style={{
-                background: "#f1f5f9", border: "none", borderRadius: 8, padding: "9px 16px",
-                fontSize: 13, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit",
-              }}>Cancel</button>
-            </>
-          ) : (
-            <>
-              {canEdit && (
-                <button type="button" onClick={() => startEdit(cur)} style={{
-                  flex: 1, background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
-                  border: "none", borderRadius: 8, padding: "9px 0",
-                  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                }}>Edit Carrier</button>
-              )}
-              <button type="button" onClick={() => togglePin(cur.id)} style={{
-                padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                border: `1.5px solid ${cur.pinned ? "#fcd34d" : "#e2e8f0"}`,
-                background: cur.pinned ? "#fef9c3" : "#fff",
-                color: cur.pinned ? "#92400e" : "#475569",
-                cursor: "pointer", fontFamily: "inherit",
-              }}>📌 {cur.pinned ? "Pinned" : "Pin"}</button>
-              {canDelete && (
-                <button type="button" onClick={() => deleteCarrier(cur.id)} style={{
-                  padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                  border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                  cursor: "pointer", fontFamily: "inherit",
-                }}>Delete</button>
-              )}
-            </>
-          )}
+            {sidebarSection === "Portals" && (
+              <div style={{ maxWidth: 560 }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 18, lineHeight: 1.6 }}>
+                  Store frequently-used URLs for this carrier. Links open in a new tab.
+                </div>
+                <LinkField label="Carrier website"
+                  value={isEditing ? editData.website : cur.website}
+                  onChange={v => setEditData(p => ({ ...p, website: v }))} />
+                <LinkField label="Broker / producer portal"
+                  value={isEditing ? editData.brokerPortalUrl : cur.brokerPortalUrl}
+                  onChange={v => setEditData(p => ({ ...p, brokerPortalUrl: v }))} />
+                <LinkField label="Census / RFP submission"
+                  value={isEditing ? editData.censusSubmissionUrl : cur.censusSubmissionUrl}
+                  onChange={v => setEditData(p => ({ ...p, censusSubmissionUrl: v }))} />
+                <LinkField label="Group enrollment portal"
+                  value={isEditing ? editData.groupEnrollmentPortalUrl : cur.groupEnrollmentPortalUrl}
+                  onChange={v => setEditData(p => ({ ...p, groupEnrollmentPortalUrl: v }))} />
+              </div>
+            )}
+
+            {sidebarSection === "Notes / Sources" && (
+              <div>
+                {isEditing ? (
+                  <div>
+                    <label style={labelStyle}>
+                      Notes / Underwriting Caveats
+                      <textarea value={editData.notes||""} onChange={e=>setEditData(p=>({...p,notes:e.target.value}))}
+                        placeholder="Special conditions, eligibility rules, caveats..."
+                        rows={7} style={{...inputStyle,marginTop:6,resize:"vertical",fontFamily:"inherit"}} />
+                    </label>
+                    <label style={{...labelStyle,marginTop:14}}>
+                      Effective Guideline Date
+                      <DateInput value={editData.effectiveDate||""} onChange={v=>setEditData(p=>({...p,effectiveDate:v}))}
+                        style={{...inputStyle,marginTop:4}} />
+                    </label>
+                    <label style={{...labelStyle,marginTop:14}}>
+                      Source
+                      <input value={editData.source||""} placeholder="e.g. Sales Gateway Q3 2025"
+                        onChange={e=>setEditData(p=>({...p,source:e.target.value}))}
+                        style={{...inputStyle,marginTop:4}} />
+                    </label>
+                  </div>
+                ) : (
+                  <div>
+                    {cur.notes ? (
+                      <div style={{fontSize:12,color:"#374151",lineHeight:1.8,whiteSpace:"pre-wrap",
+                        background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:8,padding:"12px 14px"}}>
+                        {cur.notes}
+                      </div>
+                    ) : (
+                      <div style={{textAlign:"center",padding:"32px 0",color:"#94a3b8",fontSize:12}}>No notes on file.</div>
+                    )}
+                    {(cur.effectiveDate||cur.source)&&(
+                      <div style={{marginTop:14,display:"flex",gap:16,flexWrap:"wrap"}}>
+                        {cur.effectiveDate&&<div style={{fontSize:11,color:"#64748b"}}><span style={{fontWeight:700}}>Effective: </span>{cur.effectiveDate}</div>}
+                        {cur.source&&<div style={{fontSize:11,color:"#64748b"}}><span style={{fontWeight:700}}>Source: </span>{cur.source}</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
         </div>
       </div>
     );
@@ -16026,6 +16297,23 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
     const elig = eligText(carrier);
     const part = partText(carrier);
     const maxP = maxPlansText(carrier);
+    const [docsOpen, setDocsOpen] = React.useState(false);
+
+    function handleDocsToggle(e) {
+      e.stopPropagation();
+      if (!docsOpen && docsMap[carrier.id] === undefined) {
+        setDocsLoading(p => ({ ...p, [carrier.id]: true }));
+        fetchCarrierDocuments(carrier.id).then(docs => {
+          setDocsMap(p => ({ ...p, [carrier.id]: docs || [] }));
+          setDocsLoading(p => ({ ...p, [carrier.id]: false }));
+        });
+      }
+      setDocsOpen(v => !v);
+    }
+
+    const cardDocs = docsMap[carrier.id] || [];
+    const hasKnownDocs = docsMap[carrier.id] !== undefined && cardDocs.length > 0;
+    const unknownDocs  = docsMap[carrier.id] === undefined;
 
     return (
       <div onClick={() => openDetail(carrier)} style={{
@@ -16036,7 +16324,6 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
         cursor: "pointer",
         transition: "border-color .15s, background .15s",
       }}>
-        {/* Header row */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
           <CarrierAvatar name={carrier.name} size={36} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -16045,13 +16332,12 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
               {carrier.pinned && <span style={{ fontSize: 11 }}>📌</span>}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {(carrier.products || []).map(p  => <Chip key={p} label={p} />)}
-              {carrier.type                    && <Chip label={carrier.type} />}
-              {(carrier.segments || []).map(s  => <Chip key={s} label={s} scheme={SEG[s]} />)}
-              {(carrier.funding  || []).map(f  => <Chip key={f} label={f} scheme={FUND[f]} />)}
+              {(carrier.products||[]).map(p  => <Chip key={p} label={p} />)}
+              {carrier.type                  && <Chip label={carrier.type} />}
+              {(carrier.segments||[]).map(s  => <Chip key={s} label={s} scheme={SEG[s]} />)}
+              {(carrier.funding||[]).map(f   => <Chip key={f} label={f} scheme={FUND[f]} />)}
             </div>
           </div>
-          {/* Actions — stop propagation so clicks don't open the detail panel */}
           <div style={{ display: "flex", gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <button type="button" onClick={() => openDetail(carrier)} style={{
               padding: "5px 13px", borderRadius: 7, fontSize: 11, fontWeight: 700,
@@ -16068,23 +16354,20 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                 cursor: "pointer",
               }}>📌</button>
             {canDelete && (
-              <button type="button" onClick={() => { if (!window.confirm(`Delete ${carrier.name}?`)) return; deleteCarrier(carrier.id); }}
-                style={{
-                  padding: "5px 9px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+              <button type="button"
+                onClick={() => { if (!window.confirm(`Delete ${carrier.name}?`)) return; deleteCarrier(carrier.id); }}
+                style={{ padding: "5px 9px", borderRadius: 7, fontSize: 11, fontWeight: 700,
                   border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                  cursor: "pointer", fontFamily: "inherit",
-                }}>✕</button>
+                  cursor: "pointer", fontFamily: "inherit" }}>✕</button>
             )}
           </div>
         </div>
 
-        {/* Stats row */}
         {[elig, part, maxP, comm].some(Boolean) && (
           <div style={{
             display: "grid",
             gridTemplateColumns: `repeat(${[elig, part, maxP, comm].filter(Boolean).length}, 1fr)`,
-            gap: 16, marginTop: 10,
-            paddingTop: 10, borderTop: "1px solid #f1f5f9",
+            gap: 16, marginTop: 10, paddingTop: 10, borderTop: "1px solid #f1f5f9",
           }}>
             {elig && <StatTile icon="👥" label="Eligible Range"  value={elig} />}
             {part && <StatTile icon="📊" label="Participation"   value={part} />}
@@ -16093,7 +16376,49 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
           </div>
         )}
 
-        {/* Footnote */}
+        {/* Forms badge — only shown after docs are loaded and there are some */}
+        {hasKnownDocs && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #f1f5f9" }}
+               onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={handleDocsToggle} style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              padding: "3px 10px", borderRadius: 99, fontSize: 11, fontWeight: 700,
+              background: docsOpen ? "#dce8f0" : "#f0fdf4",
+              border: `1.5px solid ${docsOpen ? "#4a7fa5" : "#86efac"}`,
+              color: docsOpen ? "#2d4a6b" : "#166534",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+              📎 {cardDocs.length} form{cardDocs.length !== 1 ? "s" : ""} available
+              <span style={{ fontSize: 10 }}>{docsOpen ? "▲" : "▼"}</span>
+            </button>
+            {docsOpen && (
+              <div style={{ marginTop: 8, background: "#f8fafc", borderRadius: 8,
+                border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                {cardDocs.map((doc, di) => {
+                  const ext = (doc.name || "").split('.').pop().toLowerCase();
+                  const icon = ext === "pdf" ? "🔴" : ext === "xlsx" || ext === "xls" ? "🟢" : ext === "docx" || ext === "doc" ? "🔵" : "📄";
+                  return (
+                    <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8,
+                      padding: "7px 10px",
+                      borderBottom: di < cardDocs.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+                      <span style={{ fontSize: 14, flexShrink: 0 }}>{icon}</span>
+                      <span style={{ flex: 1, fontSize: 11, color: "#334155",
+                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.name}</span>
+                      {doc.url && (
+                        <a href={doc.url} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700,
+                            border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569",
+                            textDecoration: "none" }}>↓ Download</a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {(carrier.effectiveDate || carrier.source) && (
           <div style={{ marginTop: 8, fontSize: 10.5, color: "#94a3b8", display: "flex", gap: 14 }}>
             {carrier.effectiveDate && <span>Last updated: {carrier.effectiveDate}</span>}
@@ -16105,166 +16430,179 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
   }
 
   // ── MAIN RENDER ───────────────────────────────────────────────────────────
+  const selectedCarrier = selectedId
+    ? (editingId === selectedId && editData ? editData : carriers.find(c => c.id === selectedId))
+    : null;
+
+  if (selectedCarrier) {
+    return (
+      <div style={{
+        margin: "-22px -28px -32px",
+        minHeight: "calc(100vh - 54px)",
+        display: "flex", flexDirection: "column",
+        background: "#fff",
+      }}>
+        <DetailView carrier={selectedCarrier} />
+      </div>
+    );
+  }
+
   return (
     <div style={{
-      display: "flex", alignItems: "stretch",
-      // Bleed out of the parent's 22px top / 28px side / 32px bottom padding
-      // so the detail panel can fill the full viewport height
       margin: "-22px -28px -32px",
       minHeight: "calc(100vh - 54px)",
-      overflow: "hidden",
+      display: "flex",
     }}>
-
-      {/* ── Left: list column ── */}
-      <div style={{ flex: 1, minWidth: 0, paddingRight: selectedCarrier ? 16 : 0,
-        overflowY: "auto", padding: "22px 28px 32px",
-        paddingRight: selectedCarrier ? 16 : 28 }}>
-
-        {/* Sticky header */}
-        <div style={{
-          position: "sticky", top: 0, zIndex: 40,
-          background: "#f4f7f9",
-          paddingTop: 28, paddingBottom: 14, marginBottom: 16,
-          borderBottom: "1px solid #e2e8f0",
-          boxShadow: "0 2px 8px rgba(0,0,0,.04)",
-        }}>
-          {/* Title + actions */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <div>
-              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800, fontSize: 20, color: "#0f172a" }}>
-                Carrier Products
-              </div>
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                Configure available products and eligibility rules per carrier
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {canEdit && (
-                <button type="button" onClick={startNew} style={{
-                  background: "linear-gradient(135deg,#2d4a6b,#4a7fa5)", color: "#fff",
-                  border: "none", borderRadius: 9, padding: "9px 20px",
-                  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}>
-                  <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Add Carrier
-                </button>
-              )}
-              <button onClick={onBack} style={{ ...btnOutline, fontSize: 12 }}>← Back</button>
-            </div>
+      {/* ── Category sidebar — matches main app nav ── */}
+      <div style={{
+        width: 210, flexShrink: 0, background: "#2b3a4a",
+        borderRight: "1px solid #3a4f62",
+        display: "flex", flexDirection: "column",
+      }}>
+        <div style={{ padding: "20px 16px 12px" }}>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontWeight: 800,
+            fontSize: 16, color: "#fff", lineHeight: 1.2, marginBottom: 4 }}>
+            Carrier Products
           </div>
+          <div style={{ fontSize: 10, color: "#a8bfcc", lineHeight: 1.4 }}>
+            Products &amp; eligibility by carrier
+          </div>
+        </div>
+        <nav style={{ flex: 1, padding: "4px 8px" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#a8bfcc",
+            textTransform: "uppercase", letterSpacing: "0.9px",
+            padding: "6px 11px 4px" }}>Category</div>
+          {CARRIER_CATEGORIES.map(cat => {
+            const active = activeCategory === cat;
+            const count  = carriers.filter(c => c.category === cat).length;
+            return (
+              <button key={cat} type="button" className="bob-nav-item"
+                onClick={() => setActiveCategory(cat)} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 9,
+                  padding: "8px 11px", borderRadius: 7, marginBottom: 1,
+                  border: "none",
+                  borderLeft: `3px solid ${active ? "#4b7896" : "transparent"}`,
+                  background: active ? "rgba(75,120,150,0.18)" : "transparent",
+                  color: active ? "#e8f2f8" : "#a8bfcc",
+                  cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                  fontWeight: active ? 700 : 500, fontSize: 13,
+                  transition: "all .12s",
+                }}>
+                <span style={{ flex: 1 }}>{cat}</span>
+                <span style={{
+                  fontSize: 10, fontWeight: 700, borderRadius: 99, padding: "1px 7px",
+                  background: active ? "rgba(75,120,150,0.35)" : "rgba(255,255,255,0.08)",
+                  color: active ? "#e8f2f8" : "#a8bfcc",
+                  flexShrink: 0,
+                }}>{count}</span>
+                {active && <span style={{ width: 5, height: 5, borderRadius: "50%",
+                  background: "#4b7896", flexShrink: 0 }} />}
+              </button>
+            );
+          })}
+        </nav>
+        <div style={{ padding: "12px 16px", borderTop: "1px solid #3a4f62" }}>
+          {canEdit && (
+            <button type="button" onClick={startNew} style={{
+              width: "100%", background: "rgba(75,120,150,0.25)", color: "#e8f2f8",
+              border: "1px solid #4b7896", borderRadius: 8, padding: "8px 0",
+              fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            }}>
+              <span style={{ fontSize: 15 }}>+</span> Add Carrier
+            </button>
+          )}
+          <button onClick={onBack} style={{
+            width: "100%", marginTop: 6, background: "transparent", color: "#a8bfcc",
+            border: "1px solid #3a4f62", borderRadius: 8, padding: "7px 0",
+            fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+          }}>← Back</button>
+        </div>
+      </div>
 
-          {/* Category tabs + search */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ display: "flex", gap: 8 }}>
-              {CARRIER_CATEGORIES.map(cat => (
-                <button key={cat} type="button" onClick={() => setActiveCategory(cat)} style={{
-                  padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                  border: `1.5px solid ${activeCategory === cat ? "#4a7fa5" : "#e2e8f0"}`,
-                  background: activeCategory === cat ? "#2d4a6b" : "#fff",
-                  color: activeCategory === cat ? "#fff" : "#64748b",
-                  cursor: "pointer", fontFamily: "inherit",
-                }}>{cat}</button>
-              ))}
-            </div>
-            <div style={{ position: "relative" }}>
-              <input
-                value={searchQ}
-                onChange={e => { setSearchQ(e.target.value); setPage(1); }}
-                placeholder="Filter carriers..."
-                style={{ ...inputStyle, marginTop: 0, paddingLeft: 28, width: 200, fontSize: 12 }}
-              />
-              <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "#94a3b8", pointerEvents: "none" }}>🔍</span>
-            </div>
+      {/* ── Main content ── */}
+      <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "22px 24px 32px" }}>
+        {/* Search bar */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <div style={{ position: "relative" }}>
+            <input value={searchQ} onChange={e => { setSearchQ(e.target.value); setPage(1); }}
+              placeholder="Filter carriers..."
+              style={{ ...inputStyle, marginTop: 0, paddingLeft: 28, width: 220, fontSize: 12 }} />
+            <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)",
+              fontSize: 12, color: "#94a3b8", pointerEvents: "none" }}>🔍</span>
           </div>
         </div>
 
-        {/* New carrier placeholder */}
-        {editingId && !carriers.find(c => c.id === editingId) && editData && (
-          <div style={{ marginBottom: 10, padding: "12px 16px", borderRadius: 12,
-            background: "#f0f6fb", border: "1.5px dashed #4a7fa5",
-            fontSize: 13, color: "#2d4a6b", fontWeight: 600 }}>
-            ✏️ New carrier — fill in the detail panel and click "Save Carrier".
-          </div>
-        )}
-
-        {/* Pinned section */}
-        {pinnedList.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b",
-              letterSpacing: "1px", textTransform: "uppercase",
-              display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
-              📌 Pinned
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {pinnedList.map(c => <CarrierCard key={c.id} carrier={c} />)}
-            </div>
-            {unpinnedList.length > 0 && (
-              <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
+      {allFiltered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 20px",
+          background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+          <div style={{ fontWeight: 700 }}>No {activeCategory} carriers yet</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add Carrier" to get started</div>
+        </div>
+      ) : (
+        <>
+          {pinnedList.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b",
                 letterSpacing: "1px", textTransform: "uppercase",
-                marginTop: 18, marginBottom: 8 }}>
-                A – Z
+                display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
+                📌 Pinned
               </div>
-            )}
-          </div>
-        )}
-
-        {/* Unpinned list */}
-        {allFiltered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "48px 20px",
-            background: "#fff", borderRadius: 12, border: "1.5px dashed #e2e8f0", color: "#94a3b8" }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-            <div style={{ fontWeight: 700 }}>No {activeCategory} carriers yet</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add Carrier" to get started</div>
-          </div>
-        ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {pinnedList.map(c => <CarrierCard key={c.id} carrier={c} />)}
+              </div>
+              {unpinnedList.length > 0 && (
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#94a3b8",
+                  letterSpacing: "1px", textTransform: "uppercase", marginTop: 18, marginBottom: 8 }}>
+                  A – Z
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {pagedUnpinned.map(c => <CarrierCard key={c.id} carrier={c} />)}
           </div>
-        )}
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-            marginTop: 18, padding: "0 2px" }}>
-            <div style={{ fontSize: 12, color: "#94a3b8" }}>
-              Showing {(page-1)*PER_PAGE+1}–{Math.min(page*PER_PAGE, unpinnedList.length)} of {unpinnedList.length} carriers
+          {totalPages > 1 && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginTop: 18, padding: "0 2px" }}>
+              <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                Showing {(page-1)*PER_PAGE+1}–{Math.min(page*PER_PAGE, unpinnedList.length)} of {unpinnedList.length} carriers
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}
+                  style={{ padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
+                    border:"1.5px solid #e2e8f0", background:page===1?"#f8fafc":"#fff",
+                    color:page===1?"#cbd5e1":"#475569", cursor:page===1?"default":"pointer", fontFamily:"inherit" }}>←</button>
+                {Array.from({length:totalPages},(_,i)=>i+1)
+                  .filter(n=>n===1||n===totalPages||Math.abs(n-page)<=1)
+                  .reduce((acc,n,i,arr)=>{
+                    if(i>0&&n-arr[i-1]>1) acc.push("…");
+                    acc.push(n); return acc;
+                  },[])
+                  .map((n,i)=> n==="…"
+                    ? <span key={`e${i}`} style={{padding:"5px 4px",fontSize:12,color:"#94a3b8"}}>…</span>
+                    : <button key={n} onClick={()=>setPage(n)} style={{
+                        padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
+                        border:`1.5px solid ${page===n?"#4a7fa5":"#e2e8f0"}`,
+                        background:page===n?"#2d4a6b":"#fff", color:page===n?"#fff":"#475569",
+                        cursor:"pointer", fontFamily:"inherit",
+                      }}>{n}</button>
+                  )}
+                <button onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page===totalPages}
+                  style={{ padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
+                    border:"1.5px solid #e2e8f0", background:page===totalPages?"#f8fafc":"#fff",
+                    color:page===totalPages?"#cbd5e1":"#475569", cursor:page===totalPages?"default":"pointer", fontFamily:"inherit" }}>→</button>
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 4 }}>
-              <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}
-                style={{ padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
-                  border:"1.5px solid #e2e8f0", background:page===1?"#f8fafc":"#fff",
-                  color:page===1?"#cbd5e1":"#475569", cursor:page===1?"default":"pointer", fontFamily:"inherit" }}>←</button>
-              {Array.from({length:totalPages},(_,i)=>i+1)
-                .filter(n=>n===1||n===totalPages||Math.abs(n-page)<=1)
-                .reduce((acc,n,i,arr)=>{
-                  if(i>0&&n-arr[i-1]>1) acc.push("…");
-                  acc.push(n); return acc;
-                },[])
-                .map((n,i)=> n==="…"
-                  ? <span key={`e${i}`} style={{padding:"5px 4px",fontSize:12,color:"#94a3b8"}}>…</span>
-                  : <button key={n} onClick={()=>setPage(n)} style={{
-                      padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
-                      border:`1.5px solid ${page===n?"#4a7fa5":"#e2e8f0"}`,
-                      background:page===n?"#2d4a6b":"#fff", color:page===n?"#fff":"#475569",
-                      cursor:"pointer", fontFamily:"inherit",
-                    }}>{n}</button>
-                )}
-              <button onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page===totalPages}
-                style={{ padding:"5px 10px", borderRadius:7, fontSize:12, fontWeight:700,
-                  border:"1.5px solid #e2e8f0", background:page===totalPages?"#f8fafc":"#fff",
-                  color:page===totalPages?"#cbd5e1":"#475569", cursor:page===totalPages?"default":"pointer", fontFamily:"inherit" }}>→</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Right: detail panel ── */}
-      {selectedCarrier && (
-        <DetailPanel carrier={selectedCarrier} />
+          )}
+        </>
       )}
+      </div>{/* end main content */}
     </div>
   );
 }
+
 
 // ── TasksView ─────────────────────────────────────────────────────────────────
 
@@ -21127,7 +21465,11 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                           <option value="">— Select carrier —</option>
                           {carriersForBenefit(cat.id, carriersData)
                             .filter(c => c !== (data.benefitCarriers || {})[cat.id])
-                            .map(c => <option key={c} value={c}>{c}</option>)}
+                            .map(c => {
+                              const cObj = (carriersData||[]).find(x => x.name === c);
+                              const hasDocs = cObj && ((cObj._docCount || 0) > 0 || (cObj.forms||[]).length > 0);
+                              return <option key={c} value={c}>{hasDocs ? `${c} 📎` : c}</option>;
+                            })}
                         </select>
                       </label>
                     </div>
