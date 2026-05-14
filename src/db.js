@@ -62,6 +62,10 @@ export async function fetchClients() {
       notes:            row.notes          || base.notes           || '',
       salesPerson:      row.sales_person   || base.salesPerson    || '',
       clientStatusDate: row.status_changed_date || base.clientStatusDate || '',
+      // transactions: prefer the dedicated column (most up-to-date), fall back to data blob
+      transactions:     (row.transactions && row.transactions.length > 0)
+                          ? row.transactions
+                          : (base.transactions || []),
     }
   })
 }
@@ -115,6 +119,8 @@ export async function upsertClient(clientData) {
     status_changed_date:  clientData.clientStatusDate   || null,
     // Keep the full JSONB blob for all other fields not yet in proper columns
     data:                 clientData,
+    // Also write transactions as a dedicated column for direct queries
+    transactions:         clientData.transactions || [],
     updated_at:           new Date().toISOString(),
   }
   const { error } = await supabase.from('clients').upsert(row)

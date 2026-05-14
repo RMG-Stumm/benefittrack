@@ -92,9 +92,10 @@ const TEAMS = {
     border: "#00A2E8",
     text: "#006fa0",
     members: [
-      { name: "Renata", role: "Team Lead" },
-      { name: "Mary", role: "Account Manager" },
-      { name: "Kia", role: "Account Coordinator" },
+      { name: "Dave Stumm", role: "VP" },
+      { name: "Renata Garcia", role: "Team Lead" },
+      { name: "Mary Long", role: "Account Manager" },
+      { name: "Kia Walton", role: "Account Coordinator" },
     ],
   },
   Juliet: {
@@ -103,18 +104,19 @@ const TEAMS = {
     border: "#2ADB5E",
     text: "#1a9040",
     members: [
-      { name: "Renata", role: "Team Lead" },
-      { name: "Danielle", role: "Account Executive" },
-      { name: "Kia", role: "Account Coordinator" },
+      { name: "Dave Stumm", role: "VP" },
+      { name: "Renata Garcia", role: "Team Lead" },
+      { name: "Danielle Bollman", role: "Account Executive" },
+      { name: "Kia Walton", role: "Account Coordinator" },
     ],
   },
 };
 
 function getCoordinator(teamId) {
   const team = TEAMS[teamId];
-  if (!team) return "Kia";
+  if (!team) return "Kia Walton";
   const coord = team.members.find(m => m.role === "Account Coordinator");
-  return coord ? coord.name : (team.members[0]?.name || "Kia");
+  return coord ? coord.name : (team.members[0]?.name || "Kia Walton");
 }
 function getAccountManager(teamId) {
   const team = TEAMS[teamId];
@@ -408,14 +410,29 @@ function PercentInput({ value, onChange, placeholder, style, disabled }) {
   );
 }
 
+// Map legacy bare first names → full names (for data stored before the full-name update)
+const LEGACY_NAME_MAP = {
+  "Kia": "Kia Walton",
+  "Renata": "Renata Garcia",
+  "Danielle": "Danielle Bollman",
+  "Mary": "Mary Long",
+};
+
+function normalizeName(name) {
+  if (!name) return "";
+  return LEGACY_NAME_MAP[name.trim()] || name;
+}
+
 function resolveAssignee(role, teamId) {
   if (!role) return "";
-  // If it looks like a real name rather than a role, pass it through unchanged
+  // Normalize legacy bare first names to full names
+  const normalized = normalizeName(role);
+  // If it looks like a real name rather than a role, pass it through
   // (handles legacy data where names were stored directly)
-  if (!TASK_ROLES.includes(role)) return role;
+  if (!TASK_ROLES.includes(normalized)) return normalized;
   const team = TEAMS[teamId];
   if (!team) return "";
-  const member = team.members.find(m => m.role === role);
+  const member = team.members.find(m => m.role === normalized);
   return member ? member.name : "";
 }
 
@@ -592,10 +609,10 @@ const OE_MATERIAL_TASKS = [
   { id: "oet_translation",label: "Translation",                material: "translation" },
 ];
 
-const ALL_MEMBERS = ["Mary","Kia","Danielle","Renata"];
+const ALL_MEMBERS = ["Dave Stumm","Renata Garcia","Mary Long","Danielle Bollman","Kia Walton"];
 // Team-filtered member lists
-const INDIA_MEMBERS  = ["Mary","Kia","Renata"];    // no Danielle
-const JULIET_MEMBERS = ["Danielle","Kia","Renata"]; // no Mary
+const INDIA_MEMBERS  = ["Dave Stumm","Renata Garcia","Mary Long","Kia Walton"];    // no Danielle
+const JULIET_MEMBERS = ["Dave Stumm","Renata Garcia","Danielle Bollman","Kia Walton"]; // no Mary
 
 const TASK_STATUSES = ["Not Started", "In Progress", "Complete", "N/A"];
 
@@ -1013,6 +1030,7 @@ function newClient(tasksDb) {
     cobraVendor: "",
     cobraSIPaid: false,
     medicareEligibility: [],
+    renewalCycle:    {},  // per-benefit renewal cycle data
     renewalReceived: { received: false, date: "" },
     decisionsReceivedDate: "",
     rateRelief: { requested: false, requestedDate: "", received: false, receivedDate: "", pct: "" },
@@ -1392,6 +1410,96 @@ function FollowUpBlock({ followUps, onAdd, onChangeDate, onChangeNote, onRemove 
   );
 }
 
+// ── TxnRow — stable per-row component so editing one field doesn't reset others ──
+// All fields are local state; changes flush to parent only on blur/select-change.
+function TxnRow({ txn, ti, cols, cellInp, teamMembers, transactionTypesLibrary, onUpdate, onRemove, inputStyle }) {
+  const [memberName,    setMemberName]    = React.useState(txn.memberName    || "");
+  const [changeType,    setChangeType]    = React.useState(txn.changeType    || "");
+  const [status,        setStatus]        = React.useState(txn.status        || "Not Started");
+  const [assignee,      setAssignee]      = React.useState(txn.assignee      || "");
+  const [receivedDate,  setReceivedDate]  = React.useState(txn.receivedDate  || "");
+  const [dueDate,       setDueDate]       = React.useState(txn.dueDate       || "");
+  const [completedDate, setCompletedDate] = React.useState(txn.completedDate || "");
+  const [notes,         setNotes]         = React.useState(txn.notes         || "");
+
+  // Only reset local state when the transaction ID changes (different row),
+  // NOT on every re-render — this prevents parent re-renders from wiping edits.
+  const lastTxnId = React.useRef(txn.id);
+  React.useEffect(() => {
+    if (txn.id !== lastTxnId.current) {
+      lastTxnId.current = txn.id;
+      setMemberName(txn.memberName    || "");
+      setChangeType(txn.changeType    || "");
+      setStatus(txn.status            || "Not Started");
+      setAssignee(txn.assignee        || "");
+      setReceivedDate(txn.receivedDate|| "");
+      setDueDate(txn.dueDate          || "");
+      setCompletedDate(txn.completedDate || "");
+      setNotes(txn.notes              || "");
+    }
+  });
+
+  function flush(patch) { onUpdate(ti, patch); }
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "6px 10px", alignItems: "center",
+        background: ti % 2 === 0 ? "#fff" : "#fdf4ff", borderBottom: "1px solid #f5e8ff" }}>
+        {/* Member */}
+        <input value={memberName} placeholder="Employee / Dependent"
+          onChange={e => setMemberName(e.target.value)}
+          onBlur={e => flush({ memberName: e.target.value, label: [e.target.value, changeType].filter(Boolean).join(" – ") })}
+          style={cellInp} />
+        {/* Type */}
+        <select value={changeType}
+          onChange={e => { setChangeType(e.target.value); flush({ changeType: e.target.value, label: [memberName, e.target.value].filter(Boolean).join(" – ") }); }}
+          style={cellInp}>
+          <option value="">— Select —</option>
+          {([...(transactionTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)).map(o=><option key={o}>{o}</option>)}
+        </select>
+        {/* Status */}
+        <StatusSelect value={status}
+          onChange={v => { setStatus(v); flush({ status: v }); }} />
+        {/* Assignee */}
+        <select value={assignee}
+          onChange={e => { setAssignee(e.target.value); flush({ assignee: e.target.value }); }}
+          style={cellInp}>
+          <option value="">— Unassigned —</option>
+          {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
+        </select>
+        {/* Received */}
+        <input type="date" value={receivedDate}
+          onChange={e => { setReceivedDate(e.target.value); if (e.target.value) flush({ receivedDate: e.target.value }); }}
+          onBlur={e => { if (e.target.value) flush({ receivedDate: e.target.value }); }}
+          style={cellInp} />
+        {/* Due */}
+        <input type="date" value={dueDate}
+          onChange={e => { setDueDate(e.target.value); if (e.target.value) flush({ dueDate: e.target.value }); }}
+          onBlur={e => { if (e.target.value) flush({ dueDate: e.target.value }); }}
+          style={cellInp} />
+        {/* Completed */}
+        <input type="date" value={completedDate}
+          onChange={e => { setCompletedDate(e.target.value); if (e.target.value) flush({ completedDate: e.target.value }); }}
+          onBlur={e => { if (e.target.value) flush({ completedDate: e.target.value }); }}
+          style={cellInp} />
+        {/* Remove */}
+        <button type="button" onClick={onRemove}
+          style={{ padding: "3px 6px", borderRadius: 5, fontSize: 12, fontWeight: 700,
+            border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
+            cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}>✕</button>
+      </div>
+      {/* Notes row */}
+      <div style={{ padding: "5px 10px 8px", background: "#fafafa", borderBottom: "1px solid #f5e8ff" }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", display: "block", marginBottom: 3 }}>Notes</label>
+        <input value={notes} placeholder="Additional notes..."
+          onChange={e => setNotes(e.target.value)}
+          onBlur={e => flush({ notes: e.target.value })}
+          style={{ ...cellInp, width: "100%", fontSize: 11 }} />
+      </div>
+    </div>
+  );
+}
+
 function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateRules, benefitsDb, carriersData, currentUser, plansLibrary, marketsLibrary, fundingLibrary, situsLibrary, employerTypesLibrary, employerSizeLibrary, corporateStructureLibrary, transactionTypesLibrary, initialTaskTab, initialTaskId }) {
   // Derive sorted label arrays from libraries (fall back to hardcoded defaults if library empty)
   const marketOptions   = (marketsLibrary||[]).length  ? [...(marketsLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label) : MARKET_SIZES;
@@ -1752,7 +1860,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   useEffect(() => {
     if (!isDirty) return;
     const timer = setTimeout(() => {
-      onSave(data);
+      onSave(dataRef.current);
       setIsDirty(false);
     }, 1500);
     return () => clearTimeout(timer);
@@ -1878,7 +1986,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
   const [activeTab, setActiveTab] = useState(initialTaskTab ? "tasks" : "info");
   const [benefitCategoryTab, setBenefitCategoryTab] = useState("");
   const [benefitLeafTab, setBenefitLeafTab] = useState("");
-  const [taskTab, setTaskTab] = useState(initialTaskTab || "preRenewal");
+  const [taskTab, setTaskTab] = useState(initialTaskTab || "renewalCycle");
   const TABS = [
     { id: "info",        label: "Client Information" },
     { id: "eligibility", label: "Eligibility" },
@@ -1886,7 +1994,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
     { id: "tasks",       label: "Tasks" },
   ];
   const TASK_TABS = [
-    { id: "preRenewal",   label: "Pre-Renewal",       accent: "#92400e", bg: "#fffbeb", border: "#fde68a" },
+    { id: "renewalCycle", label: "Renewal Cycle",     accent: "#92400e", bg: "#fffbeb", border: "#fde68a" },
     { id: "renewal",      label: "Renewal",            accent: "#1e40af", bg: "#eff6ff", border: "#bfdbfe" },
     { id: "oe",           label: "Open Enrollment",    accent: "#065f46", bg: "#ecfdf5", border: "#6ee7b7" },
     { id: "postOE",       label: "Post-OE",            accent: "#5b21b6", bg: "#f5f3ff", border: "#c4b5fd" },
@@ -1992,13 +2100,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               <label style={{ ...labelStyle }}>
                 Effective From
                 <DateInput  value={archiveForm.effectiveFrom}
-                  onChange={e => setArchiveForm(p => ({ ...p, effectiveFrom: e.target.value }))}
+                  onChange={v => setArchiveForm(p => ({ ...p, effectiveFrom: v }))}
                   style={{ ...inputStyle, marginTop: 3 }} />
               </label>
               <label style={{ ...labelStyle }}>
                 Effective To
                 <DateInput  value={archiveForm.effectiveTo}
-                  onChange={e => setArchiveForm(p => ({ ...p, effectiveTo: e.target.value }))}
+                  onChange={v => setArchiveForm(p => ({ ...p, effectiveTo: v }))}
                   style={{ ...inputStyle, marginTop: 3 }} />
               </label>
               <label style={{ ...labelStyle }}>
@@ -2155,13 +2263,13 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Effective From
                                 <DateInput  value={effFrom}
-                                  onChange={e => setCE("effectiveFrom", e.target.value)}
+                                  onChange={v => setCE("effectiveFrom", v)}
                                   style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Effective To
                                 <DateInput  value={effTo}
-                                  onChange={e => setCE("effectiveTo", e.target.value)}
+                                  onChange={v => setCE("effectiveTo", v)}
                                   style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -2203,8 +2311,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                         </label>
                                         <label style={{ ...labelStyle, marginTop: 0 }}>
                                           Policy #
-                                          <input type="text" value={bPol[cat.id] || ""}
-                                            onChange={e => setCE("benefitPolicyNumbers", { ...bPol, [cat.id]: e.target.value })}
+                                          <DebouncedInput value={bPol[cat.id] || ""}
+                                            onChange={v => setCE("benefitPolicyNumbers", { ...bPol, [cat.id]: v })}
                                             style={{ ...inputStyle, marginTop: 3, fontSize: 12 }} />
                                         </label>
                                         <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -2582,8 +2690,8 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </label>
               <label style={labelStyle}>
                 Renewal Date
-                <DateInput  value={data.renewalDate} tabIndex={24} onChange={e => {
-                  const newDate = e.target.value;
+                <DateInput  value={data.renewalDate} tabIndex={24} onChange={v => {
+                  const newDate = v;
                   setData(p => applyDDR({ ...p, renewalDate: newDate }));
                   if (newDate) {
                     const dt = new Date(newDate);
@@ -2722,7 +2830,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 ))}
                 {(data.clientStatus === "Terminated" || data.clientStatus === "Transferred") && (
                   <DateInput  value={data.clientStatusDate || ""}
-                    onChange={e => set("clientStatusDate", e.target.value)}
+                    onChange={v => set("clientStatusDate", v)}
                     style={{ ...inputStyle, marginTop: 4, padding: "4px 8px" }} />
                 )}
               </div>
@@ -3471,12 +3579,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                       <div style={{ display: "grid", gridTemplateColumns: cat.id === "medical" ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: 10 }}>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Policy Number
-                          <input
-                            type="text"
+                          <DebouncedInput
                             value={(data.benefitPolicyNumbers || {})[cat.id] || ""}
-                            onChange={e => setData(p => ({
+                            onChange={v => setData(p => ({
                               ...p,
-                              benefitPolicyNumbers: { ...(p.benefitPolicyNumbers || {}), [cat.id]: e.target.value },
+                              benefitPolicyNumbers: { ...(p.benefitPolicyNumbers || {}), [cat.id]: v },
                             }))}
                             placeholder="e.g. 123456"
                             style={{ ...inputStyle, marginTop: 3 }}
@@ -4800,129 +4907,556 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
           {activeTab === "tasks" && (<div>
 
           {/* Pre-Renewal */}
-          {taskTab === "preRenewal" && (<div>
+          {taskTab === "renewalCycle" && (<div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
 
-              {/* Medical Renewal Status — all groups */}
+              {/* ══════════════════════════════════════════════════════════
+                   RENEWAL CYCLE — per active benefit line
+                   Data stored in data.renewalCycle[catId] = {
+                     received: bool, receivedDate, renewalPct,
+                     bundledDiscount: bool, bundledDiscountPct,
+                     rrRequested: bool, rrRequestedDate,
+                     rrReceived: bool, rrReceivedDate, negotiatedPct,
+                     decisionsDate, decisionRenewAsIs: bool,
+                     decisionBenefitChanges: bool, newPlans,
+                     decisionCarrierChange: bool, newCarrier,
+                     oeStartDate, oeEndDate, oeType, eeMeetingType,
+                     translationNeeded: bool,
+                     materials: {}, oeTasks: {}
+                   }
+              ══════════════════════════════════════════════════════════ */}
               {(() => {
+                // Build list of active benefit lines for the Renewal Cycle tabs
+                const BA = data.benefitActive || {};
+                const BC = data.benefitCarriers || {};
                 const showRateRelief = !(data.marketSize === "ACA" && data.fundingMethod === "Fully Insured");
-                const rr = data.rateRelief || {};
-                const rv = data.renewalReceived || {};
+
+                // All top-level benefit cats that are active
+                const activeCats = BENEFITS_SCHEMA
+                  .filter(c => BA[c.id])
+                  .map(c => ({ id: c.id, label: c.label, carrier: BC[c.id] || "" }));
+
+                // Also active worksite children
+                const worksiteCat = BENEFITS_SCHEMA.find(c => c.id === "worksite");
+                (worksiteCat?.children || []).forEach(ch => {
+                  if (BA[ch.id]) activeCats.push({ id: ch.id, label: ch.label, carrier: BC[ch.id] || "" });
+                });
+
+                if (activeCats.length === 0) return null;
+
+                // Migrated legacy data: if renewalCycle not set yet, seed from old fields
+                const RC = data.renewalCycle || {};
+                const getRCB = (id) => RC[id] || {};
+
+                const setRCB = (id, patch) => setData(p => {
+                  const BC = p.benefitCarriers || {};
+                  const thisCarrier = BC[id];
+                  let rc = { ...(p.renewalCycle || {}) };
+                  rc[id] = { ...(rc[id] || {}), ...patch };
+                  // If received date is being set and this carrier matches other active benefits,
+                  // auto-populate receivedDate and received on those too
+                  if (patch.receivedDate && thisCarrier) {
+                    Object.keys(BC).forEach(otherId => {
+                      if (otherId !== id && BC[otherId] === thisCarrier && (p.benefitActive || {})[otherId]) {
+                        rc[otherId] = { ...(rc[otherId] || {}),
+                          receivedDate: patch.receivedDate,
+                          received: true,
+                        };
+                      }
+                    });
+                  }
+                  return { ...p, renewalCycle: rc };
+                });
+
+                // Active benefit tab state — stored as local UI state via the outer closure
+                // Use a key in data so it persists across re-renders within session
+                const [rcTab, setRcTab] = React.useState(activeCats[0]?.id || "medical");
+                const cat = activeCats.find(c => c.id === rcTab) || activeCats[0];
+                if (!cat) return null;
+                const rc = getRCB(cat.id);
+                const isMedical = cat.id === "medical";
+
+                // OE materials list
+                const OE_MATERIALS = [
+                  { id: "benefits_guide",   label: "Benefits Guide" },
+                  { id: "rate_sheet",       label: "Rate Sheet" },
+                  { id: "sbc",             label: "SBC" },
+                  { id: "enrollment_form", label: "Enrollment Form" },
+                  { id: "decision_support",label: "Decision Support Tool" },
+                  { id: "fsahsa_guide",    label: "FSA/HSA Guide" },
+                  { id: "video",           label: "Video / Webinar" },
+                  { id: "custom",          label: "Custom / Other" },
+                ];
+
+                // OE task list
+                const OE_TASKS = [
+                  { id: "oe_materials_created",  label: "OE materials created" },
+                  { id: "oe_email_sent",         label: "Enrollment email sent" },
+                  { id: "oe_meeting_scheduled",  label: "EE meeting scheduled" },
+                  { id: "oe_enrollments_received",label: "Enrollments received" },
+                  { id: "oe_changes_submitted",  label: "Changes submitted to carrier" },
+                  { id: "oe_confirmations",      label: "Carrier confirmations received" },
+                ];
+
+                // Styles
+                const hdr = { fontSize: 10, fontWeight: 800, color: "#92400e",
+                  letterSpacing: ".5px", textTransform: "uppercase" };
+                const subHdr = { fontSize: 10, fontWeight: 800, color: "#475569",
+                  letterSpacing: ".8px", textTransform: "uppercase",
+                  marginBottom: 6, marginTop: 12 };
+                const chkLabel = { display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+                  fontSize: 12, fontWeight: 600, color: "#334155" };
+
                 return (
-                <div style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", padding: "12px 14px" }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 10 }}>
-                    Medical Renewal Status
-                  </div>
+                  <div style={{ background: "#fffbeb", borderRadius: 10,
+                    border: "1.5px solid #fde68a", overflow: "hidden" }}>
 
-                  {/* Column headers */}
-                  <div style={{ display: "grid", gridTemplateColumns: `1.4fr 80px 120px 80px${showRateRelief ? " 120px 120px 90px" : ""}`, gap: 6, marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #fde68a" }}>
-                    {["Carrier", "Received", "Date Received", "Renewal %", ...(showRateRelief ? ["Rate Relief Req.", "Rate Relief Rec.", "Negotiated %"] : [])].map(h => (
-                      <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" }}>{h}</div>
-                    ))}
-                  </div>
-
-                  {/* Single data row */}
-                  <div style={{ display: "grid", gridTemplateColumns: `1.4fr 80px 120px 80px${showRateRelief ? " 120px 120px 90px" : ""}`, gap: 6, alignItems: "center", background: rv.received ? "#fffde7" : "#fff", borderRadius: 6, padding: "4px 0" }}>
-                    {/* Carrier */}
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#78350f", paddingLeft: 4 }}>
-                      {(data.benefitCarriers || {}).medical || <span style={{ opacity: 0.4, fontStyle: "italic", fontWeight: 400 }}>Medical carrier</span>}
+                    {/* Header */}
+                    <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #fde68a",
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e",
+                        letterSpacing: "1px", textTransform: "uppercase" }}>
+                        Renewal Status
+                      </div>
+                      <div style={{ fontSize: 11, color: "#b45309" }}>
+                        {data.renewalDate ? `Renewal: ${new Date(data.renewalDate+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}` : ""}
+                      </div>
                     </div>
-                    {/* Renewal Received checkbox */}
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
-                      <input type="checkbox" checked={!!rv.received}
-                        onChange={e => set("renewalReceived", { ...rv, received: e.target.checked })}
-                        style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                    </label>
-                    {/* Date Received */}
-                    <DateInput  value={rv.date || ""}
-                      onChange={e => {
-                        const newRec = { ...rv, date: e.target.value };
-                        setData(p => applyDDR({ ...p, renewalReceived: newRec }));
-                      }}
-                      disabled={!rv.received}
-                      style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
-                        opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc" }} />
-                    {/* Renewal % */}
-                    <PercentInput value={rv.pct || ""} onChange={v => set("renewalReceived", { ...rv, pct: v })}
-                      placeholder="0.00" disabled={!rv.received}
-                      style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
-                        opacity: rv.received ? 1 : 0.35, background: rv.received ? "#fff" : "#f8fafc", width: "100%" }} />
-                    {/* Rate Relief Requested */}
-                    {showRateRelief && (
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
-                        <input type="checkbox" checked={!!rr.requested}
-                          onChange={e => set("rateRelief", { ...rr, requested: e.target.checked })}
-                          style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-                        <span style={{ fontSize: 11, color: rr.requested ? "#92400e" : "#94a3b8", fontWeight: rr.requested ? 700 : 400 }}>
-                          {rr.requested ? "Requested" : "No"}
-                        </span>
-                      </label>
-                    )}
-                    {/* Rate Relief Received */}
-                    {showRateRelief && (
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
-                        <input type="checkbox" checked={!!rr.received}
-                          onChange={e => set("rateRelief", { ...rr, received: e.target.checked })}
-                          style={{ accentColor: "#22c55e", width: 15, height: 15 }} />
-                        <span style={{ fontSize: 11, color: rr.received ? "#166534" : "#94a3b8", fontWeight: rr.received ? 700 : 400 }}>
-                          {rr.received ? "Received" : "No"}
-                        </span>
-                      </label>
-                    )}
-                    {/* Negotiated Renewal % */}
-                    {showRateRelief && (
-                      <PercentInput value={data.negotiatedRenewalPct || ""}
-                        onChange={v => set("negotiatedRenewalPct", v)}
-                        placeholder="0.00"
-                        style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11, width: "100%",
-                          background: data.negotiatedRenewalPct ? "#f0fdf4" : "#fff",
-                          borderColor: data.negotiatedRenewalPct ? "#86efac" : undefined }} />
-                    )}
-                  </div>
 
-                  {/* Decisions Received + tracker rows below */}
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10,
-                      padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>📋 Decisions Received</span>
-                      <DateInput  value={data.decisionsReceivedDate || ""}
-                        onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
-                        style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
+                    {/* Benefit tabs */}
+                    <div style={{ display: "flex", borderBottom: "1px solid #fde68a",
+                      background: "#fef3c7", overflowX: "auto" }}>
+                      {activeCats.map(c => (
+                        <button key={c.id} onClick={() => setRcTab(c.id)}
+                          style={{ padding: "6px 14px", fontSize: 11, fontWeight: 700,
+                            border: "none", cursor: "pointer", fontFamily: "inherit",
+                            whiteSpace: "nowrap",
+                            background: rcTab === c.id ? "#fffbeb" : "transparent",
+                            color: rcTab === c.id ? "#92400e" : "#b45309",
+                            borderBottom: rcTab === c.id ? "2.5px solid #d97706" : "2.5px solid transparent",
+                          }}>
+                          {c.label}
+                          {c.carrier && <span style={{ marginLeft: 5, fontSize: 10,
+                            fontWeight: 500, color: "#b45309", opacity: 0.8 }}>({c.carrier})</span>}
+                        </button>
+                      ))}
                     </div>
-                    {["Mid-Market", "Large"].includes(data.marketSize) && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 10,
-                        padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
-                        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", flex: 1 }}>
-                          <input type="checkbox" checked={!!data.renewalTrackerUpdated}
-                            onChange={e => set("renewalTrackerUpdated", e.target.checked)}
-                            style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
-                          <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Renewal Tracker Updated</span>
-                        </label>
-                        {data.renewalTrackerUpdated && (
-                          <DateInput  value={data.renewalTrackerUpdatedDate || ""}
-                            onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
-                            style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
+
+                    <div style={{ padding: "12px 14px" }}>
+
+                      {/* ── ① RENEWAL RECEIPT ── */}
+                      <div style={subHdr}>① Renewal receipt</div>
+                      <div style={{ display: "grid",
+                        gridTemplateColumns: showRateRelief
+                          ? (isMedical ? "70px 120px 70px 90px 90px 70px 130px" : "70px 120px 70px 90px 90px 70px")
+                          : (isMedical ? "70px 120px 70px 130px" : "70px 120px 70px"),
+                        gap: 8, alignItems: "start",
+                        background: "#fff", borderRadius: 8, padding: "8px 10px",
+                        border: "1px solid #fde68a" }}>
+
+                        {/* Received */}
+                        <div>
+                          <div style={hdr}>Received</div>
+                          <label style={{ ...chkLabel, marginTop: 4 }}>
+                            <input type="checkbox" checked={!!rc.received}
+                              onChange={e => setRCB(cat.id, { received: e.target.checked })}
+                              style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
+                          </label>
+                        </div>
+
+                        {/* Date Received */}
+                        <div>
+                          <div style={hdr}>Date received</div>
+                          <DateInput value={rc.receivedDate || ""}
+                            onChange={v => {
+                              const patch = { receivedDate: v };
+                              if (v) patch.received = true;
+                              setRCB(cat.id, patch);
+                              setData(p => applyDDR({ ...p, renewalCycle: { ...(p.renewalCycle||{}), [cat.id]: { ...(p.renewalCycle?.[cat.id]||{}), ...patch } } }));
+                            }}
+                            style={{ ...inputStyle, marginTop: 3, padding: "3px 6px", fontSize: 11 }} />
+                        </div>
+
+                        {/* Renewal % */}
+                        <div>
+                          <div style={hdr}>Renewal %</div>
+                          <PercentInput value={rc.renewalPct || ""}
+                            onChange={v => setRCB(cat.id, { renewalPct: v })}
+                            placeholder="0.00" disabled={!rc.received}
+                            style={{ ...inputStyle, marginTop: 3, padding: "3px 6px", fontSize: 11,
+                              opacity: rc.received ? 1 : 0.35, width: "100%" }} />
+                        </div>
+
+                        {/* Rate Relief — before bundled discount */}
+                        {showRateRelief && (<>
+                          <div>
+                            <div style={hdr}>Rate relief req.</div>
+                            <label style={{ ...chkLabel, marginTop: 4 }}>
+                              <input type="checkbox" checked={!!rc.rrRequested}
+                                onChange={e => setRCB(cat.id, { rrRequested: e.target.checked })}
+                                style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
+                            </label>
+                            {rc.rrRequested && (
+                              <DateInput value={rc.rrRequestedDate || ""}
+                                onChange={v => setRCB(cat.id, { rrRequestedDate: v })}
+                                style={{ ...inputStyle, marginTop: 3, padding: "2px 5px", fontSize: 10 }} />
+                            )}
+                          </div>
+                          <div>
+                            <div style={hdr}>Rate relief rec.</div>
+                            <label style={{ ...chkLabel, marginTop: 4 }}>
+                              <input type="checkbox" checked={!!rc.rrReceived}
+                                onChange={e => setRCB(cat.id, { rrReceived: e.target.checked })}
+                                style={{ accentColor: "#22c55e", width: 14, height: 14 }} />
+                            </label>
+                            {rc.rrReceived && (
+                              <DateInput value={rc.rrReceivedDate || ""}
+                                onChange={v => setRCB(cat.id, { rrReceivedDate: v })}
+                                style={{ ...inputStyle, marginTop: 3, padding: "2px 5px", fontSize: 10 }} />
+                            )}
+                          </div>
+                          <div>
+                            <div style={hdr}>Negotiated %</div>
+                            <PercentInput value={rc.negotiatedPct || ""}
+                              onChange={v => setRCB(cat.id, { negotiatedPct: v })}
+                              placeholder="0.00" disabled={!rc.rrReceived}
+                              style={{ ...inputStyle, marginTop: 3, padding: "3px 6px", fontSize: 11,
+                                opacity: rc.rrReceived ? 1 : 0.35, width: "100%" }} />
+                          </div>
+                        </>)}
+
+                        {/* Bundled Discount — medical only, last column */}
+                        {isMedical && !(data.marketSize === "ACA" && data.fundingMethod === "Fully Insured") && (
+                          <div style={{ background: "#f2f4e8", borderRadius: 7,
+                            border: "1px solid #7a8a3d", padding: "6px 10px" }}>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#54652d",
+                              letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 4 }}>Bundled discount</div>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                              <input type="checkbox" checked={!!data.bundledDiscount}
+                                onChange={e => set("bundledDiscount", e.target.checked)}
+                                style={{ accentColor: "#7a8a3d", width: 14, height: 14 }} />
+                              <span style={{ fontSize: 12, fontWeight: 700, color: "#54652d" }}>Applied</span>
+                            </label>
+                            {data.bundledDiscount && (
+                              <label style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4,
+                                fontSize: 12, color: "#54652d" }}>
+                                <input type="number" min="0" max="100"
+                                  value={data.bundledDiscountPct || ""}
+                                  onChange={e => set("bundledDiscountPct", e.target.value)}
+                                  placeholder="0"
+                                  style={{ ...inputStyle, marginTop: 0, width: 56, textAlign: "right", padding: "3px 5px" }} />
+                                <span style={{ fontWeight: 700, color: "#15803d" }}>%</span>
+                              </label>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 10,
-                      padding: "7px 12px", borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
-                      <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", flex: 1 }}>
-                        <input type="checkbox" checked={!!data.carrierChangeTrackerUpdated}
-                          onChange={e => set("carrierChangeTrackerUpdated", e.target.checked)}
-                          style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
-                        <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Carrier Change Tracker Updated</span>
-                      </label>
-                      {data.carrierChangeTrackerUpdated && (
-                        <DateInput  value={data.carrierChangeTrackerUpdatedDate || ""}
-                          onChange={e => set("carrierChangeTrackerUpdatedDate", e.target.value)}
-                          style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 8px", width: 150 }} />
-                      )}
+
+                      {/* ── ② DECISIONS ── */}
+                      <div style={subHdr}>② Decisions</div>
+                      <div style={{ background: "#fff", borderRadius: 8, padding: "10px 12px",
+                        border: "1px solid #fde68a" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+                          <label style={{ ...chkLabel, fontSize: 11, color: "#64748b" }}>
+                            Decisions received:
+                          </label>
+                          <DateInput value={rc.decisionsDate || ""}
+                            onChange={v => setRCB(cat.id, { decisionsDate: v })}
+                            style={{ ...inputStyle, marginTop: 0, padding: "3px 8px", fontSize: 11, width: 140 }} />
+                        </div>
+
+                        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                          {[
+                            { key: "decisionRenewAsIs",       label: "Renew As-Is",      color: "#166534", bg: "#f0fdf4", border: "#86efac" },
+                            { key: "decisionBenefitChanges",  label: "Benefit Changes",  color: "#92400e", bg: "#fffbeb", border: "#fde68a" },
+                            { key: "decisionCarrierChange",   label: "Carrier Change",   color: "#7c3aed", bg: "#f5f3ff", border: "#c4b5fd" },
+                          ].map(opt => {
+                            const checked = !!rc[opt.key];
+                            return (
+                              <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 7,
+                                cursor: "pointer", padding: "6px 12px", borderRadius: 8,
+                                border: `1.5px solid ${checked ? opt.border : "#e2e8f0"}`,
+                                background: checked ? opt.bg : "#fafafa",
+                                transition: "all .15s" }}>
+                                <input type="checkbox" checked={checked}
+                                  onChange={() => setRCB(cat.id, { [opt.key]: !checked })}
+                                  style={{ accentColor: opt.color, width: 14, height: 14 }} />
+                                <span style={{ fontSize: 12, fontWeight: checked ? 700 : 500,
+                                  color: checked ? opt.color : "#64748b" }}>{opt.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        {/* Benefit Changes sub-detail */}
+                        {rc.decisionBenefitChanges && (
+                          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 7,
+                            background: "#fffbeb", border: "1px solid #fde68a" }}>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#92400e",
+                              letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 5 }}>
+                              Benefit change details
+                            </div>
+                            <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                              New plan / change description
+                              <DebouncedInput value={rc.newPlans || ""}
+                                onChange={v => setRCB(cat.id, { newPlans: v })}
+                                placeholder="Describe the plan changes..."
+                                style={{ ...inputStyle, marginTop: 3 }} />
+                            </label>
+                            {/* Auto-tasks */}
+                            <div style={{ marginTop: 8, fontSize: 11, color: "#92400e", fontWeight: 600 }}>
+                              Auto-generated tasks:
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+                              {(() => {
+                                const isBCBS = (cat.carrier || "").includes("BCBS");
+                                const isFullyInsured = data.fundingMethod === "Fully Insured";
+                                const autoTasks = [];
+                                if (isFullyInsured && isBCBS) {
+                                  autoTasks.push("Prepare and submit BPS");
+                                } else {
+                                  autoTasks.push("Submit plan change request");
+                                }
+                                autoTasks.push("Update SBC");
+                                return autoTasks.map(t => (
+                                  <span key={t} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99,
+                                    background: "#fef3c7", color: "#92400e", fontWeight: 600,
+                                    border: "1px solid #fde68a" }}>{t}</span>
+                                ));
+                              })()}
+                            </div>
+                            {/* Required forms from carrier library */}
+                            {(() => {
+                              const carrierObj = (carriersData||[]).find(c => c.name === cat.carrier);
+                              const forms = (carrierObj?.forms||[]);
+                              if (!forms.length) return null;
+                              return (
+                                <div style={{ marginTop: 8 }}>
+                                  <div style={{ fontSize: 11, color: "#92400e", fontWeight: 600, marginBottom: 4 }}>
+                                    Required forms (from {cat.carrier} carrier library):
+                                  </div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                    {forms.map((f,i) => (
+                                      <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 99,
+                                        background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontWeight: 600 }}>
+                                        {f.name}{f.deadline ? ` — ${f.deadline}` : ""}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Carrier Change sub-detail */}
+                        {rc.decisionCarrierChange && (
+                          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 7,
+                            background: "#f5f3ff", border: "1px solid #c4b5fd" }}>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#7c3aed",
+                              letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 5 }}>
+                              Carrier change details
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                              <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                                Current carrier
+                                <div style={{ ...inputStyle, marginTop: 3, background: "#f5f3ff",
+                                  color: "#7c3aed", fontWeight: 600 }}>{cat.carrier || "—"}</div>
+                              </label>
+                              <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                                New carrier
+                                <select value={rc.newCarrier || ""}
+                                  onChange={e => setRCB(cat.id, { newCarrier: e.target.value })}
+                                  style={{ ...inputStyle, marginTop: 3 }}>
+                                  <option value="">— Select carrier —</option>
+                                  {carriersForBenefit(cat.id, carriersData)
+                                    .filter(c => c !== (data.benefitCarriers || {})[cat.id])
+                                    .map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                              </label>
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: 11, color: "#7c3aed", fontWeight: 600 }}>
+                              Auto-generated tasks:
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+                              {["New carrier paperwork", `Termination letter — ${cat.carrier||"current carrier"}`,
+                                "New carrier census", "New group application"].map(t => (
+                                <span key={t} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99,
+                                  background: "#ede9fe", color: "#7c3aed", fontWeight: 600,
+                                  border: "1px solid #c4b5fd" }}>{t}</span>
+                              ))}
+                            </div>
+                            {/* Required forms from new carrier library */}
+                            {rc.newCarrier && (() => {
+                              const newCarrierObj = (carriersData||[]).find(c => c.name === rc.newCarrier);
+                              const forms = (newCarrierObj?.forms||[]);
+                              const oldCarrierObj = (carriersData||[]).find(c => c.name === cat.carrier);
+                              const oldForms = (oldCarrierObj?.forms||[]);
+                              if (!forms.length && !oldForms.length) return null;
+                              return (
+                                <div style={{ marginTop: 8 }}>
+                                  {forms.length > 0 && <>
+                                    <div style={{ fontSize: 11, color: "#7c3aed", fontWeight: 600, marginBottom: 4 }}>
+                                      New carrier forms ({rc.newCarrier}):
+                                    </div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                                      {forms.map((f,i) => (
+                                        <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 99,
+                                          background: "#ede9fe", border: "1px solid #c4b5fd", color: "#7c3aed", fontWeight: 600 }}>
+                                          {f.name}{f.deadline ? ` — ${f.deadline}` : ""}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </>}
+                                  {oldForms.length > 0 && <>
+                                    <div style={{ fontSize: 11, color: "#7c3aed", fontWeight: 600, marginBottom: 4 }}>
+                                      Termination forms ({cat.carrier}):
+                                    </div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                      {oldForms.map((f,i) => (
+                                        <span key={i} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 99,
+                                          background: "#f5f3ff", border: "1px solid #c4b5fd", color: "#7c3aed", fontWeight: 500 }}>
+                                          {f.name}{f.deadline ? ` — ${f.deadline}` : ""}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </>}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── ③ OPEN ENROLLMENT ── */}
+                      <div style={subHdr}>③ Open enrollment</div>
+                      <div style={{ background: "#fff", borderRadius: 8, padding: "10px 12px",
+                        border: "1px solid #fde68a" }}>
+
+                        {/* OE dates + type */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                            OE start
+                            <DateInput value={rc.oeStartDate || data.openEnrollment?.oeStartDate || ""}
+                              onChange={v => {
+                                setRCB(cat.id, { oeStartDate: v });
+                                if (isMedical) setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment||{}), oeStartDate: v } }));
+                              }}
+                              style={{ ...inputStyle, marginTop: 3 }} />
+                          </label>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                            OE end
+                            <DateInput value={rc.oeEndDate || data.openEnrollment?.oeEndDate || ""}
+                              onChange={v => {
+                                setRCB(cat.id, { oeEndDate: v });
+                                if (isMedical) setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment||{}), oeEndDate: v } }));
+                              }}
+                              style={{ ...inputStyle, marginTop: 3 }} />
+                          </label>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                            OE type
+                            <select value={rc.oeType || data.openEnrollment?.oeType || ""}
+                              onChange={e => {
+                                setRCB(cat.id, { oeType: e.target.value });
+                                if (isMedical) setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment||{}), oeType: e.target.value } }));
+                              }}
+                              style={{ ...inputStyle, marginTop: 3 }}>
+                              <option value="">— Select —</option>
+                              {["Active","Passive","Semi-Active"].map(o => <option key={o}>{o}</option>)}
+                            </select>
+                          </label>
+                          <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>
+                            EE meeting type
+                            <select value={rc.eeMeetingType || ""}
+                              onChange={e => setRCB(cat.id, { eeMeetingType: e.target.value })}
+                              style={{ ...inputStyle, marginTop: 3 }}>
+                              <option value="">— Select —</option>
+                              {["In-Person","Webinar","Video","Self-Serve","None"].map(o => <option key={o}>{o}</option>)}
+                            </select>
+                          </label>
+                        </div>
+
+                        {/* Translation needed */}
+                        <label style={{ ...chkLabel, marginBottom: 10 }}>
+                          <input type="checkbox"
+                            checked={!!rc.translationNeeded}
+                            onChange={e => setRCB(cat.id, { translationNeeded: e.target.checked })}
+                            style={{ accentColor: "#0284c7", width: 14, height: 14 }} />
+                          Translation / language services needed
+                        </label>
+
+                        {/* Materials */}
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#475569",
+                          letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 5 }}>
+                          Required materials
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+                          {OE_MATERIALS.map(m => {
+                            const on = !!(rc.materials || {})[m.id];
+                            return (
+                              <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 5,
+                                cursor: "pointer", padding: "4px 10px", borderRadius: 99, fontSize: 11,
+                                background: on ? "#e6f1fb" : "#f1f5f9",
+                                border: `1px solid ${on ? "#3b82f6" : "#e2e8f0"}`,
+                                color: on ? "#1d4ed8" : "#64748b", fontWeight: on ? 700 : 400 }}>
+                                <input type="checkbox" checked={on}
+                                  onChange={() => setRCB(cat.id, {
+                                    materials: { ...(rc.materials||{}), [m.id]: !on }
+                                  })}
+                                  style={{ display: "none" }} />
+                                {on ? "✓ " : ""}{m.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        {/* OE Tasks */}
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#475569",
+                          letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 5 }}>
+                          OE tasks
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {OE_TASKS.map(t => {
+                            const ts = (rc.oeTasks || {})[t.id] || {};
+                            const done = ts.status === "Complete";
+                            return (
+                              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8,
+                                padding: "5px 8px", borderRadius: 7,
+                                background: done ? "#f0fdf4" : "#f8fafc",
+                                border: `1px solid ${done ? "#86efac" : "#e2e8f0"}` }}>
+                                <input type="checkbox" checked={done}
+                                  onChange={() => setRCB(cat.id, {
+                                    oeTasks: { ...(rc.oeTasks||{}), [t.id]: { ...ts, status: done ? "Not Started" : "Complete",
+                                      completedDate: done ? "" : new Date().toISOString().split("T")[0] } }
+                                  })}
+                                  style={{ accentColor: "#22c55e", width: 14, height: 14 }} />
+                                <span style={{ fontSize: 12, flex: 1,
+                                  textDecoration: done ? "line-through" : "none",
+                                  color: done ? "#166534" : "#334155",
+                                  fontWeight: done ? 600 : 400 }}>{t.label}</span>
+                                {done && ts.completedDate && (
+                                  <span style={{ fontSize: 10, color: "#16a34a" }}>
+                                    {new Date(ts.completedDate+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"})}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
                     </div>
                   </div>
-                </div>
                 );
               })()}
+
+
+              {/* ── Pre-Renewal Tasks ── */}
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e",
+                letterSpacing: "1px", textTransform: "uppercase",
+                paddingTop: 8, borderTop: "1px solid #fde68a", marginTop: 4 }}>
+                Pre-Renewal Tasks
+              </div>
 
               {/* Ancillary Renewal Status — per line */}
               {(() => {
@@ -5009,7 +5543,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           </label>
                           {/* Date received */}
                           <DateInput  value={stored.date || ""}
-                            onChange={e => setAnc("date", e.target.value)}
+                            onChange={v => setAnc("date", v)}
                             disabled={!stored.received}
                             style={{ ...inputStyle, marginTop: 0, padding: "3px 6px", fontSize: 11,
                               opacity: stored.received ? 1 : 0.35, background: stored.received ? "#fff" : "#f8fafc" }} />
@@ -5081,21 +5615,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             <select value={task.assignee} onChange={e => setTask("preRenewal", t.id, "assignee", e.target.value)}
                               style={{ ...inputStyle, marginTop: 3 }}>
                               <option value="">— Unassigned —</option>
-                              {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                              {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                             </select>
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Due Date
                             <DateInput  value={task.dueDate}
-                              onChange={e => setTask("preRenewal", t.id, "dueDate", e.target.value)}
+                              onChange={v => setTask("preRenewal", t.id, "dueDate", v)}
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Date Completed
                             <DateInput  value={task.completedDate || ""}
-                              onChange={e => {
-                                setTask("preRenewal", t.id, "completedDate", e.target.value);
-                                if (e.target.value) setTask("preRenewal", t.id, "status", "Complete");
+                              onChange={v => {
+                                setTask("preRenewal", t.id, "completedDate", v);
+                                if (v) setTask("preRenewal", t.id, "status", "Complete");
                               }}
                               style={{ ...inputStyle, marginTop: 3,
                                 background: task.completedDate ? "#f0fdf4" : "#fff",
@@ -5493,18 +6027,18 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
                           })} style={{ ...inputStyle, marginTop: 3 }}>
                             <option value="">— Unassigned —</option>
-                            {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                            {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
-                          <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
-                            const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
+                          <DateInput  value={t.dueDate||""} onChange={v => setData(p => {
+                            const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],dueDate:v};
                             return {...p,preRenewal:{...p.preRenewal,__extra:ex}};
                           })} style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
-                          <DateInput  value={t.completedDate||""} onChange={e => {
-                            const val=e.target.value;
+                          <DateInput  value={t.completedDate||""} onChange={v => {
+                            const val=v;
                             setData(p => { const ex=[...(p.preRenewal?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,preRenewal:{...p.preRenewal,__extra:ex}}; });
                           }} style={{ ...inputStyle, marginTop: 3, background: t.completedDate?"#f0fdf4":"#fff", borderColor: t.completedDate?"#86efac":undefined }} />
                         </label>
@@ -5561,7 +6095,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
               </div>
             </div>
 
-          </div>)} {/* end preRenewal tab */}
+          </div>)} {/* end renewalCycle tab */}
 
           {/* Renewal */}
           {taskTab === "renewal" && (<div>
@@ -5604,18 +6138,18 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             <select value={rm.assignee || ""} onChange={e => setRM("assignee", e.target.value)}
                               style={{ ...inputStyle, marginTop: 3 }}>
                               <option value="">— Unassigned —</option>
-                              {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                              {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                             </select>
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Due Date
-                            <DateInput  value={rm.dueDate || ""} onChange={e => setRM("dueDate", e.target.value)}
+                            <DateInput  value={rm.dueDate || ""} onChange={v => setRM("dueDate", v)}
                               style={{ ...inputStyle, marginTop: 3 }} />
                           </label>
                           <label style={{ ...labelStyle, marginTop: 0 }}>
                             Date Completed
                             <DateInput  value={rm.completedDate || ""}
-                              onChange={e => { const v = e.target.value; setRM("completedDate", v); if (v) setRM("status", "Complete"); }}
+                              onChange={v => { setRM("completedDate", v); if (v) setRM("status", "Complete"); }}
                               style={{ ...inputStyle, marginTop: 3,
                                 background: rm.completedDate ? "#f0fdf4" : "#fff",
                                 borderColor: rm.completedDate ? "#86efac" : undefined }} />
@@ -5661,7 +6195,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Meeting Date
                                 <DateInput  value={rm.meetingDate || ""}
-                                  onChange={e => setRM("meetingDate", e.target.value)}
+                                  onChange={v => setRM("meetingDate", v)}
                                   style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -5776,20 +6310,19 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                   onChange={e => setAutoTask(at.key, "assignee", e.target.value)}
                                   style={{ ...inputStyle, marginTop: 3 }}>
                                   <option value="">— Unassigned —</option>
-                                  {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                                  {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                                 </select>
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Due Date
                                 <DateInput  value={dueDate}
-                                  onChange={e => setAutoTask(at.key, "dueDate", e.target.value)}
+                                  onChange={v => setAutoTask(at.key, "dueDate", v)}
                                   style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>
                                 Date Completed
                                 <DateInput  value={stored.completedDate || ""}
-                                  onChange={e => {
-                                    const v = e.target.value;
+                                  onChange={v => {
                                     setAutoTask(at.key, "completedDate", v);
                                     if (v) setAutoTask(at.key, "status", "Complete");
                                   }}
@@ -5862,20 +6395,19 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           <select value={t.assignee || ""} onChange={e => setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], assignee: e.target.value }; return { ...p, renewalTasks: rt }; })}
                             style={{ ...inputStyle, marginTop: 3 }}>
                             <option value="">— Unassigned —</option>
-                            {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                            {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Due Date
                           <DateInput  value={t.dueDate || ""}
-                            onChange={e => setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], dueDate: e.target.value }; return { ...p, renewalTasks: rt }; })}
+                            onChange={v => setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], dueDate: v }; return { ...p, renewalTasks: rt }; })}
                             style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Date Completed
                           <DateInput  value={t.completedDate || ""}
-                            onChange={e => {
-                              const v = e.target.value;
+                            onChange={v => {
                               setData(p => { const rt = [...(p.renewalTasks||[])]; rt[idx] = { ...rt[idx], completedDate: v, ...(v ? { status: "Complete" } : {}) }; return { ...p, renewalTasks: rt }; });
                             }}
                             style={{ ...inputStyle, marginTop: 3,
@@ -5948,11 +6480,11 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <label style={{ ...labelStyle, marginTop: 0 }}>
                     Start Date
-                    <DateInput  value={oe.oeStartDate || ""} onChange={e => setOE("oeStartDate", e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
+                    <DateInput  value={oe.oeStartDate || ""} onChange={v => setOE("oeStartDate", v)} style={{ ...inputStyle, marginTop: 3 }} />
                   </label>
                   <label style={{ ...labelStyle, marginTop: 0 }}>
                     End Date
-                    <DateInput  value={oe.oeEndDate || ""} onChange={e => setOE("oeEndDate", e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
+                    <DateInput  value={oe.oeEndDate || ""} onChange={v => setOE("oeEndDate", v)} style={{ ...inputStyle, marginTop: 3 }} />
                   </label>
                 </div>
               </div>
@@ -6092,21 +6624,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <select value={task.assignee} onChange={e => setOETask(t.id, "assignee", e.target.value)}
                                 style={{ ...inputStyle, marginTop: 3 }}>
                                 <option value="">— Unassigned —</option>
-                                {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                                {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                               </select>
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Due Date
                               <DateInput  value={task.dueDate}
-                                onChange={e => setOETask(t.id, "dueDate", e.target.value)}
+                                onChange={v => setOETask(t.id, "dueDate", v)}
                                 style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Date Completed
                               <DateInput  value={task.completedDate}
-                                onChange={e => {
-                                  setOETask(t.id, "completedDate", e.target.value);
-                                  if (e.target.value) setOETask(t.id, "status", "Complete");
+                                onChange={v => {
+                                  setOETask(t.id, "completedDate", v);
+                                  if (v) setOETask(t.id, "status", "Complete");
                                 }}
                                 style={{ ...inputStyle, marginTop: 3,
                                   background: task.completedDate ? "#f0fdf4" : "#fff",
@@ -6163,18 +6695,18 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                   return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} style={{ ...inputStyle, marginTop: 3 }}>
                                   <option value="">— Unassigned —</option>
-                                  {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                                  {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                                 </select>
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
-                                <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
-                                  const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
+                                <DateInput  value={t.dueDate||""} onChange={v => setData(p => {
+                                  const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],dueDate:v};
                                   return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}};
                                 })} style={{ ...inputStyle, marginTop: 3 }} />
                               </label>
                               <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
-                                <DateInput  value={t.completedDate||""} onChange={e => {
-                                  const val=e.target.value;
+                                <DateInput  value={t.completedDate||""} onChange={v => {
+                                  const val=v;
                                   setData(p => { const ex=[...(p.openEnrollment?.tasks?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,openEnrollment:{...p.openEnrollment,tasks:{...(p.openEnrollment?.tasks||{}),__extra:ex}}}; });
                                 }} style={{ ...inputStyle, marginTop: 3, background:t.completedDate?"#f0fdf4":"#fff", borderColor:t.completedDate?"#86efac":undefined }} />
                               </label>
@@ -6324,18 +6856,18 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                               <select value={stored.assignee || defaultAssignee} onChange={e => setPOF(task.id, "assignee", e.target.value)}
                                 style={{ ...inputStyle, marginTop: 3 }}>
                                 <option value="">— Unassigned —</option>
-                                {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                                {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                               </select>
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Due Date
-                              <DateInput  value={stored.dueDate || ""} onChange={e => setPOF(task.id, "dueDate", e.target.value)}
+                              <DateInput  value={stored.dueDate || ""} onChange={v => setPOF(task.id, "dueDate", v)}
                                 style={{ ...inputStyle, marginTop: 3 }} />
                             </label>
                             <label style={{ ...labelStyle, marginTop: 0 }}>
                               Date Completed
                               <DateInput  value={stored.completedDate || ""}
-                                onChange={e => { const v = e.target.value; setPOF(task.id, "completedDate", v); if (v) setPOF(task.id, "status", "Complete"); }}
+                                onChange={v => { setPOF(task.id, "completedDate", v); if (v) setPOF(task.id, "status", "Complete"); }}
                                 style={{ ...inputStyle, marginTop: 3,
                                   background: stored.completedDate ? "#f0fdf4" : "#fff",
                                   borderColor: stored.completedDate ? "#86efac" : undefined }} />
@@ -6418,19 +6950,19 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                           <select value={t.assignee || ""} onChange={e => setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], assignee: e.target.value }; return { ...p, postOETasks: pt }; })}
                             style={{ ...inputStyle, marginTop: 3 }}>
                             <option value="">— Unassigned —</option>
-                            {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                            {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Due Date
                           <DateInput  value={t.dueDate || ""}
-                            onChange={e => setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], dueDate: e.target.value }; return { ...p, postOETasks: pt }; })}
+                            onChange={v => setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], dueDate: v }; return { ...p, postOETasks: pt }; })}
                             style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Date Completed
                           <DateInput  value={t.completedDate || ""}
-                            onChange={e => { const v = e.target.value; setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], completedDate: v, ...(v ? { status: "Complete" } : {}) }; return { ...p, postOETasks: pt }; }); }}
+                            onChange={v => { setData(p => { const pt = [...(p.postOETasks||[])]; pt[idx] = { ...pt[idx], completedDate: v, ...(v ? { status: "Complete" } : {}) }; return { ...p, postOETasks: pt }; }); }}
                             style={{ ...inputStyle, marginTop: 3,
                               background: t.completedDate ? "#f0fdf4" : "#fff",
                               borderColor: t.completedDate ? "#86efac" : undefined }} />
@@ -6581,7 +7113,7 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                   <select value={task.assignee} onChange={e => setTask("compliance", t.id, "assignee", e.target.value)}
                                     style={{ ...inputStyle, marginTop: 3 }}>
                                     <option value="">— Unassigned —</option>
-                                    {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                                    {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                                   </select>
                                 </label>
                                 <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -6595,16 +7127,16 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                                     </div>
                                   ) : (
                                     <DateInput  value={task.dueDate}
-                                      onChange={e => setTask("compliance", t.id, "dueDate", e.target.value)}
+                                      onChange={v => setTask("compliance", t.id, "dueDate", v)}
                                       style={{ ...inputStyle, marginTop: 3 }} />
                                   )}
                                 </label>
                                 <label style={{ ...labelStyle, marginTop: 0 }}>
                                   Date Completed
                                   <DateInput  value={task.completedDate || ""}
-                                    onChange={e => {
-                                      setTask("compliance", t.id, "completedDate", e.target.value);
-                                      if (e.target.value) setTask("compliance", t.id, "status", "Complete");
+                                    onChange={v => {
+                                      setTask("compliance", t.id, "completedDate", v);
+                                      if (v) setTask("compliance", t.id, "status", "Complete");
                                     }}
                                     style={{ ...inputStyle, marginTop: 3,
                                       background: task.completedDate ? "#f0fdf4" : "#fff",
@@ -6667,18 +7199,18 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             return {...p,compliance:{...p.compliance,__extra:ex}};
                           })} style={{ ...inputStyle, marginTop: 3 }}>
                             <option value="">— Unassigned —</option>
-                            {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                            {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Due Date
-                          <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
-                            const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],dueDate:e.target.value};
+                          <DateInput  value={t.dueDate||""} onChange={v => setData(p => {
+                            const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],dueDate:v};
                             return {...p,compliance:{...p.compliance,__extra:ex}};
                           })} style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>Date Completed
-                          <DateInput  value={t.completedDate||""} onChange={e => {
-                            const val=e.target.value;
+                          <DateInput  value={t.completedDate||""} onChange={v => {
+                            const val=v;
                             setData(p => { const ex=[...(p.compliance?.__extra||[])]; ex[idx]={...ex[idx],completedDate:val,status:val?"Complete":ex[idx].status}; return {...p,compliance:{...p.compliance,__extra:ex}}; });
                           }} style={{ ...inputStyle, marginTop: 3, background:t.completedDate?"#f0fdf4":"#fff", borderColor:t.completedDate?"#86efac":undefined }} />
                         </label>
@@ -6797,21 +7329,21 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                             return { ...p, miscTasks: tasks };
                           })} style={{ ...inputStyle, marginTop: 3 }}>
                             <option value="">— Unassigned —</option>
-                            {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                            {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                           </select>
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Due Date
-                          <DateInput  value={t.dueDate||""} onChange={e => setData(p => {
+                          <DateInput  value={t.dueDate||""} onChange={v => setData(p => {
                             const tasks = [...(p.miscTasks||[])];
-                            tasks[idx] = { ...tasks[idx], dueDate: e.target.value };
+                            tasks[idx] = { ...tasks[idx], dueDate: v };
                             return { ...p, miscTasks: tasks };
                           })} style={{ ...inputStyle, marginTop: 3 }} />
                         </label>
                         <label style={{ ...labelStyle, marginTop: 0 }}>
                           Date Completed
-                          <DateInput  value={t.completedDate||""} onChange={e => {
-                            const val = e.target.value;
+                          <DateInput  value={t.completedDate||""} onChange={v => {
+                            const val = v;
                             setData(p => {
                               const tasks = [...(p.miscTasks||[])];
                               tasks[idx] = { ...tasks[idx], completedDate: val, status: val ? "Complete" : tasks[idx].status };
@@ -6849,10 +7381,10 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                         {(t.followUps||[]).map((fu, fi) => (
                           <div key={fu.id || fi} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
                             <DateInput  value={fu.date||""}
-                              onChange={e => setData(p => {
+                              onChange={v => setData(p => {
                                 const tasks = [...(p.miscTasks||[])];
                                 const fus = [...(tasks[idx].followUps||[])];
-                                fus[fi] = { ...fus[fi], date: e.target.value };
+                                fus[fi] = { ...fus[fi], date: v };
                                 tasks[idx] = { ...tasks[idx], followUps: fus };
                                 return { ...p, miscTasks: tasks };
                               })}
@@ -6948,103 +7480,40 @@ function ClientModal({ client, onSave, onClose, tasksDb, onSaveCarrier, dueDateR
                 </div>
               )}
 
-              {(data.transactions||[]).map((txn, ti) => (
-                <div key={txn.id || ti} style={{ background: "#fdf4ff", borderRadius: 10, border: "1.5px solid #f0abfc", padding: "12px 14px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                    <label style={{ ...labelStyle, marginTop: 0 }}>
-                      Member Name
-                      <input value={txn.memberName||""} placeholder="Employee / Dependent"
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,memberName:e.target.value,label:[e.target.value,t.changeType].filter(Boolean).join(' – ')}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3 }} />
-                    </label>
-                    <label style={{ ...labelStyle, marginTop: 0 }}>
-                      Change Type
-                      <select value={txn.changeType||""}
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,changeType:e.target.value,label:[t.memberName,e.target.value].filter(Boolean).join(' – ')}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3 }}>
-                        <option value="">— Select —</option>
-                        {([...(transactionTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)).map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </label>
-                    <label style={{ ...labelStyle, marginTop: 0 }}>
-                      Date Received
-                      <DateInput  value={txn.receivedDate||""}
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,receivedDate:e.target.value}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3 }} />
-                    </label>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                    <label style={{ ...labelStyle, marginTop: 0 }}>
-                      Description
-                      <input value={txn.label||""} placeholder="Brief description..."
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,label:e.target.value}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3 }} />
-                    </label>
-                    <label style={{ ...labelStyle, marginTop: 0 }}>
-                      Assignee
-                      <select value={txn.assignee||""}
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,assignee:e.target.value}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3 }}>
-                        <option value="">— Unassigned —</option>
-                        {teamMembers.map(m=><option key={m}>{m}</option>)}
-                      </select>
-                    </label>
-                    <label style={{ ...labelStyle, marginTop: 0 }}>
-                      Due Date
-                      <DateInput  value={txn.dueDate||""}
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,dueDate:e.target.value}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3 }} />
-                    </label>
-                    <div style={{ ...labelStyle, marginTop: 0 }}>
-                      Status
-                      <div style={{ marginTop: 5 }}>
-                        <StatusSelect value={txn.status||"Not Started"}
-                          onChange={v => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,status:v}:t) }))} />
-                      </div>
+              {(data.transactions||[]).length > 0 && (() => {
+                const cols = "2fr 1.6fr 120px 130px 110px 110px 110px 36px";
+                const hdrCell = { fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" };
+                const cellInp = { ...inputStyle, marginTop: 0, fontSize: 12, padding: "5px 8px" };
+                return (
+                  <div style={{ border: "1.5px solid #f0abfc", borderRadius: 10, overflow: "hidden", marginTop: 4 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "7px 10px", background: "#fdf4ff", borderBottom: "1px solid #f0abfc", alignItems: "center" }}>
+                      {["Member","Type","Status","Assignee","Received","Due","Completed",""].map(h => (
+                        <div key={h} style={hdrCell}>{h}</div>
+                      ))}
                     </div>
+                    {(data.transactions||[]).map((txn, ti) => (
+                      <TxnRow
+                        key={txn.id || ti}
+                        txn={txn}
+                        ti={ti}
+                        cols={cols}
+                        cellInp={cellInp}
+                        teamMembers={teamMembers}
+                        transactionTypesLibrary={transactionTypesLibrary}
+                        inputStyle={inputStyle}
+                        onUpdate={(idx, patch) => { setData(p => ({
+                          ...p,
+                          transactions: p.transactions.map((t,i) => i===idx ? {...t,...patch} : t)
+                        })); setIsDirty(true); }}
+                        onRemove={() => {
+                          if (confirm("Remove this transaction?"))
+                            { setData(p => ({ ...p, transactions: p.transactions.filter((_,i)=>i!==ti) })); setIsDirty(true); }
+                        }}
+                      />
+                    ))}
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", flex: 1, marginRight: 8 }}>
-                      Notes
-                      <input value={txn.notes||""} placeholder="Additional notes..."
-                        onChange={e => setData(p => ({ ...p, transactions: p.transactions.map((t,i)=>i===ti?{...t,notes:e.target.value}:t) }))}
-                        style={{ ...inputStyle, marginTop: 3, fontSize: 11 }} />
-                    </label>
-                    <button type="button" onClick={() => {
-                      if (confirm("Remove this transaction?"))
-                        setData(p => ({ ...p, transactions: p.transactions.filter((_,i)=>i!==ti) }));
-                    }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, flexShrink: 0, marginTop: 16,
-                      border: "1.5px solid #fca5a5", background: "#fee2e2", color: "#991b1b",
-                      cursor: "pointer", fontFamily: "inherit" }}>Remove</button>
-                  </div>
-                  <>
-                  {/* Follow-ups */}
-                  <FollowUpBlock
-                    followUps={(txn.followUps||[])}
-                    onAdd={() => setData(p => {
-                      const arr=[...p.transactions];
-                      arr[ti]={...arr[ti],followUps:[...(arr[ti].followUps||[]),{id:Date.now(),date:new Date().toISOString().split("T")[0],note:""}]};
-                      return {...p,transactions:arr};
-                    })}
-                    onChangeDate={(fi, v) => setData(p => {
-                      const arr=[...p.transactions]; const fus=[...(arr[ti].followUps||[])];
-                      fus[fi]={...fus[fi],date:v}; arr[ti]={...arr[ti],followUps:fus};
-                      return {...p,transactions:arr};
-                    })}
-                    onChangeNote={(fi, v) => setData(p => {
-                      const arr=[...p.transactions]; const fus=[...(arr[ti].followUps||[])];
-                      fus[fi]={...fus[fi],note:v}; arr[ti]={...arr[ti],followUps:fus};
-                      return {...p,transactions:arr};
-                    })}
-                    onRemove={(fi) => setData(p => {
-                      const arr=[...p.transactions];
-                      arr[ti]={...arr[ti],followUps:(arr[ti].followUps||[]).filter((_,i)=>i!==fi)};
-                      return {...p,transactions:arr};
-                    })}
-                  />
-                  </>
-                </div>
-              ))}
+                );
+              })()}
             </div>
           </div>)} {/* end transactions tab */}
 
@@ -7173,7 +7642,7 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
       (t.material === "translation" && oe.translationNeeded)
     );
     const cats = [
-      { id: "preRenewal", label: "Pre-Renewal",
+      { id: "renewalCycle", label: "Renewal Cycle",
         tasks: PRERENEWAL_TASKS.filter(t => !t.acaOnly || client.marketSize === "ACA").map(t => getTaskStatus((client.preRenewal || {})[t.id])) },
       ...((() => {
         const rm = client.renewalMeeting;
@@ -7425,7 +7894,7 @@ function ClientCard({ client, onEdit, onDelete, tasksDb, currentUser }) {
               const done  = cat.tasks.filter(t=>t==="Complete"||t==="N/A").length;
               const total = cat.tasks.length;
               const pct   = total ? Math.round((done/total)*100) : 0;
-              const sectionMap = { preRenewal:"prerenewal", renewal:"renewal", oe:"oe", postOE:"postoe", compliance:"compliance" };
+              const sectionMap = { renewalCycle:"prerenewal", preRenewal:"prerenewaltasks", renewal:"renewal", oe:"oe", postOE:"postoe", compliance:"compliance" };
               const section = sectionMap[cat.id] || "overview";
               return (
                 <div key={cat.id}
@@ -7895,7 +8364,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
             <label style={{ ...labelStyle, marginTop: 0 }}>
               Meeting Date
               <DateInput  value={form.date}
-                onChange={e => setForm(p => ({ ...p, date: e.target.value }))}
+                onChange={v => setForm(p => ({ ...p, date: v }))}
                 style={{ ...inputStyle, marginTop: 3 }} />
             </label>
             <label style={{ ...labelStyle, marginTop: 0 }}>
@@ -7997,7 +8466,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                         {(form.attendees || []).map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                       <DateInput  value={item.dueDate || ""}
-                        onChange={e => setForm(p => { const a = [...p.actionItems]; a[ai] = { ...a[ai], dueDate: e.target.value }; return { ...p, actionItems: a }; })}
+                        onChange={v => setForm(p => { const a = [...p.actionItems]; a[ai] = { ...a[ai], dueDate: v }; return { ...p, actionItems: a }; })}
                         style={{ ...inputStyle, fontSize: 11, flex: 1, minWidth: 120 }} />
                       <select value={item.clientId || ""}
                         onChange={e => setForm(p => { const a = [...p.actionItems]; a[ai] = { ...a[ai], clientId: e.target.value }; return { ...p, actionItems: a }; })}
@@ -8044,8 +8513,8 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                       fontSize: 12, fontFamily: "inherit" }}>
                     <option value="All">All Categories</option>
                     {((taskTypesLibrary && taskTypesLibrary.length)
-                      ? [...taskTypesLibrary].sort((a,b) => (a.order??0)-(b.order??0)).map(t => t.label)
-                      : ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing","Transactions"]
+                      ? [...taskTypesLibrary].sort((a,b) => (a.order??0)-(b.order??0)).map(t => t.label).filter(l => l !== "Transactions")
+                      : ["Pre-Renewal","Renewal","Open Enrollment","Post-OE","Compliance","Miscellaneous","Ongoing"]
                     ).map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <select value={taskFilterAssign} onChange={e => setTaskFilterAssign(e.target.value)}
@@ -8220,8 +8689,8 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
                                     </span>
                                   )}
                                   <DateInput  value={rev.newDue}
-                                    onChange={e => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r =>
-                                      r.key === key ? { ...r, newDue: e.target.value } : r
+                                    onChange={v => setForm(p => ({ ...p, taskReviews: p.taskReviews.map(r =>
+                                      r.key === key ? { ...r, newDue: v } : r
                                     )}))}
                                     style={{ ...inputStyle, marginTop: 0, fontSize: 12,
                                       borderColor: slipped ? "#f59e0b" : undefined,
@@ -8488,7 +8957,7 @@ function MeetingsView({ meetings, onSave, clients, teams, onUpdateClient, tasksD
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 
-const SAMPLE_CLIENTS = [{"id":1,"name":"Spring-Green","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":2,"name":"Felipe's","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":3,"name":"Chicago Flameproof","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"1) $100 extra to the dependent cost; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":4,"name":"Tri-City","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"1) dependent cost: 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":5,"name":"Shred 415","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":6,"name":"J Jordan Inc.","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":7,"name":"RWE P&D","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":8,"name":"C A Larson (OWM)","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":9,"name":"First Choice Dental Lab","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":10,"name":"VNA","renewalDate":"2027-01-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":11,"name":"Eyas Landing","renewalDate":"2027-01-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":12,"name":"Cyl-Tec","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":13,"name":"Rosary","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":14,"name":"Biologos","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":15,"name":"Share Machine","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":16,"name":"Village Bible Church","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":17,"name":"ICT/HTC","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":18,"name":"Collaborative Office Solutions","renewalDate":"2027-01-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Kaiser"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":19,"name":"Kaiperm","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Kaiser"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":20,"name":"Aux, LLC (CU Network)","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":21,"name":"Plexcity","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":22,"name":"OCUL","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":23,"name":"CCUL","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":24,"name":"MDDC","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["CareFirst"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":25,"name":"CULCT","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":26,"name":"Humanidei (O'Rourke)","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":27,"name":"Hamilton Horizons","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":28,"name":"WCUNA","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":29,"name":"Mid-America (DACU)","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSND"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":30,"name":"Axis Design","renewalDate":"2027-02-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Aetna"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2028-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2028-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2028-07-31","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-08-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-11-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-11-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-11-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-11-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-02-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":31,"name":"SERVA","renewalDate":"2027-03-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Cigna"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2028-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2028-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2028-07-31","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-09-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-12-01","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-12-01","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-12-01","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-03-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":32,"name":"NASCUS","renewalDate":"2026-04-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["CareFirst"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-10-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2025-12-31","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2025-12-31","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2025-12-31","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2025-12-31","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-04-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":33,"name":"TBJ Drywall","renewalDate":"2026-04-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-10-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2025-12-31","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2025-12-31","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2025-12-31","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-04-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":34,"name":"MAC Electrical","renewalDate":"2026-05-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-11-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-01-30","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-01-30","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-01-30","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-01-30","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-05-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":35,"name":"Marberry","renewalDate":"2026-05-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-11-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-01-30","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-01-30","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-01-30","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-05-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":36,"name":"Anesthesia Assoc.","renewalDate":"2026-06-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-12-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-03-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-06-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":37,"name":"Patroness (LUCI)","renewalDate":"2026-06-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSTN"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-12-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-03-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-06-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":38,"name":"Ivy League Kids","renewalDate":"2026-06-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-12-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-03-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-06-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":39,"name":"RWE","renewalDate":"2026-07-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-01-29","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-04-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-07-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":40,"name":"RWE M&D","renewalDate":"2026-07-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-01-29","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-04-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-07-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":41,"name":"New Wave","renewalDate":"2026-07-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-01-29","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-04-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-04-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-07-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":42,"name":"NAFD","renewalDate":"2026-08-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-02-26","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-05-01","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-05-01","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-05-01","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-08-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":43,"name":"Crosby & Trahan","renewalDate":"2026-09-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":44,"name":"Hollywood Home","renewalDate":"2026-09-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BSC/Kaiser"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":45,"name":"OCS","renewalDate":"2026-09-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":46,"name":"NACUSO","renewalDate":"2026-09-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Anthem of MI"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":47,"name":"HPC","renewalDate":"2026-10-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UMR"],"fundingMethod":"Self-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":48,"name":"CDP","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":49,"name":"Amer Surveying","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":50,"name":"ADT Corp","renewalDate":"2026-10-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":51,"name":"Carriere-Stumm","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":52,"name":"DuPage Precision","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":53,"name":"GreatBanc","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":54,"name":"Ferguson Roofing","renewalDate":"2026-10-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-07-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":55,"name":"J&R Herra","renewalDate":"2026-11-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-05-28","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-11-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":56,"name":"Walsh Long","renewalDate":"2026-11-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-05-28","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-11-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":57,"name":"DAE","renewalDate":"2026-11-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Cigna"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-05-28","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-08-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-11-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":58,"name":"Nadler Golf","renewalDate":"2026-12-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":59,"name":"CIFII/Fontana","renewalDate":"2026-12-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":60,"name":"Moline Bearing","renewalDate":"2026-12-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":61,"name":"Honey Can Do","renewalDate":"2026-12-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":62,"name":"CUANM","renewalDate":"2026-12-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":63,"name":"Synergy Builders","renewalDate":"2026-12-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"}];
+const SAMPLE_CLIENTS = [{"id":1,"name":"Spring-Green","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":2,"name":"Felipe's","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":3,"name":"Chicago Flameproof","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"1) $100 extra to the dependent cost; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":4,"name":"Tri-City","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"1) dependent cost: 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":5,"name":"Shred 415","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":6,"name":"J Jordan Inc.","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":7,"name":"RWE P&D","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":8,"name":"C A Larson (OWM)","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":9,"name":"First Choice Dental Lab","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":10,"name":"VNA","renewalDate":"2027-01-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":11,"name":"Eyas Landing","renewalDate":"2027-01-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":12,"name":"Cyl-Tec","renewalDate":"2027-01-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":13,"name":"Rosary","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":14,"name":"Biologos","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":15,"name":"Share Machine","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":16,"name":"Village Bible Church","renewalDate":"2027-01-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":17,"name":"ICT/HTC","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":18,"name":"Collaborative Office Solutions","renewalDate":"2027-01-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Kaiser"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":19,"name":"Kaiperm","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Kaiser"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":20,"name":"Aux, LLC (CU Network)","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":21,"name":"Plexcity","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":22,"name":"OCUL","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":23,"name":"CCUL","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":24,"name":"MDDC","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["CareFirst"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":25,"name":"CULCT","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":26,"name":"Humanidei (O'Rourke)","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":27,"name":"Hamilton Horizons","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":28,"name":"WCUNA","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":29,"name":"Mid-America (DACU)","renewalDate":"2027-01-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSND"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-07-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-10-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-01-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":30,"name":"Axis Design","renewalDate":"2027-02-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Aetna"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2028-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2028-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2028-07-31","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-08-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-11-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-11-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-11-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-11-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-02-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":31,"name":"SERVA","renewalDate":"2027-03-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Cigna"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2028-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2028-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2026-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2028-07-31","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-09-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-12-01","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-12-01","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-12-01","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2027-03-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":32,"name":"NASCUS","renewalDate":"2026-04-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["CareFirst"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-10-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-04-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":33,"name":"TBJ Drywall","renewalDate":"2026-04-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-10-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2025-12-31","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"1) 100%; 2) add to OE","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-04-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":34,"name":"MAC Electrical","renewalDate":"2026-05-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-11-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-05-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":35,"name":"Marberry","renewalDate":"2026-05-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-11-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-01-30","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-05-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":36,"name":"Anesthesia Assoc.","renewalDate":"2026-06-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-12-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-06-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":37,"name":"Patroness (LUCI)","renewalDate":"2026-06-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSTN"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-12-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-06-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":38,"name":"Ivy League Kids","renewalDate":"2026-06-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2026-12-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-03-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-06-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":39,"name":"RWE","renewalDate":"2026-07-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-01-29","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-07-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":40,"name":"RWE M&D","renewalDate":"2026-07-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-01-29","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-07-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":41,"name":"New Wave","renewalDate":"2026-07-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-01-29","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-04-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-07-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":42,"name":"NAFD","renewalDate":"2026-08-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-02-26","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-05-01","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-05-01","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-05-01","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-08-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":43,"name":"Crosby & Trahan","renewalDate":"2026-09-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":44,"name":"Hollywood Home","renewalDate":"2026-09-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BSC/Kaiser"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":45,"name":"OCS","renewalDate":"2026-09-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":46,"name":"NACUSO","renewalDate":"2026-09-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Anthem of MI"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-06-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-09-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":47,"name":"HPC","renewalDate":"2026-10-01","marketSize":"Large","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UMR"],"fundingMethod":"Self-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":48,"name":"CDP","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Complete","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Complete","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":49,"name":"Amer Surveying","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":50,"name":"ADT Corp","renewalDate":"2026-10-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":51,"name":"Carriere-Stumm","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"India","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":52,"name":"DuPage Precision","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":53,"name":"GreatBanc","renewalDate":"2026-10-01","marketSize":"Mid-Market","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":54,"name":"Ferguson Roofing","renewalDate":"2026-10-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-04-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-07-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-10-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":55,"name":"J&R Herra","renewalDate":"2026-11-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-05-28","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-11-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":56,"name":"Walsh Long","renewalDate":"2026-11-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-05-28","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-11-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":57,"name":"DAE","renewalDate":"2026-11-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["Cigna"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Complete","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-05-28","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-08-03","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-11-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":58,"name":"Nadler Golf","renewalDate":"2026-12-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":59,"name":"CIFII/Fontana","renewalDate":"2026-12-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":60,"name":"Moline Bearing","renewalDate":"2026-12-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Level-Funded","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"Not Started","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"},{"id":61,"name":"Honey Can Do","renewalDate":"2026-12-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Complete","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":62,"name":"CUANM","renewalDate":"2026-12-01","marketSize":"ACA","team":"Juliet","benefits":{"medical_ppo":true},"carriers":["UHC"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":""},{"id":63,"name":"Synergy Builders","renewalDate":"2026-12-01","marketSize":"ACA","team":"India","benefits":{"medical_ppo":true},"carriers":["BCBSIL"],"fundingMethod":"Fully Insured","compliance":{"aca_filing":{"status":"Not Started","assignee":"","dueDate":"2027-03-31","completedDate":""},"rxdc":{"status":"Not Started","assignee":"","dueDate":"2027-06-01","completedDate":""},"medicare_d":{"status":"Not Started","assignee":"","dueDate":"2025-10-15","completedDate":""},"pcori":{"status":"N/A","assignee":"","dueDate":"2027-08-02","completedDate":""},"form5500":{"status":"Not Started","assignee":"","dueDate":"2027-06-30","completedDate":""}},"preRenewal":{"renewal_dl":{"status":"Complete","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"bills_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"sbc_dl":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""},"blue_insights":{"status":"Not Started","assignee":"","dueDate":"","completedDate":""},"data_sheet":{"status":"Not Started","assignee":"Kia Walton","dueDate":"2026-09-02","completedDate":""}},"notes":"","benefitActive":{"medical":true},"benefitEffectiveDates":{"medical":"2026-12-01"},"benefitNotes":{},"openEnrollment":{"oeStartDate":"","oeEndDate":"","commType":"","oeType":"","materials":{},"enrollMethod":"","translationNeeded":false,"tasks":{}},"renewalReceived":{"received":false,"date":""},"rateRelief":{"requested":false,"requestedDate":"","received":false,"receivedDate":"","pct":""},"miscTasks":[],"lead":"RG","clientStatus":"Active","clientStatusDate":"","groupSitus":"Illinois"}];
 
 
 const STATE_ABBREVS = [
@@ -8520,6 +8989,29 @@ function applyDataFixes(c) {
   if (!fixed.lead) fixed.lead = "RG";
   // Default blank clientStatus → Active
   if (!fixed.clientStatus) fixed.clientStatus = "Active";
+
+  // Ensure renewalCycle exists
+  if (!fixed.renewalCycle) fixed.renewalCycle = {};
+
+  // Migrate legacy renewalReceived/rateRelief/decisionsReceivedDate into renewalCycle.medical
+  if (!fixed.renewalCycle.medical && (fixed.renewalReceived?.received || fixed.rateRelief?.requested || fixed.decisionsReceivedDate)) {
+    const rv = fixed.renewalReceived || {};
+    const rr = fixed.rateRelief || {};
+    fixed.renewalCycle = {
+      ...fixed.renewalCycle,
+      medical: {
+        received:        !!rv.received,
+        receivedDate:    rv.date || "",
+        renewalPct:      rv.pct || "",
+        rrRequested:     !!rr.requested,
+        rrRequestedDate: rr.requestedDate || "",
+        rrReceived:      !!rr.received,
+        rrReceivedDate:  rr.receivedDate || "",
+        negotiatedPct:   rr.pct || fixed.negotiatedRenewalPct || "",
+        decisionsDate:   fixed.decisionsReceivedDate || "",
+      }
+    };
+  }
 
   // Ensure renewalMeeting exists (added later — may be missing on older records)
   if (!fixed.renewalMeeting) {
@@ -9628,6 +10120,7 @@ export default function App() {
       if (teams)    setTeams(teams);
       if (renewalsData) setRenewals(renewalsData);
       if (stagesData)   setRenewalStages(stagesData);
+      setDataReady(true);
     }
     loadAll();
   }, [currentUserId]);
@@ -9639,6 +10132,7 @@ export default function App() {
     document.head.appendChild(s);
   }, []);
    const [clients, setClientsRaw] = useState([]);
+  const [dataReady, setDataReady] = useState(false);
   const [renewals, setRenewals] = useState([]);
   const [renewalStages, setRenewalStages] = useState([]);
   const [modal, setModal] = useState(null); // null | client object — kept for compatibility
@@ -9736,11 +10230,12 @@ export default function App() {
   function saveClient(data) {
     // Sync standard tasks before saving
     const synced = syncStandardTasks(data, tasksData);
-    const prev = clients.find(c => c.id === synced.id);
-    setClients(prevClients => prevClients.some(c => c.id === synced.id)
-      ? prevClients.map(c => c.id === synced.id ? synced : c)
-      : [...prevClients, synced]);
-    // Sync to Supabase
+    const prev = clients.find(c => String(c.id) === String(synced.id));
+    setClients(prevClients => prevClients.some(c => String(c.id) === String(synced.id))
+      ? [...prevClients.map(c => String(c.id) === String(synced.id) ? { ...synced } : c)]
+      : [...prevClients, { ...synced }]);
+    // Sync to Supabase — upsertClient writes full clientData into data: clientData JSONB blob,
+    // so all fields including transactions are persisted automatically.
     upsertClient(synced);
     // Log activity — detect meaningful field changes
     const changedFields = [];
@@ -10284,7 +10779,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
                               setNotifOpen(false);
                               // Map task group → ClientProfile section id
                               const sectionForGroup = {
-                                preRenewal: "prerenewal",
+                                renewalCycle: "prerenewal",
                                 renewalMeeting: "renewal",
                                 renewalTasksAuto: "renewal",
                                 renewalTasks: "renewal",
@@ -10894,7 +11389,7 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
 
         {/* ── TRANSACTIONS VIEW (global) ── */}
         {view === "transactions" && (
-          <GlobalTransactionsView clients={clients} onOpenClient={openClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} transactionTypesLibrary={transactionTypesLibrary} onUpdateTask={saveClient} />
+          <GlobalTransactionsView clients={clients} onOpenClient={openClient} currentUser={currentUser} userTeamId={userTeamId} userTeams={userTeams} transactionTypesLibrary={transactionTypesLibrary} onUpdateTask={saveClient} dueDateRules={dueDateRules} tasksDb={tasksData} dataReady={dataReady} />
         )}
 
 
@@ -11251,14 +11746,14 @@ const [plansLibrary, setPlansLibraryRaw] = useState(() => {
         </div>
 
       {modal && (() => {
-        const liveClient = clients.find(c => c.id === modal.id) || modal;
+        const liveClient = clients.find(c => String(c.id) === String(modal.id)) || modal;
         return <ClientModal client={liveClient} onSave={saveClient} onClose={() => { setModal(null); setDeepLinkTaskTab(null); setDeepLinkTaskId(null); }} tasksDb={tasksData} onSaveCarrier={setCarriersData} dueDateRules={dueDateRules} benefitsDb={benefitsDb} carriersData={carriersData} currentUser={currentUser} plansLibrary={plansLibrary} marketsLibrary={marketsLibrary} fundingLibrary={fundingLibrary} situsLibrary={situsLibrary} employerTypesLibrary={employerTypesLibrary} employerSizeLibrary={employerSizeLibrary} corporateStructureLibrary={corporateStructureLibrary} transactionTypesLibrary={transactionTypesLibrary} initialTaskTab={deepLinkTaskTab} initialTaskId={deepLinkTaskId} />;
       })()}
 
       {/* Full-page client profile */}
       {view === "client" && selectedClient && (
         <ClientProfile
-          client={clients.find(c => c.id === selectedClient.id) || selectedClient}
+          client={clients.find(c => String(c.id) === String(selectedClient.id)) || selectedClient}
           onSave={saveClient}
           onClose={() => { closeClient(); setDeepLinkSection(null); setDeepLinkBenefit(null); }}
           tasksDb={tasksData}
@@ -11779,12 +12274,12 @@ function ReportsView({ clients, currentUser, teams, carriersData, onBack }) {
             </label>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
               From
-              <DateInput  value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
+              <DateInput  value={filterFrom} onChange={v => setFilterFrom(v)}
                 style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
             </label>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "flex", flexDirection: "column", gap: 4 }}>
               To
-              <DateInput  value={filterTo} onChange={e => setFilterTo(e.target.value)}
+              <DateInput  value={filterTo} onChange={v => setFilterTo(v)}
                 style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
             </label>
             <button onClick={() => { setFilterUser(""); setFilterField(""); setFilterFrom(""); setFilterTo(""); }}
@@ -13493,9 +13988,6 @@ function PlansLibraryView({ plansLibrary, onSave, currentUser }) {
                   <tr style={{ background: "#f8fafc" }}>
                     <th style={{ ...thStyle, width: 28 }}></th>
                     <th style={{ ...thStyle, minWidth: 140 }}>Variant / Design Type</th>
-                    <th style={{ ...thStyle, minWidth: 100 }}>Tax Code</th>
-                    <th style={{ ...thStyle, minWidth: 70 }}>ERISA</th>
-                    <th style={{ ...thStyle, minWidth: 100 }}>NDT</th>
                     <th style={{ ...thStyle, minWidth: 180 }}>Notes</th>
                     <th style={{ ...thStyle, width: 50 }}></th>
                   </tr>
@@ -13516,24 +14008,6 @@ function PlansLibraryView({ plansLibrary, onSave, currentUser }) {
                           style={{ fontSize: 11, padding: "3px 4px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%", fontWeight: 600, color: "#0f172a", background: "#fff" }}
                           disabled={!canEdit}>
                           {(PLAN_TYPES_BY_CATEGORY[activeGroup] || ["Other"]).map(t => <option key={t}>{t}</option>)}
-                        </select>
-                      </td>
-                      <td style={colStyle}>
-                        <input value={v.taxCode || ""} onChange={e => updateVariant(v.id, "taxCode", e.target.value)}
-                          placeholder="e.g. 125" style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit} />
-                      </td>
-                      <td style={colStyle}>
-                        <select value={v.erisa || ""} onChange={e => updateVariant(v.id, "erisa", e.target.value)}
-                          style={{ fontSize: 11, padding: "3px 4px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit}>
-                          <option value="">—</option>
-                          {ERISA_OPTS.map(o => <option key={o}>{o}</option>)}
-                        </select>
-                      </td>
-                      <td style={colStyle}>
-                        <select value={v.ndt || ""} onChange={e => updateVariant(v.id, "ndt", e.target.value)}
-                          style={{ fontSize: 11, padding: "3px 4px", border: "1px solid #e2e8f0", borderRadius: 6, width: "100%" }} disabled={!canEdit}>
-                          <option value="">—</option>
-                          {NDT_OPTS.map(o => <option key={o}>{o}</option>)}
                         </select>
                       </td>
                       <td style={colStyle}>
@@ -14400,8 +14874,8 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
   const catCounts = {};
   records.forEach(b => { catCounts[b.category] = (catCounts[b.category]||0) + 1; });
 
-  const COL_HEADERS = ["Benefit","Category","Plan Design","Variant","Funding Method","Billing Method","Contribution Method","Plan Type (Tax Code)","ERISA","NDT Applicability","Notes",""];
-  const colWidths = "140px 180px 180px 180px 130px 180px 150px 55px 200px 1fr 70px";
+  const COL_HEADERS = ["Benefit","Category","Plan Design","Variant","Funding Method","Billing Method","Contribution Method","Notes",""];
+  const colWidths = "140px 180px 180px 180px 130px 180px 150px 1fr 70px";
 
   const thStyle = { fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: ".7px",
     textTransform: "uppercase", padding: "8px 10px", background: "#f1f5f9",
@@ -14565,48 +15039,7 @@ function BenefitsDbView({ benefitsDb, onSave, currentUser }) {
                       ) : b.contributionMethod}
                     </td>
 
-                    {/* Plan Type */}
-                    <td style={tdStyle}>
-                      {isEditing ? (
-                        <select value={editData.planType||""} onChange={e=>setEditData(p=>({...p,planType:e.target.value}))}
-                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
-                          <option value="">— Select —</option>
-                          {BENEFITS_DB_OPTIONS.planType.map(o=><option key={o}>{o}</option>)}
-                        </select>
-                      ) : b.planType ? (
-                        <span style={{ fontSize:11, fontWeight:700, padding:"1px 7px", borderRadius:99,
-                          background:"#fef3c7", color:"#92400e" }}>{b.planType}</span>
-                      ) : null}
-                    </td>
-
-                    {/* ERISA */}
-                    <td style={{ ...tdStyle, textAlign:"center" }}>
-                      {isEditing ? (
-                        <select value={editData.erisa||""} onChange={e=>setEditData(p=>({...p,erisa:e.target.value}))}
-                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
-                          {BENEFITS_DB_OPTIONS.erisa.map(o=><option key={o}>{o}</option>)}
-                        </select>
-                      ) : (
-                        <span style={{ fontSize:11, fontWeight:800,
-                          color: b.erisa==="Yes" ? "#166534" : "#991b1b" }}>{b.erisa}</span>
-                      )}
-                    </td>
-
-                    {/* NDT */}
-                    <td style={tdStyle}>
-                      {isEditing ? (
-                        <select value={editData.ndtApplicability||""} onChange={e=>setEditData(p=>({...p,ndtApplicability:e.target.value}))}
-                          style={{ width:"100%", border:"1.5px solid #93c5fd", borderRadius:6, padding:"4px 6px", fontSize:11, fontFamily:"inherit", background:"#fff" }}>
-                          <option value="">— Select —</option>
-                          {BENEFITS_DB_OPTIONS.ndtApplicability.map(o=><option key={o}>{o}</option>)}
-                        </select>
-                      ) : b.ndtApplicability ? (
-                        <span style={{ fontSize:11,
-                          color: b.ndtApplicability==="No" ? "#64748b" : "#7c2d12",
-                          fontWeight: b.ndtApplicability==="No" ? 400 : 600 }}>{b.ndtApplicability}</span>
-                      ) : null}
-                    </td>
-
+                    
                     {/* Notes */}
                     <td style={{ ...tdStyle, fontSize:11 }}>
                       {isEditing ? (
@@ -14889,7 +15322,7 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
   //   Active:     borderBottom:"3px solid #3e5878", color:"#3e5878"
   //   Inactive:   borderBottom:"3px solid transparent", color:"#94a3b8"
   // ─────────────────────────────────────────────────────────────────────────
-  const DETAIL_TABS = ["Overview", "Eligibility Rules", "Participation", "Commissions", "Contacts", "Notes / Sources"];
+  const DETAIL_TABS = ["Overview", "Eligibility Rules", "Participation", "Commissions", "Contacts", "Forms", "Notes / Sources"];
 
   // ── DETAIL PANEL ─────────────────────────────────────────────────────────
   function DetailPanel({ carrier }) {
@@ -14995,9 +15428,9 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
           {detailTab === "Overview" && (
             <div>
               {isEditing ? (
-                <>
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ ...labelStyle, marginBottom: 6 }}>Category</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ ...labelStyle, marginBottom: 5 }}>Category</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {CARRIER_CATEGORIES.map(cat => (
                         <EditChip key={cat} label={cat} active={editData.category === cat}
@@ -15005,8 +15438,8 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                       ))}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ ...labelStyle, marginBottom: 6 }}>Type</div>
+                  <div>
+                    <div style={{ ...labelStyle, marginBottom: 5 }}>Type</div>
                     <div style={{ display: "flex", gap: 6 }}>
                       {CARRIER_TYPES.map(t => (
                         <EditChip key={t} label={t} active={editData.type === t}
@@ -15014,8 +15447,8 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                       ))}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ ...labelStyle, marginBottom: 6 }}>Market Segments</div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ ...labelStyle, marginBottom: 5 }}>Market Segments</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {CARRIER_SEGMENTS.map(s => (
                         <EditChip key={s} label={s} active={(editData.segments || []).includes(s)}
@@ -15024,8 +15457,8 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                     </div>
                   </div>
                   {activeCategory !== "FSA/HSA/HRA Administrator" && (
-                    <div style={{ marginBottom: 14 }}>
-                      <div style={{ ...labelStyle, marginBottom: 6 }}>Funding Methods</div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={{ ...labelStyle, marginBottom: 5 }}>Funding Methods</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {FUNDING_OPTIONS.map(f => (
                           <EditChip key={f} label={f} active={(editData.funding || []).includes(f)}
@@ -15034,8 +15467,8 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                       </div>
                     </div>
                   )}
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ ...labelStyle, marginBottom: 6 }}>Products Offered</div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ ...labelStyle, marginBottom: 5 }}>Products Offered</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {allProducts.map(p => (
                         <EditChip key={p} label={p} active={(editData.products || []).includes(p)}
@@ -15044,7 +15477,7 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                     </div>
                   </div>
                   {/* Plan limits inline */}
-                  <div style={{ marginBottom: 14 }}>
+                  <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                       <div style={{ ...labelStyle }}>Plan Limits</div>
                       <button type="button" onClick={() => setEditData(p => ({
@@ -15071,7 +15504,7 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                       </div>
                     ))}
                   </div>
-                </>
+                </div>
               ) : (
                 <div>
                   <TR label="Carrier"              value={cur.name} />
@@ -15405,6 +15838,89 @@ function CarriersView({ carriers, onSave, currentUser, onBack }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* FORMS */}
+          {detailTab === "Forms" && (
+            <div>
+              {isEditing ? (
+                <div>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                    <div style={labelStyle}>Required Forms</div>
+                    <button type="button" onClick={() => setEditData(p => ({
+                      ...p, forms: [...(p.forms||[]), { name:"", purpose:"", submitTo:"", deadline:"", notes:"" }]
+                    }))} style={{ fontSize:11, fontWeight:700, color:"#2d4a6b", background:"#dce8f0",
+                      border:"none", borderRadius:6, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                      + Add Form
+                    </button>
+                  </div>
+                  {(editData.forms||[]).length === 0 && (
+                    <div style={{ textAlign:"center", padding:"24px 0", fontSize:12, color:"#94a3b8" }}>
+                      No forms yet. Click "+ Add Form" to add one.
+                    </div>
+                  )}
+                  {(editData.forms||[]).map((form, fi) => (
+                    <div key={fi} style={{ background:"#f8fafc", borderRadius:8, border:"1px solid #e2e8f0",
+                      padding:"10px 12px", marginBottom:8 }}>
+                      <div style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
+                        <input value={form.name||""} placeholder="Form name (e.g. New Group Application)"
+                          onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],name:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                          style={{ ...inputStyle, marginTop:0, flex:1, fontSize:12, fontWeight:700, padding:"5px 8px" }} />
+                        <button type="button" onClick={() => setEditData(p=>({...p,forms:p.forms.filter((_,i)=>i!==fi)}))}
+                          style={{ padding:"5px 8px", borderRadius:6, fontSize:11, border:"1.5px solid #fca5a5",
+                            background:"#fee2e2", color:"#991b1b", cursor:"pointer" }}>✕</button>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6 }}>
+                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Purpose
+                          <input value={form.purpose||""} placeholder="e.g. Plan Change Request"
+                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],purpose:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                        </label>
+                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Where to submit
+                          <input value={form.submitTo||""} placeholder="Portal URL, email, or fax"
+                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],submitTo:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                        </label>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Deadline
+                          <input value={form.deadline||""} placeholder="e.g. 30 days before eff. date"
+                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],deadline:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                        </label>
+                        <label style={{ fontSize:10, fontWeight:700, color:"#94a3b8" }}>Notes
+                          <input value={form.notes||""} placeholder="Additional notes..."
+                            onChange={e => { const f=[...(editData.forms||[])]; f[fi]={...f[fi],notes:e.target.value}; setEditData(p=>({...p,forms:f})); }}
+                            style={{ ...inputStyle, marginTop:2, fontSize:11, padding:"4px 7px", display:"block", width:"100%", boxSizing:"border-box" }} />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  {(cur.forms||[]).length === 0 ? (
+                    <div style={{ textAlign:"center", padding:"32px 0", color:"#94a3b8", fontSize:12 }}>
+                      No forms on file for this carrier.
+                    </div>
+                  ) : (
+                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                      {(cur.forms||[]).map((form, fi) => (
+                        <div key={fi} style={{ background:"#f8fafc", borderRadius:9, border:"1px solid #e2e8f0", padding:"10px 14px" }}>
+                          <div style={{ fontWeight:800, fontSize:13, color:"#0f172a", marginBottom:4 }}>{form.name||"Unnamed form"}</div>
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                            {form.purpose   && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Purpose </span><span style={{ fontSize:12, color:"#374151" }}>{form.purpose}</span></div>}
+                            {form.submitTo  && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Submit to </span><span style={{ fontSize:12, color:"#374151" }}>{form.submitTo}</span></div>}
+                            {form.deadline  && <div><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Deadline </span><span style={{ fontSize:12, color:"#374151" }}>{form.deadline}</span></div>}
+                            {form.notes     && <div style={{ gridColumn:"1/-1" }}><span style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".4px" }}>Notes </span><span style={{ fontSize:12, color:"#64748b", fontStyle:"italic" }}>{form.notes}</span></div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -15781,7 +16297,7 @@ function collectOpenTasks(c, categoryFilter, tasksDb) {
   if (!categoryFilter || categoryFilter === "All" || categoryFilter === "Pre-Renewal") {
     PRERENEWAL_TASKS.forEach(def => {
       if (def.acaOnly && c.marketSize !== "ACA") return;
-      push(getLabelForTask(def.id, tasksDb, def.label), "Pre-Renewal", c.preRenewal?.[def.id], "preRenewal", def.id);
+      push(getLabelForTask(def.id, tasksDb, def.label), "Renewal Cycle", c.preRenewal?.[def.id], "renewalCycle", def.id);
     });
   }
   // Renewal Tasks
@@ -15894,7 +16410,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
 
   function updateTaskFields(fields) {
     if (!onUpdateTask) return;
-    const client = clients.find(cl => cl.id === c.id);
+    const client = clients.find(cl => String(cl.id) === String(c.id));
     if (!client) return;
     let updated = JSON.parse(JSON.stringify(client));
     if (t.group === "compliance" || t.group === "preRenewal") {
@@ -15951,7 +16467,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
         </span>
         {t.assignee && !taskOpen && (
           <span style={{ fontSize: 10, fontWeight: 700, color: "#3e5878", background: "#e8f0f7", borderRadius: 99, padding: "1px 7px" }}>
-            {t.assignee}
+            {normalizeName(t.assignee)}
           </span>
         )}
         {t.dueDate && !taskOpen && (
@@ -15987,13 +16503,13 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
             <select value={t.assignee || ""} onChange={e => updateTaskFields({ assignee: e.target.value })}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }}>
               <option value="">— Unassigned —</option>
-              {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+              {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
             </select>
           </label>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Due Date
             <DateInput  value={localDueDate}
-              onChange={e => setLocalDueDate(e.target.value)}
+              onChange={v => setLocalDueDate(v)}
               onBlur={e => { if (e.target.value !== (t.dueDate || "")) updateTaskFields({ dueDate: e.target.value }); }}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px",
                 borderColor: pastDue ? "#fca5a5" : undefined }} />
@@ -16001,7 +16517,7 @@ function OpenTaskRow({ t, ti, c, taskKey, expandedTask, setExpandedTask, onUpdat
           <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
             Completed Date
             <DateInput  value={localCompletedDate}
-              onChange={e => setLocalCompletedDate(e.target.value)}
+              onChange={v => setLocalCompletedDate(v)}
               onBlur={e => { if (e.target.value !== (t.completedDate || "")) updateTaskFields({ completedDate: e.target.value, ...(e.target.value ? { status: "Complete" } : {}) }); }}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "4px 8px" }} />
           </label>
@@ -16064,7 +16580,7 @@ function GlobalComplianceView({ clients, onOpenClient, currentUser, userTeamId, 
           const overdue = daysLeft !== null && daysLeft < 0 && status !== "Complete" && status !== "N/A";
           out.push({ clientId: c.id, clientName: c.name, clientTeam: c.team,
             renewalDate: c.renewalDate, taskId: def.id, taskLabel: def.label,
-            status, assignee: t.assignee || "", due, daysLeft, overdue,
+            status, assignee: normalizeName(t.assignee || ""), due, daysLeft, overdue,
             completedDate: t.completedDate || "", client: c });
         });
       });
@@ -16198,7 +16714,7 @@ function GlobalComplianceView({ clients, onOpenClient, currentUser, userTeamId, 
                   <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99,
                     background:ss.bg, color:ss.color }}>{r.status}</span>
                 </div>
-                <div style={{ fontSize:12, color:"#475569" }}>{r.assignee||"—"}</div>
+                <div style={{ fontSize:12, color:"#475569" }}>{normalizeName(r.assignee)||"—"}</div>
                 <div style={{ fontSize:12,
                   color: r.overdue?"#dc2626":r.daysLeft!==null&&r.daysLeft<=14?"#d97706":"#475569",
                   fontWeight: r.overdue||r.daysLeft<=14?700:400 }}>
@@ -16217,7 +16733,7 @@ function GlobalComplianceView({ clients, onOpenClient, currentUser, userTeamId, 
 }
 
 // ── GlobalTransactionsView ────────────────────────────────────────────────────
-function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId, userTeams, transactionTypesLibrary, onUpdateTask }) {
+function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId, userTeams, transactionTypesLibrary, onUpdateTask, dueDateRules, tasksDb, dataReady }) {
   const isLead = ["Team Lead","VP","Lead"].includes(currentUser?.role?.trim());
   const isRestricted = currentUser && !isLead && (userTeams||[]).length > 0;
 
@@ -16226,6 +16742,74 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
   const [filterStatus, setFilterStatus] = React.useState("All");
   const [filterClient, setFilterClient] = React.useState("");
   const [sortBy,       setSortBy]       = React.useState("receivedDate");
+
+  // Add Transaction modal state
+  const [showAddModal, setShowAddModal] = React.useState(false);
+  const EMPTY_TXN_FORM = { clientId: "", memberName: "", changeType: "", receivedDate: "", dueDate: "", completedDate: "", status: "Not Started", assignee: "", notes: "" };
+  const [addForm, setAddForm] = React.useState(EMPTY_TXN_FORM);
+  const [addError, setAddError] = React.useState("");
+
+  // Derive the default assignee + due date from task library (Transactions category template)
+  function getTxnDefaults(clientId, receivedDate) {
+    const client = clients.find(c => String(c.id) === String(clientId));
+    // Find first Transactions-category template in task library
+    const txnTemplate = (tasksDb || []).find(t => t.category === "Transactions");
+    // Assignee: resolve role → name for this client's team
+    let assignee = "";
+    if (txnTemplate?.defaultAssignee && client?.team) {
+      assignee = resolveAssignee(txnTemplate.defaultAssignee, client.team);
+    }
+    if (!assignee && client?.team) {
+      assignee = getCoordinator(client.team); // fallback to coordinator
+    }
+    // Due date: apply the due date rule anchored to receivedDate
+    let dueDate = "";
+    if (txnTemplate?.dueDateRule && receivedDate) {
+      const rule = (dueDateRules || DEFAULT_DUE_DATE_RULES).find(r => r.id === txnTemplate.dueDateRule);
+      if (rule && rule.anchor === "transaction_request" && typeof rule.days === "number") {
+        dueDate = rule.direction === "after"
+          ? addBizDays(receivedDate, rule.days)
+          : addBizDays(receivedDate, -rule.days);
+      }
+    }
+    // Fallback: txn_plus_3 builtin rule (3 biz days after received)
+    if (!dueDate && receivedDate) {
+      dueDate = addBizDays(receivedDate, 3);
+    }
+    return { assignee, dueDate };
+  }
+
+  function openAddModal() {
+    const today = new Date().toISOString().split("T")[0];
+    const defaults = getTxnDefaults("", today);
+    setAddForm({ ...EMPTY_TXN_FORM, receivedDate: today, dueDate: defaults.dueDate });
+    setAddError("");
+    setShowAddModal(true);
+  }
+  function closeAddModal() { setShowAddModal(false); setAddError(""); }
+
+  function submitAddTxn() {
+    if (!addForm.clientId) { setAddError("Please select a client."); return; }
+    const targetClient = clients.find(c => String(c.id) === String(addForm.clientId));
+    if (!targetClient) { setAddError("Client not found. Please re-select from the dropdown."); return; }
+    if (!addForm.memberName && !addForm.changeType) { setAddError("Please enter a member name or transaction type."); return; }
+    const newTxn = {
+      id: Date.now(),
+      label: [addForm.memberName, addForm.changeType].filter(Boolean).join(" – "),
+      memberName: addForm.memberName,
+      changeType: addForm.changeType,
+      receivedDate: addForm.receivedDate,
+      dueDate: addForm.dueDate,
+      completedDate: addForm.completedDate,
+      status: addForm.status || "Not Started",
+      assignee: addForm.assignee,
+      notes: addForm.notes,
+      followUps: [],
+    };
+    const updatedClient = { ...targetClient, transactions: [...(targetClient.transactions || []), newTxn] };
+    onUpdateTask(updatedClient);
+    closeAddModal();
+  }
 
   const today = new Date(); today.setHours(0,0,0,0);
 
@@ -16292,11 +16876,12 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
             <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontWeight:800,
               fontSize:20, color:"#0f172a" }}>Transactions</div>
             <div style={{ fontSize:12, color:"#64748b", marginTop:2 }}>
-              {rows.length} transaction{rows.length!==1?"s":""} across {[...new Set(rows.map(r=>r.clientId))].length} clients
+              {!dataReady ? "Loading…" : `${rows.length} transaction${rows.length!==1?"s":""} across ${[...new Set(rows.map(r=>r.clientId))].length} clients`}
             </div>
           </div>
-          {/* Sort */}
-          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {/* Sort + Add button */}
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
             {[["receivedDate","Date"],["client","Client"],["type","Type"],["member","Member"],["status","Status"]].map(([v,label]) => (
               <button key={v} onClick={() => setSortBy(v)} style={{
                 padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:700,
@@ -16307,6 +16892,15 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
                 {label}
               </button>
             ))}
+            </div>
+            <button onClick={openAddModal} style={{
+              padding:"6px 16px", borderRadius:8, fontSize:12, fontWeight:700,
+              background:"linear-gradient(135deg,#1d4ed8,#3b82f6)", color:"#fff",
+              border:"none", cursor:"pointer", fontFamily:"inherit",
+              display:"flex", alignItems:"center", gap:5, whiteSpace:"nowrap",
+              boxShadow:"0 1px 4px rgba(59,130,246,.3)" }}>
+              <span style={{ fontSize:16, lineHeight:1, marginTop:-1 }}>+</span> Add Transaction
+            </button>
           </div>
         </div>
         {/* Filters */}
@@ -16355,7 +16949,7 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
       {/* Table */}
       {rows.length === 0 ? (
         <div style={{ textAlign:"center", padding:"48px 0", color:"#94a3b8", fontSize:14 }}>
-          No transactions match the current filters.
+          {!dataReady ? "Loading transactions…" : "No transactions match the current filters."}
         </div>
       ) : (
         <div style={{ background:"#fff", border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
@@ -16383,7 +16977,7 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
                   <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99,
                     background:ss.bg, color:ss.color }}>{r.status}</span>
                 </div>
-                <div style={{ fontSize:12, color:"#475569" }}>{r.assignee||"—"}</div>
+                <div style={{ fontSize:12, color:"#475569" }}>{normalizeName(r.assignee)||"—"}</div>
                 <div style={{ fontSize:11, color:"#64748b" }}>
                   {r.received ? new Date(r.received+"T12:00:00").toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}) : "—"}
                 </div>
@@ -16400,6 +16994,169 @@ function GlobalTransactionsView({ clients, onOpenClient, currentUser, userTeamId
           })}
         </div>
       )}
+
+      {/* ── Add Transaction Modal ── */}
+      {showAddModal && (() => {
+        const allClients = [...clients].sort((a,b) => (a.name||"").localeCompare(b.name||""));
+        const selectedClient = clients.find(c => String(c.id) === String(addForm.clientId));
+        const fld = (label, children, required) => (
+          <div style={{ marginBottom:14 }}>
+            <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#64748b", marginBottom:4, letterSpacing:".3px" }}>
+              {label}{required && <span style={{ color:"#dc2626", marginLeft:2 }}>*</span>}
+            </label>
+            {children}
+          </div>
+        );
+        const inp = {
+          width:"100%", padding:"8px 10px", border:"1.5px solid #e2e8f0", borderRadius:8,
+          fontSize:13, fontFamily:"inherit", color:"#0f172a", background:"#fff", boxSizing:"border-box"
+        };
+        const allAssignees = [...new Set(
+          Object.values(TEAMS).flatMap(t => t.members.map(m => m.name))
+        )].sort();
+        return (
+          <div style={{ position:"fixed", inset:0, zIndex:1000,
+            background:"rgba(15,23,42,.45)", display:"flex", alignItems:"center", justifyContent:"center" }}
+            onClick={e => { if (e.target === e.currentTarget) closeAddModal(); }}>
+            <div style={{ background:"#fff", borderRadius:16, width:540, maxWidth:"95vw",
+              maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.2)" }}>
+              {/* Modal header */}
+              <div style={{ padding:"20px 24px 16px", borderBottom:"1px solid #f1f5f9",
+                display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div>
+                  <div style={{ fontWeight:800, fontSize:16, color:"#0f172a" }}>Add Transaction</div>
+                  <div style={{ fontSize:12, color:"#94a3b8", marginTop:2 }}>Fill in all fields, then save.</div>
+                </div>
+                <button onClick={closeAddModal} style={{ background:"none", border:"none",
+                  fontSize:18, color:"#94a3b8", cursor:"pointer", padding:"4px 8px", borderRadius:6 }}>✕</button>
+              </div>
+
+              {/* Modal body */}
+              <div style={{ padding:"20px 24px" }}>
+                {/* Client */}
+                {fld("Client", (
+                  <select value={addForm.clientId}
+                    onChange={e => {
+                      const clientId = e.target.value;
+                      const { assignee, dueDate } = getTxnDefaults(clientId, addForm.receivedDate);
+                      setAddForm(f => ({ ...f, clientId, assignee: assignee || f.assignee, dueDate: dueDate || f.dueDate }));
+                    }}
+                    style={inp}>
+                    <option value="">— Select client —</option>
+                    {allClients.map(c => (
+                      <option key={c.id} value={String(c.id)}>{c.name}{c.team ? ` (Team ${c.team})` : ""}</option>
+                    ))}
+                  </select>
+                ), true)}
+
+                {/* Two-column: Member + Type */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  {fld("Member Name", (
+                    <input value={addForm.memberName}
+                      onChange={e => setAddForm(f => ({ ...f, memberName: e.target.value }))}
+                      placeholder="e.g. Katie Gambini"
+                      style={inp} />
+                  ), false)}
+                  {fld("Transaction Type", (
+                    <select value={addForm.changeType}
+                      onChange={e => setAddForm(f => ({ ...f, changeType: e.target.value }))}
+                      style={inp}>
+                      <option value="">— Select type —</option>
+                      {txnTypes.length
+                        ? txnTypes.map(t => <option key={t} value={t}>{t}</option>)
+                        : ["Enrollment","Termination","State Continuation","COBRA","Address Change","Dependent Add","Dependent Remove","Name Change","Other"].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))
+                      }
+                    </select>
+                  ), false)}
+                </div>
+
+                {/* Status + Assignee */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  {fld("Status", (
+                    <select value={addForm.status}
+                      onChange={e => setAddForm(f => ({ ...f, status: e.target.value }))}
+                      style={inp}>
+                      {["Not Started","In Progress","Complete","N/A"].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  ), false)}
+                  {fld("Assignee", (
+                    <select value={addForm.assignee}
+                      onChange={e => setAddForm(f => ({ ...f, assignee: e.target.value }))}
+                      style={inp}>
+                      <option value="">— Select assignee —</option>
+                      {(selectedClient && TEAMS[selectedClient.team]
+                        ? TEAMS[selectedClient.team].members.map(m => m.name)
+                        : allAssignees
+                      ).map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                  ), false)}
+                </div>
+
+                {/* Dates */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+                  {fld("Received Date", (
+                    <input type="date" value={addForm.receivedDate}
+                      onChange={e => {
+                        const receivedDate = e.target.value;
+                        const { dueDate } = getTxnDefaults(addForm.clientId, receivedDate);
+                        setAddForm(f => ({ ...f, receivedDate, dueDate: dueDate || f.dueDate }));
+                      }}
+                      style={inp} />
+                  ), false)}
+                  {fld("Due Date", (
+                    <input type="date" value={addForm.dueDate}
+                      onChange={e => setAddForm(f => ({ ...f, dueDate: e.target.value }))}
+                      style={inp} />
+                  ), false)}
+                  {fld("Completed Date", (
+                    <input type="date" value={addForm.completedDate}
+                      onChange={e => setAddForm(f => ({ ...f, completedDate: e.target.value }))}
+                      style={inp} />
+                  ), false)}
+                </div>
+
+                {/* Notes */}
+                {fld("Notes", (
+                  <textarea value={addForm.notes}
+                    onChange={e => setAddForm(f => ({ ...f, notes: e.target.value }))}
+                    placeholder="Optional notes..."
+                    rows={3}
+                    style={{ ...inp, resize:"vertical" }} />
+                ), false)}
+
+                {/* Error */}
+                {addError && (
+                  <div style={{ background:"#fef2f2", border:"1px solid #fca5a5", borderRadius:8,
+                    padding:"8px 12px", fontSize:12, color:"#dc2626", marginBottom:8 }}>
+                    {addError}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display:"flex", gap:10, justifyContent:"flex-end", marginTop:4 }}>
+                  <button onClick={closeAddModal}
+                    style={{ padding:"9px 20px", borderRadius:9, fontSize:13, fontWeight:700,
+                      background:"#fff", color:"#475569", border:"1.5px solid #e2e8f0",
+                      cursor:"pointer", fontFamily:"inherit" }}>
+                    Cancel
+                  </button>
+                  <button onClick={submitAddTxn}
+                    style={{ padding:"9px 22px", borderRadius:9, fontSize:13, fontWeight:700,
+                      background:"linear-gradient(135deg,#1d4ed8,#3b82f6)", color:"#fff",
+                      border:"none", cursor:"pointer", fontFamily:"inherit",
+                      boxShadow:"0 2px 8px rgba(59,130,246,.3)" }}>
+                    Save Transaction
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -16485,7 +17242,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
           };
           PRERENEWAL_TASKS.forEach(def => {
             if (def.acaOnly && c.marketSize !== "ACA") return;
-            pushAll(getLabelForTask(def.id, tasksDb, def.label), "Pre-Renewal", c.preRenewal?.[def.id], "preRenewal", def.id);
+            pushAll(getLabelForTask(def.id, tasksDb, def.label), "Pre-Renewal", c.preRenewal?.[def.id], "renewalCycle", def.id);
           });
           pushAll("Schedule Renewal Meeting", "Renewal", c.renewalMeeting, "renewalMeeting", "renewalMeeting");
           Object.entries(c.renewalTasksAuto || {}).forEach(([key, t]) => {
@@ -16651,7 +17408,7 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
 
       {/* Add Task Panel */}
       {showAddTask && (() => {
-        const selClient = clients.find(c => c.id === Number(addForm.clientId) || c.id === addForm.clientId);
+        const selClient = clients.find(c => String(c.id) === String(addForm.clientId));
         const teamMembers = selClient
           ? (selClient.team === "India" ? INDIA_MEMBERS : JULIET_MEMBERS)
           : ALL_MEMBERS;
@@ -16829,14 +17586,14 @@ function OpenTasksView({ clients, onOpenClient, tasksDb, onUpdateTask, currentUs
                   onChange={e => setAddForm(p => ({ ...p, assignee: e.target.value }))}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12 }}>
                   <option value="">— Unassigned —</option>
-                  {teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                  {teamMembers.map((m,i) => <option key={i} value={m}>{m}</option>)}
                 </select>
               </label>
               {/* Due Date */}
               <label style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", flexDirection: "column", gap: 3 }}>
                 Due Date
                 <DateInput  value={addForm.dueDate}
-                  onChange={e => setAddForm(p => ({ ...p, dueDate: e.target.value }))}
+                  onChange={v => setAddForm(p => ({ ...p, dueDate: v }))}
                   style={{ ...inputStyle, marginTop: 0, fontSize: 12 }} />
               </label>
             </div>
@@ -18070,8 +18827,9 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
     { id: "overview",   label: "Overview",   icon: "⊞" },
     { id: "benefits",   label: "Benefits",   icon: "◫" },
     { section: "Renewal Cycle" },
-    { id: "prerenewal", label: "Pre-Renewal",      icon: "↓", badge: preRenewalCount },
-    { id: "renewal",    label: "Renewal",           icon: "↻", badge: renewalCount },
+    { id: "prerenewal",      label: "Renewal Progress", icon: "↓", badge: null },
+    { id: "prerenewaltasks", label: "Pre-Renewal",       icon: "↓", badge: preRenewalCount },
+    { id: "renewal",         label: "Renewal",           icon: "↻", badge: renewalCount },
     { id: "oe",         label: "Open Enrollment",  icon: "◈", badge: null },
     { id: "postoe",     label: "Post-OE",          icon: "✓", badge: postOECount },
     { section: "Operations" },
@@ -18202,10 +18960,23 @@ function ClientProfile({ client, onSave, onClose, tasksDb, carriersData, dueDate
           />
         )}
 
-        {/* Pre-Renewal — uses shared ClientModal tab via taskTab prop */}
+        {/* Renewal Cycle — uses shared ClientModal tab via taskTab prop */}
         {activeSection === "prerenewal" && (
           <ClientModalSection
-            section="preRenewal"
+            section="renewalCycle"
+            data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
+            applyDDR={applyDDR} setWithDDR={setWithDDR}
+            tasksDb={tasksDb} dueDateRules={dueDateRules}
+            carriersData={carriersData} currentUser={currentUser}
+            teams={teams}
+            markDirty={() => setIsDirty(true)}
+          />
+        )}
+
+        {/* Pre-Renewal Tasks */}
+        {activeSection === "prerenewaltasks" && (
+          <ClientModalSection
+            section="preRenewalTasks"
             data={data} set={set} setData={setData} setTask={setTask} getTask={getTask}
             applyDDR={applyDDR} setWithDDR={setWithDDR}
             tasksDb={tasksDb} dueDateRules={dueDateRules}
@@ -19473,9 +20244,6 @@ function BenefitLineEditor({ benefit, data, set, setData, setIsDirty, carriersDa
   const benefitFunding      = (data.benefitFunding      || {})[catId] || "";
   const benefitBilling      = (data.benefitBilling      || {})[catId] || "";
   const benefitContribution = (data.benefitContribution || {})[catId] || "";
-  const benefitTaxCode      = (data.benefitTaxCode      || {})[catId] || "";
-  const benefitErisa        = (data.benefitErisa        || {})[catId] || "";
-  const benefitNdt          = (data.benefitNdt          || {})[catId] || "";
   const isGrandfathered     = !!(data.benefitGrandfathered || {})[catId];
 
   function setField(field, val) {
@@ -19511,35 +20279,7 @@ function BenefitLineEditor({ benefit, data, set, setData, setIsDirty, carriersDa
   const ageBandedRates = (data.benefitAgeBandedRates || {})[catId] || {};
   const isAgeBandedBilling = benefitBilling === "Age-banded";
 
-  // ── Auto-populate Tax Code / ERISA / NDT from Plans library ──────────────
-  React.useEffect(() => {
-    if (!plansLibrary?.length) return;
-    if (benefitTaxCode && benefitErisa && benefitNdt) return; // already set
-    const currentPlanType = plans[0]?.planType || "";
-    const planName = benefit.label || "";
-    // Map benefit id to plan name for lookup
-    const BENEFIT_TO_PLANNAME = {
-      medical: "Medical", dental: "Dental", vision: "Vision",
-      basic_life: "Basic Life/AD&D", vol_life: "Voluntary Life/AD&D",
-      std: "STD", ltd: "LTD", idi: "IDI",
-      worksite_ci: "Critical Illness", worksite_cancer: "Cancer",
-      worksite_accident: "Personal Accident", worksite_hospital: "Hospital Indemnity",
-      eap: "EAP", fsa_health: "Health FSA", fsa_limited: "Limited Purpose FSA",
-      fsa_dependent: "Dependent Care FSA", fsa_transport: "Transportation FSA",
-      parking: "Parking", commuter: "Commuter", hsa_funding: "HSA Funding", hra: "HRA",
-      identity_theft: "Identity Theft", prepaid_legal: "Prepaid Legal", pet_insurance: "Pet Insurance",
-    };
-    const targetPlanName = BENEFIT_TO_PLANNAME[catId] || planName;
-    const match = plansLibrary.find(p =>
-      p.planName === targetPlanName &&
-      (!currentPlanType || p.planType === currentPlanType)
-    ) || plansLibrary.find(p => p.planName === targetPlanName);
-    if (match) {
-      if (!benefitTaxCode && match.taxCode)  setField("benefitTaxCode", match.taxCode);
-      if (!benefitErisa   && match.erisa)    setField("benefitErisa",   match.erisa);
-      if (!benefitNdt     && match.ndt)      setField("benefitNdt",     match.ndt);
-    }
-  }, [catId, plans[0]?.planType, plansLibrary]);
+
 
   // When funding changes, enforce billing constraints
   function handleFundingChange(val) {
@@ -19828,33 +20568,7 @@ function BenefitLineEditor({ benefit, data, set, setData, setIsDirty, carriersDa
             </div>
           )}
 
-          {/* Row 3: Tax Code, ERISA, NDT */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <label style={{ ...labelStyle }}>
-              Tax Code
-              <input value={benefitTaxCode} onChange={e => setField("benefitTaxCode", e.target.value)}
-                placeholder="e.g. 125, 223, 79…"
-                style={{ ...inputStyle, marginTop: 3 }} />
-            </label>
-            <label style={{ ...labelStyle }}>
-              ERISA
-              <select value={benefitErisa} onChange={e => setField("benefitErisa", e.target.value)}
-                style={{ ...inputStyle, marginTop: 3 }}>
-                <option value="">— Select —</option>
-                {["Yes","No","Governmental","Church Plan","N/A"].map(o => <option key={o}>{o}</option>)}
-              </select>
-            </label>
-            <label style={{ ...labelStyle }}>
-              NDT Applicability
-              <select value={benefitNdt} onChange={e => setField("benefitNdt", e.target.value)}
-                style={{ ...inputStyle, marginTop: 3 }}>
-                <option value="">— Select —</option>
-                {["N/A","Required","ACP/ADP","415 Limit","Top-Heavy","Other"].map(o => <option key={o}>{o}</option>)}
-              </select>
-            </label>
-          </div>
-
-          {/* Row 4 (was Row 2): # Enrolled and Commission */}
+          {/* # Enrolled and Commission */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label style={{ ...labelStyle }}>
               # Enrolled
@@ -20252,152 +20966,247 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
   );
 
   // ── PRE-RENEWAL ──────────────────────────────────────────────────────────────
-  if (section === "preRenewal") {
+  if (section === "preRenewal" || section === "renewalCycle" || section === "preRenewalTasks") {
+    const BA = data.benefitActive || {};
+    const BC = data.benefitCarriers || {};
     const showRateRelief = !(data.marketSize === "ACA" && data.fundingMethod === "Fully Insured");
-    const rr = data.rateRelief || {};
-    const rv = data.renewalReceived || {};
 
-    // Count progress
+    const activeCats = BENEFITS_SCHEMA
+      .filter(c => BA[c.id])
+      .map(c => ({ id: c.id, label: c.label, carrier: BC[c.id] || "" }));
+    const worksiteCat = BENEFITS_SCHEMA.find(c => c.id === "worksite");
+    (worksiteCat?.children || []).forEach(ch => {
+      if (BA[ch.id]) activeCats.push({ id: ch.id, label: ch.label, carrier: BC[ch.id] || "" });
+    });
+
+    const RC = data.renewalCycle || {};
+    const setRCB = (id, patch) => setData(p => {
+      const BC = p.benefitCarriers || {};
+      const thisCarrier = BC[id];
+      let rc = { ...(p.renewalCycle || {}) };
+      rc[id] = { ...(rc[id] || {}), ...patch };
+      if (patch.receivedDate && thisCarrier) {
+        Object.keys(BC).forEach(otherId => {
+          if (otherId !== id && BC[otherId] === thisCarrier && (p.benefitActive || {})[otherId]) {
+            rc[otherId] = { ...(rc[otherId] || {}),
+              receivedDate: patch.receivedDate,
+              received: true,
+            };
+          }
+        });
+      }
+      return { ...p, renewalCycle: rc };
+    });
+
+    const [rcTab, setRcTab] = React.useState(activeCats[0]?.id || "medical");
+    const cat = activeCats.find(c => c.id === rcTab) || activeCats[0];
+    const rc = cat ? (RC[cat.id] || {}) : {};
+    const isMedical = cat?.id === "medical";
+
     const total = PRERENEWAL_TASKS.filter(t => !(t.acaOnly && data.marketSize !== "ACA")).length;
     const done  = PRERENEWAL_TASKS.filter(t => {
       if (t.acaOnly && data.marketSize !== "ACA") return false;
       const task = data.preRenewal?.[t.id];
-      const s = typeof task === 'object' ? task?.status : task;
-      return s === 'Complete' || s === 'N/A';
+      const s = typeof task === "object" ? task?.status : task;
+      return s === "Complete" || s === "N/A";
     }).length;
+
+    const hdr = { fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" };
+    const chkLabel = { display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#334155" };
+    const subHdr = { fontSize: 10, fontWeight: 800, color: "#475569", letterSpacing: ".8px", textTransform: "uppercase", marginBottom: 6, marginTop: 10 };
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Pre-Renewal</div>
-          <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
-            background: done === total ? "#dcfce7" : "#eef2d8",
-            color: done === total ? "#166534" : "#55652b" }}>
-            {done}/{total} complete
-          </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>
+            {section === "preRenewalTasks" ? "Pre-Renewal" : "Renewal Progress"}
+          </div>
+          {section !== "renewalCycle" && (
+            <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99,
+              background: done === total ? "#dcfce7" : "#eef2d8",
+              color: done === total ? "#166534" : "#55652b" }}>
+              {done}/{total} complete
+            </span>
+          )}
         </div>
 
-        {/* Medical Renewal Status */}
-        <div style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", padding: "14px 16px" }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", marginBottom: 12 }}>
-            Medical Renewal Status
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: `1.4fr 90px 140px 90px${showRateRelief ? " 130px 130px 100px" : ""}`, gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid #fde68a" }}>
-            {["Carrier","Received","Date Received","Renewal %",...(showRateRelief ? ["Rate Relief Req.","Rate Relief Rec.","Negotiated %"] : [])].map(h => (
-              <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: ".5px", textTransform: "uppercase" }}>{h}</div>
-            ))}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: `1.4fr 90px 140px 90px${showRateRelief ? " 130px 130px 100px" : ""}`, gap: 8, alignItems: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#78350f" }}>
-              {(data.benefitCarriers || {}).medical || <span style={{ opacity: 0.4, fontStyle: "italic", fontWeight: 400 }}>Medical carrier</span>}
+        {/* ── RENEWAL STATUS — only for renewalCycle section ── */}
+        {section !== "preRenewalTasks" && activeCats.length > 0 && (
+          <div style={{ background: "#fffbeb", borderRadius: 10, border: "1.5px solid #fde68a", overflow: "hidden" }}>
+            <div style={{ padding: "8px 12px 6px", borderBottom: "1px solid #fde68a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase" }}>Renewal Status</div>
+              {data.renewalDate && <div style={{ fontSize: 11, color: "#b45309" }}>Renewal: {new Date(data.renewalDate+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>}
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", justifyContent: "center" }}>
-              <input type="checkbox" checked={!!rv.received}
-                onChange={e => setData(p => applyDDR({ ...p, renewalReceived: { ...rv, received: e.target.checked } }))}
-                style={{ accentColor: "#f59e0b", width: 15, height: 15 }} />
-            </label>
-            <DateInput  value={rv.date || ""}
-              onChange={e => setData(p => applyDDR({ ...p, renewalReceived: { ...rv, date: e.target.value } }))}
-              disabled={!rv.received}
-              style={{ ...inputStyle, marginTop: 0, padding: "4px 8px", fontSize: 12, opacity: rv.received ? 1 : 0.4 }} />
-            <PercentInput value={rv.pct || ""} onChange={v => set("renewalReceived", { ...rv, pct: v })}
-              placeholder="0.00" disabled={!rv.received}
-              style={{ ...inputStyle, marginTop: 0, padding: "4px 6px", fontSize: 12, opacity: rv.received ? 1 : 0.4, width: "100%" }} />
-            {showRateRelief && <>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                <input type="checkbox" checked={!!rr.requested}
-                  onChange={e => set("rateRelief", { ...rr, requested: e.target.checked })}
-                  style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
-                <span style={{ fontSize: 11, color: rr.requested ? "#92400e" : "#94a3b8", fontWeight: rr.requested ? 700 : 400 }}>
-                  {rr.requested ? "Yes" : "No"}
-                </span>
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                <input type="checkbox" checked={!!rr.received}
-                  onChange={e => set("rateRelief", { ...rr, received: e.target.checked })}
-                  style={{ accentColor: "#22c55e", width: 14, height: 14 }} />
-                <span style={{ fontSize: 11, color: rr.received ? "#166534" : "#94a3b8", fontWeight: rr.received ? 700 : 400 }}>
-                  {rr.received ? "Yes" : "No"}
-                </span>
-              </label>
-              <PercentInput value={data.negotiatedRenewalPct || ""} onChange={v => set("negotiatedRenewalPct", v)}
-                placeholder="0.00"
-                style={{ ...inputStyle, marginTop: 0, padding: "4px 6px", fontSize: 12, width: "100%" }} />
-            </>}
-          </div>
+            {/* Benefit tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid #fde68a", background: "#fef3c7", overflowX: "auto" }}>
+              {activeCats.map(c => (
+                <button key={c.id} onClick={() => setRcTab(c.id)}
+                  style={{ padding: "5px 12px", fontSize: 11, fontWeight: 700, border: "none", cursor: "pointer",
+                    fontFamily: "inherit", whiteSpace: "nowrap",
+                    background: rcTab === c.id ? "#fffbeb" : "transparent",
+                    color: rcTab === c.id ? "#92400e" : "#b45309",
+                    borderBottom: rcTab === c.id ? "2.5px solid #d97706" : "2.5px solid transparent" }}>
+                  {c.label}{c.carrier ? ` (${c.carrier})` : ""}
+                </button>
+              ))}
+            </div>
+            {cat && (
+              <div style={{ padding: "10px 12px" }}>
+                {/* Receipt row */}
+                <div style={subHdr}>① Renewal receipt</div>
+                <div style={{ display: "grid", gridTemplateColumns: showRateRelief ? (isMedical ? "60px 110px 65px 80px 80px 65px 110px" : "60px 110px 65px 80px 80px 65px") : (isMedical ? "60px 110px 65px 110px" : "60px 110px 65px"), gap: 6, alignItems: "start", background: "#fff", borderRadius: 7, padding: "7px 8px", border: "1px solid #fde68a" }}>
+                  <div><div style={hdr}>Received</div>
+                    <label style={{ ...chkLabel, marginTop: 3 }}><input type="checkbox" checked={!!rc.received} onChange={e => setRCB(cat.id, { received: e.target.checked })} style={{ accentColor: "#f59e0b", width: 14, height: 14 }} /></label>
+                  </div>
+                  <div><div style={hdr}>Date received</div>
+                    <DateInput value={rc.receivedDate || ""} onChange={v => { const p = { receivedDate: v }; if (v) p.received = true; setRCB(cat.id, p); }} style={{ ...inputStyle, marginTop: 2, padding: "2px 5px", fontSize: 11 }} />
+                  </div>
+                  <div><div style={hdr}>Renewal %</div>
+                    <PercentInput value={rc.renewalPct || ""} onChange={v => setRCB(cat.id, { renewalPct: v })} placeholder="0.00" style={{ ...inputStyle, marginTop: 2, padding: "2px 5px", fontSize: 11, width: "100%" }} />
+                  </div>
+                  {showRateRelief && (<>
+                    <div><div style={hdr}>RR req.</div>
+                      <label style={{ ...chkLabel, marginTop: 3 }}><input type="checkbox" checked={!!rc.rrRequested} onChange={e => setRCB(cat.id, { rrRequested: e.target.checked })} style={{ accentColor: "#f59e0b", width: 13, height: 13 }} /></label>
+                      {rc.rrRequested && <DateInput value={rc.rrRequestedDate || ""} onChange={v => setRCB(cat.id, { rrRequestedDate: v })} style={{ ...inputStyle, marginTop: 2, padding: "2px 4px", fontSize: 10 }} />}
+                    </div>
+                    <div><div style={hdr}>RR rec.</div>
+                      <label style={{ ...chkLabel, marginTop: 3 }}><input type="checkbox" checked={!!rc.rrReceived} onChange={e => setRCB(cat.id, { rrReceived: e.target.checked })} style={{ accentColor: "#22c55e", width: 13, height: 13 }} /></label>
+                      {rc.rrReceived && <DateInput value={rc.rrReceivedDate || ""} onChange={v => setRCB(cat.id, { rrReceivedDate: v })} style={{ ...inputStyle, marginTop: 2, padding: "2px 4px", fontSize: 10 }} />}
+                    </div>
+                    <div><div style={hdr}>Neg. %</div>
+                      <PercentInput value={rc.negotiatedPct || ""} onChange={v => setRCB(cat.id, { negotiatedPct: v })} placeholder="0.00" style={{ ...inputStyle, marginTop: 2, padding: "2px 5px", fontSize: 11, width: "100%" }} />
+                    </div>
+                  </>)}
+                  {/* Bundled Discount — medical only, last column */}
+                  {isMedical && !(data.marketSize === "ACA" && data.fundingMethod === "Fully Insured") && (
+                    <div style={{ background: "#f2f4e8", borderRadius: 6, border: "1px solid #7a8a3d", padding: "5px 8px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#54652d", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 3 }}>Bundled discount</div>
+                      <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                        <input type="checkbox" checked={!!data.bundledDiscount} onChange={e => set("bundledDiscount", e.target.checked)} style={{ accentColor: "#7a8a3d", width: 13, height: 13 }} />
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#54652d" }}>Applied</span>
+                      </label>
+                      {data.bundledDiscount && <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3 }}>
+                        <input type="number" min="0" max="100" value={data.bundledDiscountPct || ""} onChange={e => set("bundledDiscountPct", e.target.value)} placeholder="0" style={{ ...inputStyle, marginTop: 0, width: 50, textAlign: "right", padding: "2px 4px", fontSize: 11 }} />
+                        <span style={{ fontWeight: 700, color: "#15803d", fontSize: 12 }}>%</span>
+                      </div>}
+                    </div>
+                  )}
+                </div>
 
-          {/* Decisions received + tracker */}
-          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
-              borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#475569", flex: 1 }}>📋 Decisions Received</span>
-              <DateInput  value={data.decisionsReceivedDate || ""}
-                onChange={e => setData(p => applyDDR({ ...p, decisionsReceivedDate: e.target.value }))}
-                style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", width: 160 }} />
-            </div>
-            {["Mid-Market","Large"].includes(data.marketSize) && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
-                borderRadius: 9, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", flex: 1 }}>
-                  <input type="checkbox" checked={!!data.renewalTrackerUpdated}
-                    onChange={e => set("renewalTrackerUpdated", e.target.checked)}
-                    style={{ accentColor: "#f59e0b", width: 14, height: 14 }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Renewal Tracker Updated</span>
-                </label>
-                {data.renewalTrackerUpdated && (
-                  <DateInput  value={data.renewalTrackerUpdatedDate || ""}
-                    onChange={e => set("renewalTrackerUpdatedDate", e.target.value)}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px", width: 160 }} />
-                )}
+                {/* Decisions */}
+                <div style={subHdr}>② Decisions</div>
+                <div style={{ background: "#fff", borderRadius: 7, padding: "8px 10px", border: "1px solid #fde68a" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "#64748b" }}>Decisions received:</span>
+                    <DateInput value={rc.decisionsDate || ""} onChange={v => setRCB(cat.id, { decisionsDate: v })} style={{ ...inputStyle, marginTop: 0, padding: "2px 7px", fontSize: 11, width: 130 }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {[
+                      { key: "decisionRenewAsIs",      label: "Renew As-Is",    color: "#166534", bg: "#f0fdf4", border: "#86efac" },
+                      { key: "decisionBenefitChanges", label: "Benefit Changes",color: "#92400e", bg: "#fffbeb", border: "#fde68a" },
+                      { key: "decisionCarrierChange",  label: "Carrier Change", color: "#7c3aed", bg: "#f5f3ff", border: "#c4b5fd" },
+                    ].map(opt => {
+                      const checked = !!rc[opt.key];
+                      return (
+                        <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                          padding: "5px 10px", borderRadius: 7,
+                          border: `1.5px solid ${checked ? opt.border : "#e2e8f0"}`,
+                          background: checked ? opt.bg : "#fafafa" }}>
+                          <input type="checkbox" checked={checked} onChange={() => setRCB(cat.id, { [opt.key]: !checked })} style={{ accentColor: opt.color, width: 13, height: 13 }} />
+                          <span style={{ fontSize: 11, fontWeight: checked ? 700 : 500, color: checked ? opt.color : "#64748b" }}>{opt.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {rc.decisionCarrierChange && (
+                    <div style={{ marginTop: 8 }}>
+                      <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>New carrier
+                        <select value={rc.newCarrier || ""}
+                          onChange={e => setRCB(cat.id, { newCarrier: e.target.value })}
+                          style={{ ...inputStyle, marginTop: 2 }}>
+                          <option value="">— Select carrier —</option>
+                          {carriersForBenefit(cat.id, carriersData)
+                            .filter(c => c !== (data.benefitCarriers || {})[cat.id])
+                            .map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                {/* OE */}
+                <div style={subHdr}>③ Open enrollment</div>
+                <div style={{ background: "#fff", borderRadius: 7, padding: "8px 10px", border: "1px solid #fde68a" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                    <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>OE start
+                      <DateInput value={rc.oeStartDate || data.openEnrollment?.oeStartDate || ""}
+                        onChange={v => { setRCB(cat.id, { oeStartDate: v }); if (isMedical) setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment||{}), oeStartDate: v } })); }}
+                        style={{ ...inputStyle, marginTop: 2 }} />
+                    </label>
+                    <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>OE end
+                      <DateInput value={rc.oeEndDate || data.openEnrollment?.oeEndDate || ""}
+                        onChange={v => { setRCB(cat.id, { oeEndDate: v }); if (isMedical) setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment||{}), oeEndDate: v } })); }}
+                        style={{ ...inputStyle, marginTop: 2 }} />
+                    </label>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                    <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>OE type
+                      <select value={rc.oeType || data.openEnrollment?.oeType || ""}
+                        onChange={e => { setRCB(cat.id, { oeType: e.target.value }); if (isMedical) setData(p => ({ ...p, openEnrollment: { ...(p.openEnrollment||{}), oeType: e.target.value } })); }}
+                        style={{ ...inputStyle, marginTop: 2 }}>
+                        <option value="">— Select —</option>
+                        {["Active","Passive","Semi-Active"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, marginTop: 0, fontSize: 11 }}>EE meeting
+                      <select value={rc.eeMeetingType || ""} onChange={e => setRCB(cat.id, { eeMeetingType: e.target.value })} style={{ ...inputStyle, marginTop: 2 }}>
+                        <option value="">— Select —</option>
+                        {["In-Person","Webinar","Video","Self-Serve","None"].map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-        </div>
+        )}
 
-        {/* Pre-renewal task checklist */}
-        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
-            gap: 8, padding: "8px 12px", background: "#f8fafc",
-            borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
-            color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            {["Task","Status","Assignee","Due Date","Completed"].map((h,i) => <div key={i}>{h}</div>)}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "8px 10px" }}>
-            {PRERENEWAL_TASKS.filter(t => !(t.acaOnly && data.marketSize !== "ACA")).map(taskDef => {
-              const task = getTask("preRenewal", taskDef.id);
-              const isDone = task.status === "Complete" || task.status === "N/A";
-              return (
-                <div key={taskDef.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 140px 140px 140px",
-                  gap: 8, alignItems: "center", padding: "6px 8px", borderRadius: 8, marginBottom: 4,
-                  background: isDone ? "#f0fdf4" : "#f8fafc", border: "1px solid",
-                  borderColor: isDone ? "#bbf7d0" : "#e2e8f0" }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? "#166534" : "#1a2733" }}>
-                    {taskDef.label}
-                  </div>
-                  <select value={task.status || "Not Started"}
-                    onChange={e => setTask("preRenewal", taskDef.id, "status", e.target.value, taskDef.label, "Pre-Renewal")}
-                    style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
-                      background: STATUS_STYLES[task.status]?.bg || "#f1f5f9",
-                      color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
-                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
-                  </select>
-                  <select value={task.assignee || ""}
-                    onChange={e => setTask("preRenewal", taskDef.id, "assignee", e.target.value, taskDef.label, "Pre-Renewal")}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
-                    <option value="">Unassigned</option>
-                    {teamMembers.map(m => <option key={m}>{m}</option>)}
-                  </select>
-                  <DateInput  value={task.dueDate || ""}
-                    onChange={e => setTask("preRenewal", taskDef.id, "dueDate", e.target.value, taskDef.label, "Pre-Renewal")}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                  <DateInput  value={task.completedDate || ""}
-                    onChange={e => setTask("preRenewal", taskDef.id, "completedDate", e.target.value, taskDef.label, "Pre-Renewal")}
-                    style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                </div>
-              );
-            })}
-          </div>
+        {/* ── PRE-RENEWAL TASKS — only for preRenewal and preRenewalTasks sections ── */}
+        {(section === "preRenewal" || section === "preRenewalTasks") && (<>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", letterSpacing: "1px", textTransform: "uppercase", paddingTop: 4 }}>
+          Pre-Renewal Tasks
         </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {PRERENEWAL_TASKS.filter(taskDef => !(taskDef.acaOnly && data.marketSize !== "ACA")).map(taskDef => {
+            const task = { status: "Not Started", assignee: "", dueDate: "", completedDate: "", ...data.preRenewal?.[taskDef.id] };
+            const isDone = task.status === "Complete";
+            const isNA  = task.status === "N/A";
+            return (
+              <div key={taskDef.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 130px 130px", gap: 6, padding: "6px 8px", borderRadius: 7, alignItems: "center",
+                background: isDone ? "#f0fdf4" : isNA ? "#f8fafc" : "#fff",
+                border: `1px solid ${isDone ? "#86efac" : isNA ? "#e2e8f0" : "#f1f5f9"}`,
+                opacity: isNA ? 0.65 : 1 }}>
+                <div style={{ fontSize: 12, fontWeight: isDone ? 700 : 500, color: isDone ? "#166534" : isNA ? "#94a3b8" : "#334155",
+                  textDecoration: isNA ? "line-through" : "none" }}>{taskDef.label}</div>
+                <select value={task.status}
+                  onChange={e => setTask("preRenewal", taskDef.id, "status", e.target.value, taskDef.label, "Pre-Renewal")}
+                  style={{ fontSize: 11, padding: "3px 5px", borderRadius: 6, border: "1px solid #e2e8f0", fontFamily: "inherit",
+                    background: STATUS_STYLES[task.status]?.bg || "#f1f5f9", color: STATUS_STYLES[task.status]?.text || "#64748b", cursor: "pointer" }}>
+                  {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                </select>
+                <select value={task.assignee || ""}
+                  onChange={e => setTask("preRenewal", taskDef.id, "assignee", e.target.value, taskDef.label, "Pre-Renewal")}
+                  style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 5px" }}>
+                  <option value="">Unassigned</option>
+                  {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
+                </select>
+                <DateInput value={task.dueDate || ""} onChange={v => setTask("preRenewal", taskDef.id, "dueDate", v, taskDef.label, "Pre-Renewal")} style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 5px" }} />
+                <DateInput value={task.completedDate || ""} onChange={v => setTask("preRenewal", taskDef.id, "completedDate", v, taskDef.label, "Pre-Renewal")} style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 5px" }} />
+              </div>
+            );
+          })}
+        </div>
+        </>)}
       </div>
     );
   }
@@ -20451,13 +21260,13 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     onChange={e => setTask("compliance", taskDef.id, "assignee", e.target.value, taskDef.label, "Compliance")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
                     <option value="">Unassigned</option>
-                    {teamMembers.map(m => <option key={m}>{m}</option>)}
+                    {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
                   </select>
                   <DateInput  value={task.dueDate || autoDate}
-                    onChange={e => setTask("compliance", taskDef.id, "dueDate", e.target.value, taskDef.label, "Compliance")}
+                    onChange={v => setTask("compliance", taskDef.id, "dueDate", v, taskDef.label, "Compliance")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                   <DateInput  value={task.completedDate || ""}
-                    onChange={e => setTask("compliance", taskDef.id, "completedDate", e.target.value, taskDef.label, "Compliance")}
+                    onChange={v => setTask("compliance", taskDef.id, "completedDate", v, taskDef.label, "Compliance")}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 </div>
               );
@@ -20548,11 +21357,11 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
             <select value={task.assignee || ""} onChange={e => task.onChange("assignee", e.target.value)}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
               <option value="">Unassigned</option>
-              {teamMembers.map(m => <option key={m}>{m}</option>)}
+              {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
             </select>
-            <DateInput  value={task.dueDate || ""} onChange={e => task.onChange("dueDate", e.target.value)}
+            <DateInput  value={task.dueDate || ""} onChange={v => task.onChange("dueDate", v)}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-            <DateInput  value={task.completedDate || ""} onChange={e => task.onChange("completedDate", e.target.value)}
+            <DateInput  value={task.completedDate || ""} onChange={v => task.onChange("completedDate", v)}
               style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
             <button type="button" onClick={() => setExpanded(p => !p)}
               style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#94a3b8", padding: "2px" }}>
@@ -20619,12 +21428,12 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             <label style={{ ...labelStyle }}>OE Start Date
               <DateInput  value={oeData.oeStartDate || ""}
-                onChange={e => setOE ? setOE("oeStartDate", e.target.value) : null}
+                onChange={v => setOE ? setOE("oeStartDate", v) : null}
                 style={{ ...inputStyle, marginTop: 4 }} />
             </label>
             <label style={{ ...labelStyle }}>OE End Date
               <DateInput  value={oeData.oeEndDate || ""}
-                onChange={e => setOE ? setOE("oeEndDate", e.target.value) : null}
+                onChange={v => setOE ? setOE("oeEndDate", v) : null}
                 style={{ ...inputStyle, marginTop: 4 }} />
             </label>
             <label style={{ ...labelStyle }}>OE Type
@@ -20700,13 +21509,13 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                     onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, assignee: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
                     <option value="">Unassigned</option>
-                    {teamMembers.map(m => <option key={m}>{m}</option>)}
+                    {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
                   </select>
                   <DateInput  value={task.dueDate || ""}
-                    onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, dueDate: v } } }; }); }}
+                    onChange={v => { dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, dueDate: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                   <DateInput  value={task.completedDate || ""}
-                    onChange={e => { const v = e.target.value; dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, completedDate: v } } }; }); }}
+                    onChange={v => { dirty(); setData(p => { const cur = p.postOEFixed?.[taskDef.id] || {}; return { ...p, postOEFixed: { ...p.postOEFixed, [taskDef.id]: { ...cur, completedDate: v } } }; }); }}
                     style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                 </div>
               );
@@ -20747,13 +21556,13 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                         onChange={e => updatePOT("assignee", e.target.value)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
                         <option value="">Unassigned</option>
-                        {teamMembers.map(m => <option key={m}>{m}</option>)}
+                        {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
                       </select>
                       <DateInput  value={task.dueDate || ""}
-                        onChange={e => updatePOT("dueDate", e.target.value)}
+                        onChange={v => updatePOT("dueDate", v)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                       <DateInput  value={task.completedDate || ""}
-                        onChange={e => updatePOT("completedDate", e.target.value)}
+                        onChange={v => updatePOT("completedDate", v)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                       <button type="button" onClick={() => { const t=[...(data.postOETasks||[])]; t[idx]={...t[idx],_expanded:!t[idx]._expanded}; set("postOETasks",t); }}
                         style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#94a3b8", padding:"2px" }}>
@@ -20835,10 +21644,10 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
                         onChange={e => updateMT("assignee", e.target.value)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
                         <option value="">Unassigned</option>
-                        {teamMembers.map(m => <option key={m}>{m}</option>)}
+                        {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
                       </select>
                       <DateInput  value={task.dueDate || ""}
-                        onChange={e => updateMT("dueDate", e.target.value)}
+                        onChange={v => updateMT("dueDate", v)}
                         style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
                       <button type="button" onClick={() => updateMT("_expanded", !task._expanded)}
                         style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#94a3b8", padding: "2px" }}>
@@ -20875,9 +21684,12 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
   // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
   if (section === "transactions") {
     const txns = data.transactions || [];
+    const cols = "2fr 1.6fr 110px 130px 100px 100px 100px 28px";
+    const hdrCell = { fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" };
+    const cellInp = { ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" };
     return (
       <div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#1a2733" }}>Transactions</div>
           <button onClick={() => setData(p => ({ ...p, transactions: [...(p.transactions||[]),
             { id: generateId(), label: "", memberName: "", changeType: "", receivedDate: "", status: "Not Started", assignee: "", dueDate: "", completedDate: "", notes: "" }]}))}
@@ -20893,46 +21705,55 @@ function ClientModalSection({ section, data, set, setData, setTask, getTask,
           </div>
         ) : (
           <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 110px 140px 28px",
-              gap: 8, padding: "8px 12px", background: "#f8fafc",
-              borderBottom: "1px solid #e2e8f0", fontSize: 10, fontWeight: 700,
-              color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              {["Member","Change Type","Received","Status","Assignee",""].map((h,i) => <div key={i}>{h}</div>)}
+            {/* Header */}
+            <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "7px 12px",
+              background: "#f8fafc", borderBottom: "1px solid #e2e8f0", alignItems: "center" }}>
+              {["Member","Type","Status","Assignee","Received","Due","Completed",""].map((h,i) => <div key={i} style={hdrCell}>{h}</div>)}
             </div>
             {txns.map((txn, idx) => (
-              <div key={txn.id || idx} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 110px 140px 28px",
-                gap: 8, padding: "8px 12px", alignItems: "center",
-                borderBottom: idx < txns.length-1 ? "1px solid #f1f5f9" : "none",
-                background: txn.status === "Complete" ? "#f0fdf4" : "#fff" }}>
-                <input type="text" value={txn.memberName || ""}
-                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],memberName:e.target.value}; set("transactions",t); }}
-                  placeholder="Member name"
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }} />
-                <select value={txn.changeType || ""}
-                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],changeType:e.target.value,label:[t[idx].memberName,e.target.value].filter(Boolean).join(' – ')}; set("transactions",t); }}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 12, padding: "4px 8px" }}>
-                  <option value="">— Select —</option>
-                  {([...(transactionTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)).map(o=><option key={o}>{o}</option>)}
-                </select>
-                <DateInput  value={txn.receivedDate || ""}
-                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],receivedDate:e.target.value}; set("transactions",t); }}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }} />
-                <select value={txn.status || "Not Started"}
-                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],status:e.target.value}; set("transactions",t); }}
-                  style={{ fontSize: 11, padding: "3px 6px", border: "1px solid #e2e8f0", borderRadius: 6,
-                    background: STATUS_STYLES[txn.status]?.bg || "#f1f5f9",
-                    color: STATUS_STYLES[txn.status]?.text || "#64748b", cursor: "pointer", fontFamily: "inherit" }}>
-                  {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
-                </select>
-                <select value={txn.assignee || ""}
-                  onChange={e => { const t=[...txns]; t[idx]={...t[idx],assignee:e.target.value}; set("transactions",t); }}
-                  style={{ ...inputStyle, marginTop: 0, fontSize: 11, padding: "3px 6px" }}>
-                  <option value="">Unassigned</option>
-                  {teamMembers.map(m => <option key={m}>{m}</option>)}
-                </select>
-                <button onClick={() => { const t=txns.filter((_,i)=>i!==idx); set("transactions",t); }}
-                  style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#991b1b",
-                    cursor: "pointer", fontSize: 12, padding: "4px 6px", fontFamily: "inherit" }}>✕</button>
+              <div key={txn.id || idx}>
+                <div style={{ display: "grid", gridTemplateColumns: cols, gap: 6, padding: "6px 12px", alignItems: "center",
+                  background: txn.status === "Complete" ? "#f0fdf4" : idx % 2 === 0 ? "#fff" : "#fafafa",
+                  borderBottom: "1px solid #f1f5f9" }}>
+                  <input type="text" value={txn.memberName || ""}
+                    onChange={e => { const t=[...txns]; t[idx]={...t[idx],memberName:e.target.value,label:[e.target.value,t[idx].changeType].filter(Boolean).join(' – ')}; set("transactions",t); }}
+                    placeholder="Member name"
+                    style={cellInp} />
+                  <select value={txn.changeType || ""}
+                    onChange={e => { const t=[...txns]; t[idx]={...t[idx],changeType:e.target.value,label:[t[idx].memberName,e.target.value].filter(Boolean).join(' – ')}; set("transactions",t); }}
+                    style={cellInp}>
+                    <option value="">— Select —</option>
+                    {([...(transactionTypesLibrary||[])].sort((a,b)=>(a.order??0)-(b.order??0)).map(x=>x.label)).map(o=><option key={o}>{o}</option>)}
+                  </select>
+                  <select value={txn.status || "Not Started"}
+                    onChange={e => { const t=[...txns]; t[idx]={...t[idx],status:e.target.value}; set("transactions",t); }}
+                    style={{ ...cellInp, background: STATUS_STYLES[txn.status]?.bg || "#f1f5f9",
+                      color: STATUS_STYLES[txn.status]?.text || "#64748b" }}>
+                    {TASK_STATUSES.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <select value={txn.assignee || ""}
+                    onChange={e => { const t=[...txns]; t[idx]={...t[idx],assignee:e.target.value}; set("transactions",t); }}
+                    style={cellInp}>
+                    <option value="">Unassigned</option>
+                    {teamMembers.map((m,i) => <option key={i}>{m}</option>)}
+                  </select>
+                  <DateInput value={txn.receivedDate || ""}
+                    onChange={v => { const t=[...txns]; t[idx]={...t[idx],receivedDate:v}; set("transactions",t); }}
+                    style={{ ...cellInp, fontSize: 11 }} />
+                  <DateInput value={txn.dueDate || ""}
+                    onChange={v => { const t=[...txns]; t[idx]={...t[idx],dueDate:v}; set("transactions",t); }}
+                    style={{ ...cellInp, fontSize: 11 }} />
+                  <DateInput value={txn.completedDate || ""}
+                    onChange={v => { const t=[...txns]; t[idx]={...t[idx],completedDate:v,status:v?"Complete":txn.status}; set("transactions",t); }}
+                    style={{ ...cellInp, fontSize: 11 }} />
+                  <button onClick={() => { const t=txns.filter((_,i)=>i!==idx); set("transactions",t); }}
+                    style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#991b1b",
+                      cursor: "pointer", fontSize: 12, padding: "4px 6px", fontFamily: "inherit" }}>✕</button>
+                </div>
+                {txn.notes && (
+                  <div style={{ padding: "3px 12px 5px", background: "#fafafa", borderBottom: "1px solid #f1f5f9",
+                    fontSize: 11, color: "#64748b", fontStyle: "italic" }}>{txn.notes}</div>
+                )}
               </div>
             ))}
           </div>
@@ -21208,7 +22029,7 @@ function ClientBenefitsEditor({ data, set, setData, carriersData, currentUser, b
               </label>
               <label style={{ ...labelStyle, marginTop: 0 }}>Effective Date
                 <DateInput  value={effectiveDate}
-                  onChange={e => setData(p => ({ ...p, benefitEffectiveDates: { ...p.benefitEffectiveDates, [selBenefit.id]: e.target.value } }))}
+                  onChange={v => setData(p => ({ ...p, benefitEffectiveDates: { ...p.benefitEffectiveDates, [selBenefit.id]: v } }))}
                   style={{ ...inputStyle, marginTop: 3 }} />
               </label>
               <label style={{ ...labelStyle, marginTop: 0 }}>Policy Number
@@ -22143,13 +22964,13 @@ function PlanYearsSection({ data, set, setData, tasksDb, dueDateRules, currentUs
             <label style={{ ...labelStyle }}>
               Effective From
               <DateInput  value={archiveForm.effectiveFrom}
-                onChange={e => setArchiveForm(p => ({ ...p, effectiveFrom: e.target.value }))}
+                onChange={v => setArchiveForm(p => ({ ...p, effectiveFrom: v }))}
                 style={{ ...inputStyle, marginTop: 3 }} />
             </label>
             <label style={{ ...labelStyle }}>
               Effective To
               <DateInput  value={archiveForm.effectiveTo}
-                onChange={e => setArchiveForm(p => ({ ...p, effectiveTo: e.target.value }))}
+                onChange={v => setArchiveForm(p => ({ ...p, effectiveTo: v }))}
                 style={{ ...inputStyle, marginTop: 3 }} />
             </label>
             <label style={{ ...labelStyle }}>
